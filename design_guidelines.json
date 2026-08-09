@@ -1,0 +1,97 @@
+{
+  "project_context": {
+    "name": "Автозаполнение договора найма",
+    "type": "Internal Admin Dashboard",
+    "theme": "light",
+    "design_archetype": "ARCHETYPE 4: SWISS & HIGH-CONTRAST",
+    "primary_language": "ru"
+  },
+  "typography": {
+    "heading_font": "Chivo",
+    "body_font": "IBM Plex Sans",
+    "import_url": "@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@300;400;700;900&family=IBM+Plex+Sans:wght@400;500;600&display=swap');",
+    "rules": {
+      "headings": "font-family: 'Chivo', sans-serif; tracking-tight, no generic sans for headings.",
+      "body": "font-family: 'IBM Plex Sans', sans-serif; leading-relaxed for optimal reading.",
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-bold",
+      "h4": "text-lg sm:text-xl font-semibold",
+      "body_text": "text-base",
+      "small_text": "text-sm",
+      "labels": "text-xs uppercase tracking-[0.2em] font-semibold"
+    }
+  },
+  "colors": {
+    "strategy": "Swiss Brutalism / Functional - Color is used strictly for hierarchy and action. No gradients. No soft shadows.",
+    "background": {
+      "app": "#F3F4F6", 
+      "surface": "#FFFFFF"
+    },
+    "text": {
+      "primary": "#0A0A0A",
+      "secondary": "#4B5563",
+      "muted": "#9CA3AF"
+    },
+    "brand": {
+      "primary": "#002FA7", 
+      "primary_hover": "#00207A",
+      "accent": "#FF3B30",
+      "warning": "#FFCC00"
+    },
+    "border": "#E5E7EB"
+  },
+  "surface_strategy": {
+    "name": "GRID BORDERS (The 'Technical' Look)",
+    "description": "Expose the skeleton. Make the grid visible for this data-heavy admin tool.",
+    "implementation": [
+      "Use sharp edges (no border-radius or max 4px for form elements).",
+      "Use border-collapse style layouts for tables and major sections.",
+      "No drop shadows. Rely on 1px solid borders for separation.",
+      "Header must be a Solid Background (#FFFFFF) with a hard 1px bottom border."
+    ]
+  },
+  "layouts": {
+    "strategy": "High Density Grid (Mode B)",
+    "spacing": "Tight (gap-4 or gap-6) for data density, but generous internal padding (p-6) for forms and modal containers.",
+    "page_structure": [
+      "1. Fixed top navigation bar (Logo + Tabs: 'Генерация' / 'История').",
+      "2. Main container aligned left or center with max-w-7xl.",
+      "3. Action bar above tables for mass operations (Generate, Delete, Print)."
+    ]
+  },
+  "components": {
+    "ui_library": "Shadcn UI (Customized for JS, not TSX)",
+    "specific_rules": {
+      "buttons": "Sharp corners (rounded-none or rounded-sm), high contrast. Primary action is #002FA7.",
+      "tables": "Dense rows, 1px visible borders, hover state highlights row with a very light blue (#F0F4FF).",
+      "forms": "Inputs must have sharp borders, distinct focus states (ring-2 ring-[#002FA7] ring-offset-0), left-aligned labels.",
+      "modals": "Use Shadcn Dialog for 'Ручная правка' (Manual edit). Must have an explicit close button and stark white background.",
+      "tabs": "Flat tabs with a bold bottom border for the active state. No pill-shaped backgrounds."
+    }
+  },
+  "visual_enhancers": {
+    "icons": "Use lucide-react. Keep stroke-width at 1.5 or 2 for high legibility.",
+    "motion": "Minimalist. Focus on rapid micro-interactions. Add smooth opacity/transform on modals. No bouncy animations.",
+    "loading": "Use an indeterminate linear progress bar at the top of the table/page during Excel processing."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text meets APCA/WCAG standards. No grey-on-grey.",
+    "focus": "All interactive elements must have a high-contrast focus ring (focus:ring-2 focus:ring-[#002FA7]).",
+    "testing": "All interactive and key informational elements MUST include a `data-testid` attribute (e.g., `data-testid=\"upload-excel-btn\"`)."
+  },
+  "print_styles": {
+    "instructions": "Admin needs to print directly. Add `@media print` CSS rules in index.css to hide the navigation, action buttons, and sidebar. Ensure only the document preview/content is printed with zero margins."
+  },
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic outputs. Avoid 'AI slop'. Make it crisp, professional, and 'Swiss-designed'.",
+    "DO NOT apply universal transition (e.g., `transition: all`). Add transitions only for specific interactive elements.",
+    "DO NOT center align the app container text (no `.App { text-align: center; }`). Keep data left-aligned.",
+    "NEVER use emojis as icons. Use the specified icon library (lucide-react).",
+    "Use 2-3x more internal spacing in forms/cards than feels comfortable. Cramped designs look cheap.",
+    "Always explicitly set text color on hover (e.g., `hover:bg-slate-900 hover:text-white`).",
+    "Use sonner for toast notifications (e.g., 'Договоры успешно сформированы').",
+    "All components should be written in standard modern JavaScript (.js), avoiding TypeScript types.",
+    "Ensure the application strictly follows Russian language copy for all UI elements."
+  ]
+}
