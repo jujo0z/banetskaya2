@@ -11,14 +11,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FIELDS } from "@/lib/fields";
-import { saveContract, downloadSavedContract, api } from "@/lib/apiClient";
+import { saveContract, downloadSavedContract, previewPdfUrl, api } from "@/lib/apiClient";
 import { toast } from "sonner";
-import { FileText, FileType, Printer, Save, Loader2 } from "lucide-react";
+import { FileText, FileType, Printer, Save, Loader2, Eye } from "lucide-react";
+import DocumentPreviewDialog from "@/components/DocumentPreviewDialog";
 
 export default function EditContractDialog({ open, student, onClose, onSaved }) {
   const [fields, setFields] = useState(student || {});
   const [savedId, setSavedId] = useState(null);
   const [busy, setBusy] = useState("");
+  const [previewUrl, setPreviewUrl] = useState(null);
 
   // Reset when a new student is opened
   const [lastStudent, setLastStudent] = useState(student);
@@ -45,6 +47,18 @@ export default function EditContractDialog({ open, student, onClose, onSaved }) 
       toast.success("Договор сохранён в историю");
     } catch (e) {
       toast.error("Не удалось сохранить договор");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function handlePreview() {
+    try {
+      setBusy("preview");
+      const url = await previewPdfUrl(fields);
+      setPreviewUrl(url);
+    } catch (e) {
+      toast.error("Не удалось открыть просмотр");
     } finally {
       setBusy("");
     }
@@ -83,6 +97,7 @@ export default function EditContractDialog({ open, student, onClose, onSaved }) 
   }
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto rounded-none" data-testid="edit-contract-dialog">
         <DialogHeader>
@@ -123,6 +138,16 @@ export default function EditContractDialog({ open, student, onClose, onSaved }) 
             <Button
               variant="outline"
               className="rounded-none"
+              onClick={handlePreview}
+              disabled={!!busy}
+              data-testid="preview-btn"
+            >
+              {busy === "preview" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+              Просмотр
+            </Button>
+            <Button
+              variant="outline"
+              className="rounded-none"
               onClick={handlePrint}
               disabled={!!busy}
               data-testid="print-btn"
@@ -153,5 +178,15 @@ export default function EditContractDialog({ open, student, onClose, onSaved }) 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+      <DocumentPreviewDialog
+        open={!!previewUrl}
+        url={previewUrl}
+        title="Просмотр договора"
+        onClose={() => {
+          if (previewUrl) window.URL.revokeObjectURL(previewUrl);
+          setPreviewUrl(null);
+        }}
+      />
+    </>
   );
 }

@@ -27,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2 } from "lucide-react";
+import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye } from "lucide-react";
 import { toast } from "sonner";
 import {
   listContracts,
@@ -35,8 +35,10 @@ import {
   downloadSavedContract,
   batchDownload,
   batchPrint,
+  savedPdfUrl,
   api,
 } from "@/lib/apiClient";
+import DocumentPreviewDialog from "@/components/DocumentPreviewDialog";
 
 export default function History() {
   const [contracts, setContracts] = useState([]);
@@ -47,6 +49,7 @@ export default function History() {
   const [busyId, setBusyId] = useState("");
   const [batching, setBatching] = useState(false);
   const [batchPrinting, setBatchPrinting] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
   const [toDelete, setToDelete] = useState(null);
 
   async function load(q = "") {
@@ -107,6 +110,18 @@ export default function History() {
       if (w) w.onload = () => w.print();
     } catch (e) {
       toast.error("Не удалось открыть для печати");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function handlePreview(c) {
+    setBusyId(`${c.id}-preview`);
+    try {
+      const url = await savedPdfUrl(c.id);
+      setPreviewUrl(url);
+    } catch (e) {
+      toast.error("Не удалось открыть просмотр");
     } finally {
       setBusyId("");
     }
@@ -291,6 +306,17 @@ export default function History() {
                         variant="ghost"
                         size="sm"
                         className="rounded-none"
+                        onClick={() => handlePreview(c)}
+                        disabled={busyId === `${c.id}-preview`}
+                        title="Просмотр"
+                        data-testid={`preview-${c.id}`}
+                      >
+                        {busyId === `${c.id}-preview` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-none"
                         onClick={() => handlePrint(c)}
                         disabled={busyId === `${c.id}-print`}
                         title="Печать"
@@ -336,6 +362,16 @@ export default function History() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <DocumentPreviewDialog
+        open={!!previewUrl}
+        url={previewUrl}
+        title="Просмотр договора"
+        onClose={() => {
+          if (previewUrl) window.URL.revokeObjectURL(previewUrl);
+          setPreviewUrl(null);
+        }}
+      />
     </div>
   );
 }

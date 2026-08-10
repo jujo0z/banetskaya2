@@ -16,6 +16,7 @@ export const FIELDS = [
   { key: "passport_issued_by", label: "Паспорт: кем выдан" },
   { key: "id_number", label: "Идентификационный номер (ИИН)" },
   { key: "phone", label: "Номер телефона" },
+  { key: "note", label: "Дополнительно (вручную)" },
 ];
 
 export const FIELD_MAP = Object.fromEntries(FIELDS.map((f) => [f.key, f.label]));

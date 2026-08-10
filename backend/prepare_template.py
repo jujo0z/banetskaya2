@@ -75,6 +75,32 @@ def build():
             if replace_first_in_paragraph(p, search, replace):
                 hits += 1
         print(f"{'OK ' if hits else 'MISS'} [{hits}] {search[:40]!r} -> {replace}")
+    # Optional manual-fill line — rendered only when the 'note' field is provided.
+    from docx.oxml import OxmlElement
+    from docx.text.paragraph import Paragraph
+
+    def insert_after(paragraph, text):
+        new_p = OxmlElement("w:p")
+        paragraph._p.addnext(new_p)
+        np = Paragraph(new_p, paragraph._parent)
+        if text:
+            run = np.add_run(text)
+            run.font.name = "Times New Roman"
+        return np
+
+    anchor = None
+    for p in iter_paragraphs(doc):
+        if "факсимиле личной подписи" in p.text:
+            anchor = p
+            break
+    if anchor is not None:
+        p1 = insert_after(anchor, "{%p if note %}")
+        p2 = insert_after(p1, "Дополнительно: {{ note }}")
+        insert_after(p2, "{%p endif %}")
+        print("OK  note section inserted")
+    else:
+        print("MISS note anchor not found")
+
     doc.save(str(OUT))
     print(f"\nSaved template to {OUT}")
 

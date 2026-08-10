@@ -84,6 +84,22 @@ export async function downloadPreview(fields, format, fallback) {
   downloadBlob(res.data, parseFilename(res.headers, fallback));
 }
 
+export async function previewPdfUrl(fields) {
+  const res = await api.post(`/contracts/preview`, { fields }, {
+    params: { format: "pdf" },
+    responseType: "blob",
+  });
+  return window.URL.createObjectURL(res.data);
+}
+
+export async function savedPdfUrl(id) {
+  const res = await api.get(`/contracts/${id}/download`, {
+    params: { format: "pdf" },
+    responseType: "blob",
+  });
+  return window.URL.createObjectURL(res.data);
+}
+
 export async function batchPrint(ids) {
   const res = await api.post(`/contracts/batch-print`, { ids }, { responseType: "blob" });
   const url = window.URL.createObjectURL(res.data);
