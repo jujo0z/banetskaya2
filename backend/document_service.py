@@ -64,6 +64,19 @@ def render_docx(fields: dict) -> bytes:
     return buf.getvalue()
 
 
+def merge_pdfs(pdf_list) -> bytes:
+    """Merge multiple PDF byte-strings into a single PDF."""
+    from pypdf import PdfWriter, PdfReader
+    writer = PdfWriter()
+    for b in pdf_list:
+        reader = PdfReader(io.BytesIO(b))
+        for page in reader.pages:
+            writer.add_page(page)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def convert_to_pdf(docx_bytes: bytes) -> bytes:
     """Convert docx bytes to PDF using LibreOffice headless."""
     with tempfile.TemporaryDirectory() as tmp:

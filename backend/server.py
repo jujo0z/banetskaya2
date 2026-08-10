@@ -339,6 +339,31 @@ async def batch_download(req: BatchDownloadRequest):
     )
 
 
+@api_router.post("/contracts/batch-print")
+async def batch_print(req: BatchDownloadRequest):
+    docs = await db.contracts.find({"id": {"$in": req.ids}}, {"_id": 0}).to_list(1000)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Договоры не найдены")
+    by_id = {d["id"]: d for d in docs}
+    pdfs = []
+    for cid in req.ids:  # preserve selection order
+        doc = by_id.get(cid)
+        if not doc:
+            continue
+        docx_bytes = docsvc.render_docx(doc["fields"])
+        try:
+            pdfs.append(docsvc.convert_to_pdf(docx_bytes))
+        except Exception as e:
+            logger.exception("PDF conversion failed")
+            raise HTTPException(status_code=500, detail=f"Ошибка конвертации в PDF: {e}")
+    merged = docsvc.merge_pdfs(pdfs)
+    return StreamingResponse(
+        io.BytesIO(merged),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=contracts.pdf"},
+    )
+
+
 app.include_router(api_router)
 
 app.add_middleware(

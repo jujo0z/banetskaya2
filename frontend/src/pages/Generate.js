@@ -27,10 +27,11 @@ import {
   Loader2,
   FileSpreadsheet,
   Download,
+  Printer,
 } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS, mapRowsToStudents } from "@/lib/fields";
-import { uploadExcel, saveContractsBatch, batchDownload, downloadSampleTemplate } from "@/lib/apiClient";
+import { uploadExcel, saveContractsBatch, batchDownload, batchPrint, downloadSampleTemplate } from "@/lib/apiClient";
 import EditContractDialog from "@/components/EditContractDialog";
 
 const NONE = "__none__";
@@ -45,6 +46,7 @@ export default function Generate() {
   const [editIndex, setEditIndex] = useState(null);
   const [batchFormat, setBatchFormat] = useState("docx");
   const [batching, setBatching] = useState(false);
+  const [batchPrinting, setBatchPrinting] = useState(false);
   const fileRef = useRef();
 
   const students = useMemo(
@@ -113,6 +115,22 @@ export default function Generate() {
       toast.error("Ошибка пакетного формирования");
     } finally {
       setBatching(false);
+    }
+  }
+
+  async function handleBatchPrint() {
+    const items = [...selected].map((i) => students[i]);
+    if (items.length === 0) return;
+    setBatchPrinting(true);
+    try {
+      const res = await saveContractsBatch(items);
+      const ids = res.created.map((c) => c.id);
+      await batchPrint(ids);
+      toast.success(`Открыто на печать: ${res.count}`);
+    } catch (err) {
+      toast.error("Не удалось открыть на печать");
+    } finally {
+      setBatchPrinting(false);
     }
   }
 
@@ -250,6 +268,20 @@ export default function Generate() {
                 <FileArchive className="h-4 w-4" />
               )}
               Сформировать выбранные ({selected.size})
+            </Button>
+            <Button
+              variant="outline"
+              className="rounded-none"
+              onClick={handleBatchPrint}
+              disabled={selected.size === 0 || batchPrinting}
+              data-testid="batch-print-btn"
+            >
+              {batchPrinting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Printer className="h-4 w-4" />
+              )}
+              Печать выбранных ({selected.size})
             </Button>
           </div>
 

@@ -79,6 +79,13 @@ export async function downloadPreview(fields, format, fallback) {
   downloadBlob(res.data, parseFilename(res.headers, fallback));
 }
 
+export async function batchPrint(ids) {
+  const res = await api.post(`/contracts/batch-print`, { ids }, { responseType: "blob" });
+  const url = window.URL.createObjectURL(res.data);
+  const w = window.open(url);
+  if (w) w.onload = () => w.print();
+}
+
 export async function batchDownload(ids, format) {
   const res = await api.post(`/contracts/batch-download`, { ids, format }, {
     responseType: "blob",

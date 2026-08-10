@@ -34,6 +34,7 @@ import {
   deleteContract,
   downloadSavedContract,
   batchDownload,
+  batchPrint,
   api,
 } from "@/lib/apiClient";
 
@@ -45,6 +46,7 @@ export default function History() {
   const [batchFormat, setBatchFormat] = useState("docx");
   const [busyId, setBusyId] = useState("");
   const [batching, setBatching] = useState(false);
+  const [batchPrinting, setBatchPrinting] = useState(false);
   const [toDelete, setToDelete] = useState(null);
 
   async function load(q = "") {
@@ -141,6 +143,19 @@ export default function History() {
     }
   }
 
+  async function handleBatchPrint() {
+    if (selected.size === 0) return;
+    setBatchPrinting(true);
+    try {
+      await batchPrint([...selected]);
+      toast.success(`Открыто на печать: ${selected.size}`);
+    } catch (e) {
+      toast.error("Не удалось открыть на печать");
+    } finally {
+      setBatchPrinting(false);
+    }
+  }
+
   function fmtDate(iso) {
     try {
       return new Date(iso).toLocaleString("ru-RU", {
@@ -196,6 +211,15 @@ export default function History() {
           >
             {batching ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileArchive className="h-4 w-4" />}
             Скачать ZIP ({selected.size})
+          </Button>
+          <Button
+            className="rounded-none bg-[#002FA7] hover:bg-[#00207A] text-white"
+            onClick={handleBatchPrint}
+            disabled={selected.size === 0 || batchPrinting}
+            data-testid="history-batch-print-btn"
+          >
+            {batchPrinting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+            Печать выбранных ({selected.size})
           </Button>
         </div>
 
