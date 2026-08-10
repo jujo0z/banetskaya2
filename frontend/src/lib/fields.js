@@ -19,6 +19,16 @@ export const FIELDS = [
   { key: "note", label: "Дополнительно (вручную)" },
 ];
 
+// Moderation sections — custom clauses appended into specific parts of the contract.
+export const SECTIONS = [
+  { key: "extra_subject", title: "I. Предмет договора" },
+  { key: "extra_tenant", title: "II. Права и обязанности нанимателя" },
+  { key: "extra_landlord", title: "III. Права и обязанности наймодателя" },
+  { key: "extra_liability", title: "IV. Ответственность сторон" },
+  { key: "extra_term", title: "V. Срок действия договора" },
+  { key: "extra_other", title: "VII. Прочие условия" },
+];
+
 export const FIELD_MAP = Object.fromEntries(FIELDS.map((f) => [f.key, f.label]));
 
 export function mapRowsToStudents(rows, mapping) {

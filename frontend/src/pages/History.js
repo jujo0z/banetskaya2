@@ -196,7 +196,7 @@ export default function History() {
         </p>
       </div>
 
-      <div className="bg-white border border-border">
+      <div className="bg-card border border-border">
         <div className="flex flex-wrap items-center gap-3 p-4 border-b border-border">
           <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -228,7 +228,7 @@ export default function History() {
             Скачать ZIP ({selected.size})
           </Button>
           <Button
-            className="rounded-none bg-[#002FA7] hover:bg-[#00207A] text-white"
+            className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white"
             onClick={handleBatchPrint}
             disabled={selected.size === 0 || batchPrinting}
             data-testid="history-batch-print-btn"
@@ -327,7 +327,7 @@ export default function History() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="rounded-none text-[#FF3B30] hover:text-[#FF3B30] hover:bg-red-50"
+                        className="rounded-none text-[#FF3B30] hover:text-[#FF3B30] hover:bg-red-500/10"
                         onClick={() => setToDelete(c)}
                         title="Удалить"
                         data-testid={`delete-${c.id}`}

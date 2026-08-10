@@ -146,7 +146,7 @@ export default function Generate() {
       </div>
 
       {/* Upload */}
-      <div className="bg-white border border-border p-6">
+      <div className="bg-card border border-border p-6">
         <input
           ref={fileRef}
           type="file"
@@ -157,7 +157,7 @@ export default function Generate() {
         />
         <div className="flex flex-wrap items-center gap-4">
           <Button
-            className="rounded-none bg-[#002FA7] hover:bg-[#00207A] text-white h-11"
+            className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white h-11"
             onClick={() => fileRef.current?.click()}
             disabled={uploading}
             data-testid="upload-excel-btn"
@@ -235,7 +235,7 @@ export default function Generate() {
 
       {/* Students */}
       {dataset && (
-        <div className="bg-white border border-border">
+        <div className="bg-card border border-border">
           <div className="flex flex-wrap items-center gap-3 p-4 border-b border-border">
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -257,7 +257,7 @@ export default function Generate() {
               </SelectContent>
             </Select>
             <Button
-              className="rounded-none bg-[#002FA7] hover:bg-[#00207A] text-white"
+              className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white"
               onClick={handleBatch}
               disabled={selected.size === 0 || batching}
               data-testid="batch-generate-btn"

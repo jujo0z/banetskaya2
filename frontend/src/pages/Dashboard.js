@@ -23,7 +23,7 @@ import { getStats, downloadSavedContract } from "@/lib/apiClient";
 
 function StatCard({ label, value, icon: Icon, testid }) {
   return (
-    <div className="bg-white border border-border p-6" data-testid={testid}>
+    <div className="bg-card border border-border p-6" data-testid={testid}>
       <div className="flex items-start justify-between">
         <div>
           <div className="text-xs uppercase tracking-[0.2em] font-semibold text-muted-foreground">
@@ -31,8 +31,8 @@ function StatCard({ label, value, icon: Icon, testid }) {
           </div>
           <div className="font-heading text-4xl font-black tracking-tighter mt-3">{value}</div>
         </div>
-        <div className="h-10 w-10 bg-[#F0F4FF] flex items-center justify-center">
-          <Icon className="h-5 w-5 text-[#002FA7]" strokeWidth={2} />
+        <div className="h-10 w-10 bg-[#E11D48]/10 flex items-center justify-center">
+          <Icon className="h-5 w-5 text-[#E11D48]" strokeWidth={2} />
         </div>
       </div>
     </div>
@@ -85,7 +85,7 @@ export default function Dashboard() {
           </p>
         </div>
         <Button
-          className="rounded-none bg-[#002FA7] hover:bg-[#00207A] text-white h-11"
+          className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white h-11"
           onClick={() => navigate("/generate")}
           data-testid="dashboard-new-contract-btn"
         >
@@ -115,13 +115,13 @@ export default function Dashboard() {
         />
       </div>
 
-      <div className="bg-white border border-border">
+      <div className="bg-card border border-border">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <h2 className="font-heading text-xl font-bold tracking-tight">Последние договоры</h2>
           <Button
             variant="ghost"
             size="sm"
-            className="rounded-none text-[#002FA7]"
+            className="rounded-none text-[#E11D48]"
             onClick={() => navigate("/history")}
             data-testid="dashboard-open-history-btn"
           >

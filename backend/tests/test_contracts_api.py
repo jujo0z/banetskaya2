@@ -260,6 +260,73 @@ def test_batch_print_merged_pdf():
             requests.delete(f"{API}/contracts/{cid}")
 
 
+# ---------- Moderation (extra_*) ----------
+EXTRA_KEYS = ["extra_subject", "extra_tenant", "extra_landlord",
+              "extra_liability", "extra_term", "extra_other"]
+
+
+def test_moderation_extra_fields_appear_when_filled():
+    fields = _sample_fields(num="TEST_MOD1", name="TEST_ModUser")
+    markers = {k: f"TEST_MARKER_{k.upper()}" for k in EXTRA_KEYS}
+    fields.update(markers)
+    r = requests.post(f"{API}/contracts/preview", params={"format": "docx"}, json={"fields": fields})
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+    for k, marker in markers.items():
+        assert marker in xml, f"Marker for {k} not in document: {marker}"
+    # No leftover jinja/docxtpl syntax
+    assert "{{" not in xml and "}}" not in xml
+    assert "{%p" not in xml and "%}" not in xml
+
+
+def test_moderation_empty_extras_do_not_appear():
+    fields = _sample_fields(num="TEST_MOD2", name="TEST_NoMod")
+    # explicit empty extras
+    for k in EXTRA_KEYS:
+        fields[k] = ""
+    r = requests.post(f"{API}/contracts/preview", params={"format": "docx"}, json={"fields": fields})
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+    assert "TEST_MARKER" not in xml
+    assert "{{" not in xml and "}}" not in xml
+    assert "{%p" not in xml and "%}" not in xml
+    # No 'Дополнительно' block since note also empty
+    assert "Дополнительно:" not in xml
+
+
+def test_moderation_persists_via_history():
+    """POST /api/contracts with extra_* saves them, and downloading later reproduces them."""
+    fields = _sample_fields(num="TEST_MOD_H", name="TEST_ModHist")
+    fields["extra_subject"] = "TEST_HIST_SUBJECT_XYZ"
+    fields["extra_other"] = "TEST_HIST_OTHER_ABC"
+    fields["note"] = "TEST_HIST_NOTE_QQQ"
+    r = requests.post(f"{API}/contracts", json={"fields": fields})
+    assert r.status_code == 200
+    cid = r.json()["id"]
+    try:
+        # Verify stored fields via GET
+        r2 = requests.get(f"{API}/contracts/{cid}")
+        assert r2.status_code == 200
+        stored = r2.json()["fields"]
+        assert stored.get("extra_subject") == "TEST_HIST_SUBJECT_XYZ"
+        assert stored.get("extra_other") == "TEST_HIST_OTHER_ABC"
+        assert stored.get("note") == "TEST_HIST_NOTE_QQQ"
+        # Re-download and check markers present
+        r3 = requests.get(f"{API}/contracts/{cid}/download", params={"format": "docx"})
+        assert r3.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(r3.content)) as zf:
+            xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+        assert "TEST_HIST_SUBJECT_XYZ" in xml
+        assert "TEST_HIST_OTHER_ABC" in xml
+        assert "TEST_HIST_NOTE_QQQ" in xml
+        assert "Дополнительно: TEST_HIST_NOTE_QQQ" in xml
+        assert "{{" not in xml and "{%p" not in xml
+    finally:
+        requests.delete(f"{API}/contracts/{cid}")
+
+
 def test_existing_seeded_contract_present():
     """Seed contract from problem statement should be listed and downloadable."""
     seed_id = "45e95300-1ba1-4267-8f87-6b999ee5c83a"

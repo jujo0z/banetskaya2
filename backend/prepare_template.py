@@ -75,7 +75,9 @@ def build():
             if replace_first_in_paragraph(p, search, replace):
                 hits += 1
         print(f"{'OK ' if hits else 'MISS'} [{hits}] {search[:40]!r} -> {replace}")
-    # Optional manual-fill line — rendered only when the 'note' field is provided.
+    # Conditional injection blocks — moderation text added to specific clauses,
+    # plus the manual 'note' line. Each renders ONLY when its key is provided,
+    # so an untouched contract stays byte-for-byte like the original.
     from docx.oxml import OxmlElement
     from docx.text.paragraph import Paragraph
 
@@ -88,18 +90,36 @@ def build():
             run.font.name = "Times New Roman"
         return np
 
-    anchor = None
-    for p in iter_paragraphs(doc):
-        if "факсимиле личной подписи" in p.text:
-            anchor = p
-            break
-    if anchor is not None:
-        p1 = insert_after(anchor, "{%p if note %}")
-        p2 = insert_after(p1, "Дополнительно: {{ note }}")
-        insert_after(p2, "{%p endif %}")
-        print("OK  note section inserted")
-    else:
-        print("MISS note anchor not found")
+    def add_block(after_par, key, prefix=""):
+        """Insert a `{%p if key %}{prefix}{{ key }}{%p endif %}` block, return last paragraph."""
+        a = insert_after(after_par, "{%p if " + key + " %}")
+        a = insert_after(a, prefix + "{{ " + key + " }}")
+        a = insert_after(a, "{%p endif %}")
+        return a
+
+    # (anchor substring, [(key, prefix), ...])  — order preserved via chaining.
+    SECTIONS = [
+        ("площадью 6,0", [("extra_subject", "")]),
+        ("возбуждение расовой", [("extra_tenant", "")]),
+        ("3.2.6. выполнять иные обязанности", [("extra_landlord", "")]),
+        ("4.3. Подлежат выселению", [("extra_liability", "")]),
+        ("Договор заключается на срок получения", [("extra_term", "")]),
+        ("факсимиле личной подписи", [("extra_other", ""), ("note", "Дополнительно: ")]),
+    ]
+
+    for anchor_sub, blocks in SECTIONS:
+        anchor = None
+        for p in iter_paragraphs(doc):
+            if anchor_sub in p.text:
+                anchor = p
+                break
+        if anchor is None:
+            print(f"MISS anchor {anchor_sub!r}")
+            continue
+        cur = anchor
+        for key, prefix in blocks:
+            cur = add_block(cur, key, prefix)
+        print(f"OK  injected {[b[0] for b in blocks]} after {anchor_sub[:24]!r}")
 
     doc.save(str(OUT))
     print(f"\nSaved template to {OUT}")

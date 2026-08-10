@@ -31,6 +31,13 @@ FIELDS = [
 
 FIELD_KEYS = [f["key"] for f in FIELDS]
 
+# Moderation sections — custom text injected into specific clauses of the contract.
+EXTRA_KEYS = [
+    "extra_subject", "extra_tenant", "extra_landlord",
+    "extra_liability", "extra_term", "extra_other",
+]
+ALL_TEMPLATE_KEYS = FIELD_KEYS + EXTRA_KEYS
+
 
 def auto_map_columns(headers):
     """Return {field_key: column_header} best-guess mapping from Excel headers."""
@@ -58,7 +65,7 @@ def auto_map_columns(headers):
 
 def render_docx(fields: dict) -> bytes:
     tpl = DocxTemplate(str(TEMPLATE_PATH))
-    context = {k: (fields.get(k) or "") for k in FIELD_KEYS}
+    context = {k: (fields.get(k) or "") for k in ALL_TEMPLATE_KEYS}
     tpl.render(context)
     buf = io.BytesIO()
     tpl.save(buf)

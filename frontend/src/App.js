@@ -18,7 +18,7 @@ function App() {
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>
-      <Toaster position="top-right" richColors />
+      <Toaster theme="dark" position="top-right" richColors />
     </BrowserRouter>
   );
 }

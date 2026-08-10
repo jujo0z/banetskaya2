@@ -30,10 +30,10 @@ export default function Settings() {
       </div>
 
       {/* Template info */}
-      <div className="bg-white border border-border p-6">
+      <div className="bg-card border border-border p-6">
         <div className="flex items-start gap-4">
-          <div className="h-10 w-10 bg-[#F0F4FF] flex items-center justify-center shrink-0">
-            <FileCheck2 className="h-5 w-5 text-[#002FA7]" strokeWidth={2} />
+          <div className="h-10 w-10 bg-[#E11D48]/10 flex items-center justify-center shrink-0">
+            <FileCheck2 className="h-5 w-5 text-[#E11D48]" strokeWidth={2} />
           </div>
           <div className="space-y-2">
             <h2 className="font-heading text-xl font-bold tracking-tight">Шаблон договора</h2>
@@ -52,7 +52,7 @@ export default function Settings() {
       </div>
 
       {/* Sample excel */}
-      <div className="bg-white border border-border p-6">
+      <div className="bg-card border border-border p-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="font-heading text-xl font-bold tracking-tight">Образец Excel</h2>
@@ -62,7 +62,7 @@ export default function Settings() {
             </p>
           </div>
           <Button
-            className="rounded-none bg-[#002FA7] hover:bg-[#00207A] text-white h-11"
+            className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white h-11"
             onClick={handleSample}
             disabled={downloading}
             data-testid="settings-download-sample-btn"
@@ -74,7 +74,7 @@ export default function Settings() {
       </div>
 
       {/* Fields list */}
-      <div className="bg-white border border-border">
+      <div className="bg-card border border-border">
         <div className="p-4 border-b border-border">
           <h2 className="font-heading text-xl font-bold tracking-tight">
             Поля автозаполнения ({FIELDS.length})
@@ -90,7 +90,7 @@ export default function Settings() {
               className="flex items-center gap-3 px-4 py-3 border-b border-r border-border"
               data-testid={`settings-field-${f.key}`}
             >
-              <span className="font-heading text-sm font-bold text-[#002FA7] w-6">
+              <span className="font-heading text-sm font-bold text-[#E11D48] w-6">
                 {String(i + 1).padStart(2, "0")}
               </span>
               <span className="text-sm">{f.label}</span>
