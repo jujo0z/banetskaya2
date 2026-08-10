@@ -4,6 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -88,6 +89,9 @@ export default function EditContractDialog({ open, student, onClose, onSaved }) 
           <DialogTitle className="font-heading text-2xl tracking-tight">
             Ручная правка договора
           </DialogTitle>
+          <DialogDescription>
+            Проверьте и при необходимости отредактируйте поля перед формированием документа.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">
           {FIELDS.map((f) => (

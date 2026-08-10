@@ -14,9 +14,29 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 
 import document_service as docsvc
+
+# Sample Excel columns (header -> example value) matching the contract template.
+SAMPLE_COLUMNS = [
+    ("Номер договора", "0047390 003370"),
+    ("Дата подписания", "« 21 » июля 2026"),
+    ("Номер приказа", "228"),
+    ("Дата приказа", "«21» июля 2026"),
+    ("Гражданство", "Туркменистана"),
+    ("ФИО", "Шаназаров Мырат"),
+    ("Дата рождения", "15.05.2007"),
+    ("Номер комнаты", "302/2"),
+    ("Срок договора до", "30.06.2028"),
+    ("Адрес регистрации", "пр-т Дзержинского, 85, ком. 302/2"),
+    ("Номер паспорта", "А3058202"),
+    ("Дата выдачи", "08.01.2025"),
+    ("Срок действия", "07.01.2030"),
+    ("Кем выдан", "Государственной Миграционной Службой Туркменистана"),
+    ("ИИН", "LB00258610"),
+    ("Телефон", "+37529354-11-59"),
+]
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -92,6 +112,23 @@ async def root():
 @api_router.get("/fields")
 async def get_fields():
     return {"fields": docsvc.FIELDS}
+
+
+@api_router.get("/sample-template")
+async def sample_template():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Студенты"
+    ws.append([h for h, _ in SAMPLE_COLUMNS])
+    ws.append([v for _, v in SAMPLE_COLUMNS])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=sample_students.xlsx"},
+    )
 
 
 @api_router.post("/upload")

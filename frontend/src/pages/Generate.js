@@ -26,10 +26,11 @@ import {
   FileArchive,
   Loader2,
   FileSpreadsheet,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS, mapRowsToStudents } from "@/lib/fields";
-import { uploadExcel, saveContractsBatch, batchDownload } from "@/lib/apiClient";
+import { uploadExcel, saveContractsBatch, batchDownload, downloadSampleTemplate } from "@/lib/apiClient";
 import EditContractDialog from "@/components/EditContractDialog";
 
 const NONE = "__none__";
@@ -149,6 +150,15 @@ export default function Generate() {
               <Upload className="h-4 w-4" />
             )}
             Загрузить Excel (.xlsx)
+          </Button>
+          <Button
+            variant="outline"
+            className="rounded-none h-11"
+            onClick={() => downloadSampleTemplate()}
+            data-testid="download-sample-btn"
+          >
+            <Download className="h-4 w-4" />
+            Скачать шаблон Excel
           </Button>
           {dataset && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
