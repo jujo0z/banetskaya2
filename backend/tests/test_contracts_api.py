@@ -55,7 +55,7 @@ def test_get_fields():
     assert r.status_code == 200
     data = r.json()
     assert "fields" in data
-    assert len(data["fields"]) == 16
+    assert len(data["fields"]) == 17
     keys = {f["key"] for f in data["fields"]}
     assert "full_name" in keys and "contract_number" in keys
 
@@ -194,3 +194,84 @@ def test_delete_contract(created_ids):
     r = requests.get(f"{API}/contracts/{created_ids[0]}")
     assert r.status_code == 404
     created_ids.clear()
+
+
+# ---------- New features: stats, note field, batch-print, sample-template ----------
+def test_stats_endpoint():
+    r = requests.get(f"{API}/stats")
+    assert r.status_code == 200
+    data = r.json()
+    for k in ("total", "this_month", "datasets", "recent"):
+        assert k in data
+    assert isinstance(data["recent"], list)
+    assert isinstance(data["total"], int)
+
+
+def test_sample_template_download():
+    r = requests.get(f"{API}/sample-template")
+    assert r.status_code == 200
+    assert "spreadsheetml" in r.headers.get("content-type", "")
+    assert r.content[:2] == b"PK"
+
+
+def test_note_field_appears_when_filled():
+    fields = _sample_fields(num="TEST_NOTE1", name="TEST_NoteUser")
+    fields["note"] = "TEST_ManualNoteXYZ"
+    r = requests.post(f"{API}/contracts/preview", params={"format": "docx"}, json={"fields": fields})
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+    assert "TEST_ManualNoteXYZ" in xml
+    assert "Дополнительно" in xml
+
+
+def test_note_field_absent_when_empty():
+    fields = _sample_fields(num="TEST_NOTE2", name="TEST_NoNote")
+    # explicitly empty
+    fields["note"] = ""
+    r = requests.post(f"{API}/contracts/preview", params={"format": "docx"}, json={"fields": fields})
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+    # 'Дополнительно:' line must not appear
+    assert "Дополнительно:" not in xml
+    # no leftover placeholders
+    assert "{{" not in xml and "}}" not in xml
+
+
+def test_batch_print_merged_pdf():
+    # create 2 contracts
+    ids = []
+    for i in range(2):
+        r = requests.post(f"{API}/contracts", json={"fields": _sample_fields(num=f"TEST_MP{i}", name=f"TEST_Merge{i}")})
+        assert r.status_code == 200
+        ids.append(r.json()["id"])
+    try:
+        r = requests.post(f"{API}/contracts/batch-print", json={"ids": ids, "format": "pdf"}, timeout=180)
+        assert r.status_code == 200, r.text
+        assert r.headers.get("content-type", "").startswith("application/pdf")
+        assert r.content[:4] == b"%PDF"
+        # verify it has at least 2 pages
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(r.content))
+        assert len(reader.pages) >= 2
+    finally:
+        for cid in ids:
+            requests.delete(f"{API}/contracts/{cid}")
+
+
+def test_existing_seeded_contract_present():
+    """Seed contract from problem statement should be listed and downloadable."""
+    seed_id = "45e95300-1ba1-4267-8f87-6b999ee5c83a"
+    r = requests.get(f"{API}/contracts/{seed_id}")
+    if r.status_code == 404:
+        pytest.skip("Seeded contract not present in DB")
+    assert r.status_code == 200
+    data = r.json()
+    assert "Шаназаров" in data.get("full_name", "") or "003370" in data.get("contract_number", "")
+    # download docx
+    r2 = requests.get(f"{API}/contracts/{seed_id}/download", params={"format": "docx"})
+    assert r2.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r2.content)) as zf:
+        xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+    assert "{{" not in xml and "}}" not in xml
