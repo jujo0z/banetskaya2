@@ -114,6 +114,17 @@ async def get_fields():
     return {"fields": docsvc.FIELDS}
 
 
+@api_router.get("/stats")
+async def stats():
+    total = await db.contracts.count_documents({})
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    this_month = await db.contracts.count_documents({"created_at": {"$gte": month_start}})
+    datasets = await db.datasets.count_documents({})
+    recent = await db.contracts.find({}, {"_id": 0}).sort("created_at", -1).to_list(6)
+    return {"total": total, "this_month": this_month, "datasets": datasets, "recent": recent}
+
+
 @api_router.get("/sample-template")
 async def sample_template():
     wb = Workbook()

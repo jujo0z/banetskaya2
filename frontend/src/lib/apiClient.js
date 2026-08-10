@@ -10,6 +10,11 @@ export async function fetchFields() {
   return data.fields;
 }
 
+export async function getStats() {
+  const { data } = await api.get("/stats");
+  return data;
+}
+
 export async function downloadSampleTemplate() {
   const res = await api.get("/sample-template", { responseType: "blob" });
   downloadBlob(res.data, "sample_students.xlsx");
