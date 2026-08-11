@@ -56,3 +56,12 @@
 - ДИЗАЙН: градиентные акценты фона, свечение логотипа, премиум-карточки статистики, градиентный заголовок.
 - WINDOWS-ПАКЕТ (/app/windows-package): setup.bat, start.bat, requirements-windows.txt (без облачных LLM-либ), README_WINDOWS.md, .env-примеры. Бэкенд может раздавать собранный фронтенд одним сервером (FastAPI serve_spa, активно только при наличии frontend/build — в облаке неактивно, ingress на :3000).
 - Тесты: backend 29/29, frontend полностью (баг превью подтверждён исправленным). Шаблон .docx НЕ менялся.
+
+## Implemented (2026-08 — Windows .exe установщик)
+- Бэкенд адаптирован под PyInstaller frozen-режим: пути к шаблону (document_service._resource_base) и фронтенду (server FRONTEND_BUILD) учитывают sys._MEIPASS. В облаке поведение не изменилось (frozen=False, root=404, /api работает, PDF работает).
+- backend/desktop_main.py — десктоп-точка входа: запускает встроенный mongod.exe (dbpath в %LOCALAPPDATA%\Banetskaya\data), авто-детект LibreOffice (soffice.exe), поднимает uvicorn на 127.0.0.1:8001 (FastAPI раздаёт статику фронтенда), открывает браузер.
+- windows-package/installer/banetskaya.spec — PyInstaller onedir (datas: templates, frontend/build->frontend_build, resources/mongodb; hiddenimports для motor/uvicorn/docxtpl и т.д.).
+- windows-package/installer/installer.iss — Inno Setup: единый BanetskayaSetup.exe, ярлыки, запуск после установки.
+- .github/workflows/windows-installer.yml — GitHub Actions (windows-latest): yarn build → скачать mongod.exe → pyinstaller → Inno Setup → artifact BanetskayaSetup.exe. Пользователь скачивает готовый exe (Windows-ПК для сборки не нужен).
+- Валидация в Linux: pyinstaller-сборка по спеке успешна; собранный бинарник запущен end-to-end (/api/ 200, раздача фронтенда 200, seed-demo 200) — логика упаковки корректна. Реальный Windows exe собирается на GitHub Actions (не проверялось в Linux — UNVERIFIED для Windows-специфики: mongod.exe/soffice).
+- PDF/печать на Windows: требуется бесплатный LibreOffice (авто-детект), Word работает без него. БД — встроенная портативная MongoDB. Шаблон .docx НЕ менялся.

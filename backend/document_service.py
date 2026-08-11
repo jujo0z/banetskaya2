@@ -2,13 +2,22 @@
 import io
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 from docxtpl import DocxTemplate
 
-TEMPLATE_PATH = Path(__file__).parent / "templates" / "contract_template.docx"
+
+def _resource_base() -> Path:
+    """Base directory for bundled resources (works both in dev and PyInstaller onefile)."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).parent
+
+
+TEMPLATE_PATH = _resource_base() / "templates" / "contract_template.docx"
 
 # LibreOffice binary — configurable for Windows (e.g. C:\Program Files\LibreOffice\program\soffice.exe)
 SOFFICE_BIN = os.environ.get("SOFFICE_BIN", "soffice")

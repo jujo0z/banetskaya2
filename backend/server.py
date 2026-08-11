@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import sys
 import uuid
 import zipfile
 import logging
@@ -530,10 +531,13 @@ app.add_middleware(
 
 # ---------- Optional: serve the built React frontend (single-server / desktop mode) ----------
 # Activates ONLY when a production build exists (e.g. on a local Windows machine after
-# `yarn build`). In the cloud dev setup this directory is absent, so nothing changes.
-FRONTEND_BUILD = Path(
-    os.environ.get("FRONTEND_BUILD_DIR", str(ROOT_DIR.parent / "frontend" / "build"))
-)
+# `yarn build`, or bundled inside the PyInstaller .exe). In the cloud dev setup this
+# directory is absent, so nothing changes.
+if getattr(sys, "frozen", False):
+    _default_build = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / "frontend_build"
+else:
+    _default_build = ROOT_DIR.parent / "frontend" / "build"
+FRONTEND_BUILD = Path(os.environ.get("FRONTEND_BUILD_DIR", str(_default_build)))
 if (FRONTEND_BUILD / "index.html").exists():
     logger.info("Serving frontend build from %s", FRONTEND_BUILD)
 
