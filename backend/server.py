@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Annotated
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -526,6 +526,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------- Optional: serve the built React frontend (single-server / desktop mode) ----------
+# Activates ONLY when a production build exists (e.g. on a local Windows machine after
+# `yarn build`). In the cloud dev setup this directory is absent, so nothing changes.
+FRONTEND_BUILD = Path(
+    os.environ.get("FRONTEND_BUILD_DIR", str(ROOT_DIR.parent / "frontend" / "build"))
+)
+if (FRONTEND_BUILD / "index.html").exists():
+    logger.info("Serving frontend build from %s", FRONTEND_BUILD)
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # /api/* is handled by the router above; return 404 for unknown API paths
+        # instead of falling back to the SPA index.
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = (FRONTEND_BUILD / full_path).resolve()
+        if (
+            full_path
+            and str(candidate).startswith(str(FRONTEND_BUILD.resolve()))
+            and candidate.is_file()
+        ):
+            return FileResponse(str(candidate))
+        return FileResponse(str(FRONTEND_BUILD / "index.html"))
 
 
 @app.on_event("shutdown")

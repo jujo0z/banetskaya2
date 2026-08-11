@@ -1,12 +1,17 @@
 """Document generation: fill the docx template with student data and convert to PDF."""
 import io
+import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from docxtpl import DocxTemplate
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "contract_template.docx"
+
+# LibreOffice binary — configurable for Windows (e.g. C:\Program Files\LibreOffice\program\soffice.exe)
+SOFFICE_BIN = os.environ.get("SOFFICE_BIN", "soffice")
 
 # Ordered contract fields with Russian labels + Excel column-matching keywords.
 FIELDS = [
@@ -86,16 +91,45 @@ def merge_pdfs(pdf_list) -> bytes:
 
 
 def convert_to_pdf(docx_bytes: bytes) -> bytes:
-    """Convert docx bytes to PDF using LibreOffice headless."""
+    """Convert docx bytes to PDF using LibreOffice headless.
+
+    Each call uses its OWN isolated LibreOffice user profile (`-env:UserInstallation`)
+    so concurrent conversions (e.g. live preview firing while another request runs)
+    don't collide on the shared default profile lock. A short retry adds robustness.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         docx_file = tmp_path / "contract.docx"
         docx_file.write_bytes(docx_bytes)
-        subprocess.run(
-            ["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(tmp_path), str(docx_file)],
-            check=True,
-            capture_output=True,
-            timeout=90,
-        )
-        pdf_file = tmp_path / "contract.pdf"
-        return pdf_file.read_bytes()
+        profile_dir = tmp_path / "lo_profile"
+        profile_uri = "file://" + str(profile_dir)
+
+        last_err = None
+        for attempt in range(2):
+            try:
+                subprocess.run(
+                    [
+                        SOFFICE_BIN,
+                        "-env:UserInstallation=" + profile_uri,
+                        "--headless",
+                        "--norestore",
+                        "--convert-to",
+                        "pdf",
+                        "--outdir",
+                        str(tmp_path),
+                        str(docx_file),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=90,
+                )
+                pdf_file = tmp_path / "contract.pdf"
+                if pdf_file.exists():
+                    return pdf_file.read_bytes()
+                last_err = RuntimeError("LibreOffice не создал PDF-файл")
+            except subprocess.CalledProcessError as e:
+                last_err = RuntimeError(
+                    f"soffice error: {e.stderr.decode('utf-8', 'ignore')[:300]}"
+                )
+            time.sleep(0.6)
+        raise last_err or RuntimeError("Не удалось конвертировать в PDF")

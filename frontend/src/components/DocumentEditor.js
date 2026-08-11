@@ -66,6 +66,7 @@ export default function DocumentEditor({
   const [presetOpen, setPresetOpen] = useState(false);
 
   const urlRef = useRef(null);
+  const editedRef = useRef(false);
   const [tracker, setTracker] = useState(initial);
 
   // Re-init state whenever a new subject is opened
@@ -74,9 +75,13 @@ export default function DocumentEditor({
     setFields(initial || {});
     setSavedId(contractId);
     setStatus(initialStatus);
+    editedRef.current = false;
   }
 
-  const update = (key, value) => setFields((prev) => ({ ...prev, [key]: value }));
+  const update = (key, value) => {
+    editedRef.current = true;
+    setFields((prev) => ({ ...prev, [key]: value }));
+  };
 
   const revokeUrl = () => {
     if (urlRef.current) {
@@ -102,14 +107,15 @@ export default function DocumentEditor({
   // Load presets + first preview on open
   useEffect(() => {
     if (!open) return;
+    editedRef.current = false;
     getPresets().then(setPresets).catch(() => {});
     refreshPreview(initial || {});
     // eslint-disable-next-line
   }, [open, initial]);
 
-  // Debounced auto-refresh on field changes
+  // Debounced auto-refresh — only after an actual user edit (avoids double render on open)
   useEffect(() => {
-    if (!open || !autoRefresh) return;
+    if (!open || !autoRefresh || !editedRef.current) return;
     const t = setTimeout(() => refreshPreview(fields), 1400);
     return () => clearTimeout(t);
     // eslint-disable-next-line
@@ -169,6 +175,7 @@ export default function DocumentEditor({
   }
 
   function applyPreset(p) {
+    editedRef.current = true;
     setFields((prev) => ({ ...prev, ...p.fields }));
     toast.success(`Пресет «${p.name}» применён`);
   }
