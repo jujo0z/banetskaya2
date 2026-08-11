@@ -1141,6 +1141,417 @@ except Exception as e:
     print(f"ℹ️  10.8 Existing pytest - Could not run: {e}")
 
 # ============================================================================
+# 11. CUSTOM TEMPLATES TESTS (NEW FEATURE)
+# ============================================================================
+print("\n📄 11. CUSTOM TEMPLATES TESTS")
+print("-" * 80)
+
+# Store created template IDs for cleanup
+created_template_ids = []
+
+# Test 11.1: GET /api/templates - should have default initially
+try:
+    resp = requests.get(f"{API_BASE}/templates", timeout=10)
+    if resp.status_code == 200:
+        templates = resp.json()
+        has_default = any(t.get("id") == "default" and t.get("builtin") == True and t.get("active") == True for t in templates)
+        test(
+            "11.1 GET /api/templates returns default template (builtin=true, active=true)",
+            has_default,
+            f"Templates: {len(templates)}, Has default: {has_default}"
+        )
+    else:
+        test("11.1 GET /api/templates", False, f"Status: {resp.status_code}")
+except Exception as e:
+    test("11.1 GET /api/templates", False, str(e))
+
+# Test 11.2: POST /api/templates - upload custom .docx template
+custom_template_id = None
+try:
+    # Use the built-in contract_template.docx as the file to upload
+    template_path = Path("/app/backend/templates/contract_template.docx")
+    if template_path.exists():
+        with open(template_path, "rb") as f:
+            files = {"file": ("custom_template.docx", f, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+            resp = requests.post(f"{API_BASE}/templates", files=files, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                custom_template_id = data.get("id")
+                created_template_ids.append(custom_template_id)
+                test(
+                    "11.2 POST /api/templates uploads custom .docx template",
+                    data.get("builtin") == False and custom_template_id is not None,
+                    f"Template ID: {custom_template_id}, builtin: {data.get('builtin')}"
+                )
+            else:
+                test("11.2 POST /api/templates", False, f"Status: {resp.status_code}, Body: {resp.text}")
+    else:
+        test("11.2 POST /api/templates", False, "Template file not found at /app/backend/templates/contract_template.docx")
+except Exception as e:
+    test("11.2 POST /api/templates", False, str(e))
+
+# Test 11.3: GET /api/templates - custom template should appear
+if custom_template_id:
+    try:
+        resp = requests.get(f"{API_BASE}/templates", timeout=10)
+        if resp.status_code == 200:
+            templates = resp.json()
+            has_custom = any(t.get("id") == custom_template_id and t.get("builtin") == False for t in templates)
+            test(
+                "11.3 GET /api/templates shows custom template (builtin=false)",
+                has_custom,
+                f"Templates: {len(templates)}, Has custom: {has_custom}"
+            )
+        else:
+            test("11.3 GET /api/templates", False, f"Status: {resp.status_code}")
+    except Exception as e:
+        test("11.3 GET /api/templates", False, str(e))
+
+# Test 11.4: POST /api/templates/{id}/activate - activate custom template
+if custom_template_id:
+    try:
+        resp = requests.post(f"{API_BASE}/templates/{custom_template_id}/activate", timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            test(
+                "11.4 POST /api/templates/{id}/activate activates custom template",
+                data.get("active") == custom_template_id,
+                f"Active template: {data.get('active')}"
+            )
+        else:
+            test("11.4 POST /api/templates/{id}/activate", False, f"Status: {resp.status_code}")
+    except Exception as e:
+        test("11.4 POST /api/templates/{id}/activate", False, str(e))
+
+# Test 11.5: POST /api/contracts/preview with active custom template
+if custom_template_id:
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/preview",
+            params={"format": "pdf"},
+            json={"fields": {"full_name": "Тест Кастомного Шаблона"}},
+            timeout=30
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        test(
+            "11.5 POST /api/contracts/preview?format=pdf uses active custom template",
+            resp.status_code == 200 and is_pdf,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}"
+        )
+    except Exception as e:
+        test("11.5 POST /api/contracts/preview with custom template", False, str(e))
+
+# Test 11.6: POST /api/templates/default/activate - revert to default
+try:
+    resp = requests.post(f"{API_BASE}/templates/default/activate", timeout=10)
+    if resp.status_code == 200:
+        data = resp.json()
+        test(
+            "11.6 POST /api/templates/default/activate reverts to default template",
+            data.get("active") == "default",
+            f"Active template: {data.get('active')}"
+        )
+    else:
+        test("11.6 POST /api/templates/default/activate", False, f"Status: {resp.status_code}")
+except Exception as e:
+    test("11.6 POST /api/templates/default/activate", False, str(e))
+
+# Test 11.7: DELETE /api/templates/{id} - delete custom template
+if custom_template_id:
+    try:
+        resp = requests.delete(f"{API_BASE}/templates/{custom_template_id}", timeout=10)
+        test(
+            "11.7 DELETE /api/templates/{id} deletes custom template",
+            resp.status_code == 200,
+            f"Status: {resp.status_code}"
+        )
+        # Remove from cleanup list
+        if custom_template_id in created_template_ids:
+            created_template_ids.remove(custom_template_id)
+    except Exception as e:
+        test("11.7 DELETE /api/templates/{id}", False, str(e))
+
+# Test 11.8: Verify built-in template file is NOT modified
+try:
+    template_path = Path("/app/backend/templates/contract_template.docx")
+    if template_path.exists():
+        # Check file still exists and is valid
+        file_size = template_path.stat().st_size
+        test(
+            "11.8 Built-in template file /app/backend/templates/contract_template.docx is NOT modified",
+            file_size > 10000,  # Should be around 25KB
+            f"File size: {file_size} bytes"
+        )
+    else:
+        test("11.8 Built-in template file exists", False, "File not found")
+except Exception as e:
+    test("11.8 Built-in template file check", False, str(e))
+
+# Test 11.9: POST /api/contracts/preview still works with default template
+try:
+    resp = requests.post(
+        f"{API_BASE}/contracts/preview",
+        params={"format": "pdf"},
+        json={"fields": {"full_name": "Тест После Удаления"}},
+        timeout=30
+    )
+    is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+    test(
+        "11.9 POST /api/contracts/preview?format=pdf works after deleting custom template",
+        resp.status_code == 200 and is_pdf,
+        f"Status: {resp.status_code}, Valid PDF: {is_pdf}"
+    )
+except Exception as e:
+    test("11.9 POST /api/contracts/preview after deletion", False, str(e))
+
+# Test 11.10: POST /api/templates with non-.docx file (should return 400)
+try:
+    # Create a temporary text file
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp:
+        tmp.write("This is not a docx file")
+        tmp_path = tmp.name
+    
+    try:
+        with open(tmp_path, "rb") as f:
+            files = {"file": ("test.txt", f, "text/plain")}
+            resp = requests.post(f"{API_BASE}/templates", files=files, timeout=10)
+            test(
+                "11.10 POST /api/templates with non-.docx file returns 400",
+                resp.status_code == 400,
+                f"Status: {resp.status_code}"
+            )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+except Exception as e:
+    test("11.10 POST /api/templates with non-.docx", False, str(e))
+
+# ============================================================================
+# 12. TEMPLATE INFO TESTS (NEW FEATURE)
+# ============================================================================
+print("\n📊 12. TEMPLATE INFO TESTS")
+print("-" * 80)
+
+# Test 12.1: GET /api/template-info - should return pages_per_doc
+try:
+    resp = requests.get(f"{API_BASE}/template-info", timeout=30)
+    if resp.status_code == 200:
+        data = resp.json()
+        pages = data.get("pages_per_doc")
+        # Built-in template should produce 4 pages
+        test(
+            "12.1 GET /api/template-info returns pages_per_doc (expected 4 for built-in)",
+            pages == 4,
+            f"pages_per_doc: {pages}"
+        )
+    else:
+        test("12.1 GET /api/template-info", False, f"Status: {resp.status_code}")
+except Exception as e:
+    test("12.1 GET /api/template-info", False, str(e))
+
+# ============================================================================
+# 13. PRINT PROFILES TESTS (NEW FEATURE)
+# ============================================================================
+print("\n🖨️  13. PRINT PROFILES TESTS")
+print("-" * 80)
+
+# Store created profile IDs for cleanup
+created_profile_ids = []
+
+# Test 13.1: POST /api/print-profiles - create profile
+profile_id = None
+try:
+    resp = requests.post(
+        f"{API_BASE}/print-profiles",
+        json={
+            "name": "Тестовый Профиль P1",
+            "settings": {
+                "orientation": "landscape",
+                "flip_edge": "short",
+                "backReversed": True
+            }
+        },
+        timeout=10
+    )
+    if resp.status_code == 200:
+        data = resp.json()
+        profile_id = data.get("id")
+        created_profile_ids.append(profile_id)
+        test(
+            "13.1 POST /api/print-profiles creates profile",
+            data.get("name") == "Тестовый Профиль P1" and profile_id is not None,
+            f"Profile ID: {profile_id}, Name: {data.get('name')}"
+        )
+    else:
+        test("13.1 POST /api/print-profiles", False, f"Status: {resp.status_code}, Body: {resp.text}")
+except Exception as e:
+    test("13.1 POST /api/print-profiles", False, str(e))
+
+# Test 13.2: GET /api/print-profiles - list profiles
+if profile_id:
+    try:
+        resp = requests.get(f"{API_BASE}/print-profiles", timeout=10)
+        if resp.status_code == 200:
+            profiles = resp.json()
+            has_profile = any(p.get("id") == profile_id for p in profiles)
+            test(
+                "13.2 GET /api/print-profiles returns profiles list",
+                isinstance(profiles, list) and has_profile,
+                f"Total profiles: {len(profiles)}, Has test profile: {has_profile}"
+            )
+        else:
+            test("13.2 GET /api/print-profiles", False, f"Status: {resp.status_code}")
+    except Exception as e:
+        test("13.2 GET /api/print-profiles", False, str(e))
+
+# Test 13.3: DELETE /api/print-profiles/{id} - delete profile
+if profile_id:
+    try:
+        resp = requests.delete(f"{API_BASE}/print-profiles/{profile_id}", timeout=10)
+        test(
+            "13.3 DELETE /api/print-profiles/{id} deletes profile",
+            resp.status_code == 200,
+            f"Status: {resp.status_code}"
+        )
+        # Remove from cleanup list
+        if profile_id in created_profile_ids:
+            created_profile_ids.remove(profile_id)
+    except Exception as e:
+        test("13.3 DELETE /api/print-profiles/{id}", False, str(e))
+
+# Test 13.4: Repeat DELETE (should return 404)
+if profile_id:
+    try:
+        resp = requests.delete(f"{API_BASE}/print-profiles/{profile_id}", timeout=10)
+        test(
+            "13.4 DELETE /api/print-profiles/{id} (repeat) returns 404",
+            resp.status_code == 404,
+            f"Status: {resp.status_code}"
+        )
+    except Exception as e:
+        test("13.4 DELETE /api/print-profiles/{id} (repeat)", False, str(e))
+
+# Test 13.5: POST /api/print-profiles with empty name (should return 400)
+try:
+    resp = requests.post(
+        f"{API_BASE}/print-profiles",
+        json={"name": "", "settings": {"orientation": "portrait"}},
+        timeout=10
+    )
+    test(
+        "13.5 POST /api/print-profiles with empty name returns 400",
+        resp.status_code == 400,
+        f"Status: {resp.status_code}"
+    )
+except Exception as e:
+    test("13.5 POST /api/print-profiles with empty name", False, str(e))
+
+# ============================================================================
+# 14. FLIP_EDGE PARAMETER TESTS (NEW FEATURE)
+# ============================================================================
+print("\n🔄 14. FLIP_EDGE PARAMETER TESTS")
+print("-" * 80)
+
+# Get 1 contract ID for flip_edge tests
+flip_test_id = None
+if len(contract_ids_for_duplex) >= 1:
+    flip_test_id = contract_ids_for_duplex[0]
+    print(f"📋 Using contract ID for flip_edge tests: {flip_test_id}")
+else:
+    print("⚠️  No contracts available for flip_edge testing")
+
+def get_pdf_rotations(pdf_data):
+    """Extract /Rotate values from all pages in a PDF."""
+    try:
+        from pypdf import PdfReader
+        import io
+        reader = PdfReader(io.BytesIO(pdf_data))
+        rotations = []
+        for page in reader.pages:
+            rotate = page.get('/Rotate')
+            rotations.append(rotate if rotate is not None else 0)
+        return rotations
+    except Exception as e:
+        print(f"⚠️  Error extracting rotations: {e}")
+        return []
+
+# Test 14.1: manual-duplex with flip_edge="short", side="back" -> /Rotate=180
+if flip_test_id:
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": [flip_test_id], "side": "back", "flip_edge": "short"},
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        rotations = get_pdf_rotations(resp.content) if is_pdf else []
+        all_180 = all(r == 180 for r in rotations) if rotations else False
+        test(
+            "14.1 POST manual-duplex side='back' flip_edge='short' -> all pages /Rotate=180",
+            resp.status_code == 200 and is_pdf and all_180,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Rotations: {rotations}, All 180°: {all_180}"
+        )
+    except Exception as e:
+        test("14.1 POST manual-duplex flip_edge='short'", False, str(e))
+
+# Test 14.2: manual-duplex with flip_edge="long", side="back" -> /Rotate=0/None
+if flip_test_id:
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": [flip_test_id], "side": "back", "flip_edge": "long"},
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        rotations = get_pdf_rotations(resp.content) if is_pdf else []
+        all_0 = all(r == 0 or r is None for r in rotations) if rotations else False
+        test(
+            "14.2 POST manual-duplex side='back' flip_edge='long' -> all pages /Rotate=0/None",
+            resp.status_code == 200 and is_pdf and all_0,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Rotations: {rotations}, All 0°: {all_0}"
+        )
+    except Exception as e:
+        test("14.2 POST manual-duplex flip_edge='long'", False, str(e))
+
+# Test 14.3: manual-duplex with flip_edge="short", orientation="landscape", side="back" -> /Rotate=270
+if flip_test_id:
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": [flip_test_id], "side": "back", "flip_edge": "short", "orientation": "landscape"},
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        rotations = get_pdf_rotations(resp.content) if is_pdf else []
+        all_270 = all(r == 270 for r in rotations) if rotations else False
+        test(
+            "14.3 POST manual-duplex side='back' flip_edge='short' orientation='landscape' -> all pages /Rotate=270",
+            resp.status_code == 200 and is_pdf and all_270,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Rotations: {rotations}, All 270°: {all_270}"
+        )
+    except Exception as e:
+        test("14.3 POST manual-duplex flip_edge='short' + landscape", False, str(e))
+
+# Test 14.4: Verify flip_edge default is "long" (no rotation on back)
+if flip_test_id:
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": [flip_test_id], "side": "back"},  # No flip_edge specified
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        rotations = get_pdf_rotations(resp.content) if is_pdf else []
+        all_0 = all(r == 0 or r is None for r in rotations) if rotations else False
+        test(
+            "14.4 POST manual-duplex side='back' (no flip_edge) defaults to 'long' -> /Rotate=0",
+            resp.status_code == 200 and is_pdf and all_0,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Rotations: {rotations}, All 0°: {all_0}"
+        )
+    except Exception as e:
+        test("14.4 POST manual-duplex default flip_edge", False, str(e))
+
+# ============================================================================
 # CLEANUP
 # ============================================================================
 print("\n🧹 CLEANUP")
@@ -1160,7 +1571,21 @@ for pid in created_preset_ids:
     except Exception:
         pass
 
-print(f"Cleaned up {len(created_contract_ids)} contracts and {len(created_preset_ids)} presets")
+# Delete test templates
+for tid in created_template_ids:
+    try:
+        requests.delete(f"{API_BASE}/templates/{tid}", timeout=5)
+    except Exception:
+        pass
+
+# Delete test print profiles
+for pid in created_profile_ids:
+    try:
+        requests.delete(f"{API_BASE}/print-profiles/{pid}", timeout=5)
+    except Exception:
+        pass
+
+print(f"Cleaned up {len(created_contract_ids)} contracts, {len(created_preset_ids)} presets, {len(created_template_ids)} templates, and {len(created_profile_ids)} profiles")
 
 # ============================================================================
 # SUMMARY

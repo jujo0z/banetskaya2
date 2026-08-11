@@ -140,15 +140,45 @@ export async function batchPrint(ids) {
   if (w) w.onload = () => w.print();
 }
 
-export async function manualDuplexPrint(ids, side, backReversed = true, separators = false, orientation = "portrait") {
+export async function manualDuplexPrint(ids, side, backReversed = true, separators = false, orientation = "portrait", flipEdge = "long") {
   const res = await api.post(
     `/contracts/manual-duplex`,
-    { ids, side, back_order: backReversed ? "reversed" : "normal", separators, orientation },
+    { ids, side, back_order: backReversed ? "reversed" : "normal", separators, orientation, flip_edge: flipEdge },
     { responseType: "blob" }
   );
   const url = window.URL.createObjectURL(res.data);
   const w = window.open(url);
   if (w) w.onload = () => w.print();
+}
+
+// Templates (built-in template is never modified)
+export async function listTemplates() {
+  return (await api.get("/templates")).data;
+}
+export async function uploadTemplate(file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  return (await api.post("/templates", fd, { headers: { "Content-Type": "multipart/form-data" } })).data;
+}
+export async function activateTemplate(id) {
+  return (await api.post(`/templates/${id}/activate`)).data;
+}
+export async function deleteTemplateById(id) {
+  return (await api.delete(`/templates/${id}`)).data;
+}
+export async function getTemplateInfo() {
+  return (await api.get("/template-info")).data;
+}
+
+// Printer profiles
+export async function getPrintProfiles() {
+  return (await api.get("/print-profiles")).data;
+}
+export async function savePrintProfile(name, settings) {
+  return (await api.post("/print-profiles", { name, settings })).data;
+}
+export async function deletePrintProfile(id) {
+  return (await api.delete(`/print-profiles/${id}`)).data;
 }
 
 export async function printDuplexTest(side, orientation = "portrait") {

@@ -1,19 +1,68 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw } from "lucide-react";
+import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS } from "@/lib/fields";
-import { downloadSampleTemplate, seedDemo, clearDemo, getPresets, deletePreset } from "@/lib/apiClient";
+import {
+  downloadSampleTemplate, seedDemo, clearDemo, getPresets, deletePreset,
+  listTemplates, uploadTemplate, activateTemplate, deleteTemplateById,
+} from "@/lib/apiClient";
 
 export default function Settings() {
   const [downloading, setDownloading] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [presets, setPresets] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [tplBusy, setTplBusy] = useState(false);
 
   useEffect(() => {
     getPresets().then(setPresets).catch(() => {});
+    loadTemplates();
   }, []);
+
+  function loadTemplates() {
+    listTemplates().then(setTemplates).catch(() => {});
+  }
+
+  async function handleTemplateUpload(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".docx")) {
+      toast.error("Нужен файл .docx");
+      return;
+    }
+    setTplBusy(true);
+    try {
+      await uploadTemplate(file);
+      toast.success("Шаблон загружен");
+      loadTemplates();
+    } catch {
+      toast.error("Не удалось загрузить шаблон");
+    } finally {
+      setTplBusy(false);
+    }
+  }
+
+  async function handleActivate(id) {
+    try {
+      await activateTemplate(id);
+      toast.success("Шаблон выбран для генерации");
+      loadTemplates();
+    } catch {
+      toast.error("Не удалось выбрать шаблон");
+    }
+  }
+
+  async function handleDeleteTemplate(id) {
+    try {
+      await deleteTemplateById(id);
+      loadTemplates();
+    } catch {
+      toast.error("Не удалось удалить шаблон");
+    }
+  }
 
   async function handleSeed() {
     setSeeding(true);
@@ -148,6 +197,50 @@ export default function Settings() {
               </Button>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Templates */}
+      <div className="bg-card border border-border" data-testid="settings-templates-card">
+        <div className="p-4 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <FileText className="h-5 w-5 text-[#E11D48]" />
+            <div>
+              <h2 className="font-heading text-xl font-bold tracking-tight">Шаблоны договоров</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Загрузите свой .docx-шаблон. Встроенный шаблон никогда не изменяется.
+              </p>
+            </div>
+          </div>
+          <label>
+            <input type="file" accept=".docx" className="hidden" onChange={handleTemplateUpload} data-testid="settings-template-upload" />
+            <span className={`inline-flex items-center gap-2 h-10 px-4 rounded-none text-white cursor-pointer ${tplBusy ? "bg-[#BE123C]" : "bg-[#E11D48] hover:bg-[#BE123C]"}`}>
+              {tplBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
+              Загрузить .docx
+            </span>
+          </label>
+        </div>
+        <div>
+          {templates.map((tpl) => (
+            <div key={tpl.id} className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border" data-testid={`settings-template-${tpl.id}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <FileText className="h-4 w-4 text-[#E11D48] shrink-0" />
+                <span className="text-sm font-medium truncate">{tpl.name}</span>
+                {tpl.builtin && <span className="text-[10px] uppercase tracking-wider text-muted-foreground border border-border px-1.5 py-0.5 rounded">встроенный</span>}
+                {tpl.active && <span className="text-[10px] uppercase tracking-wider text-emerald-400 border border-emerald-500/40 px-1.5 py-0.5 rounded">активен</span>}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {tpl.active ? (
+                  <span className="inline-flex items-center gap-1 text-emerald-400 text-sm"><Check className="h-4 w-4" /> Выбран</span>
+                ) : (
+                  <Button variant="outline" size="sm" className="rounded-none" onClick={() => handleActivate(tpl.id)} data-testid={`settings-template-activate-${tpl.id}`}>Сделать активным</Button>
+                )}
+                {!tpl.builtin && (
+                  <Button variant="ghost" size="sm" className="rounded-none text-[#FF3B30] hover:text-[#FF3B30] hover:bg-red-500/10" onClick={() => handleDeleteTemplate(tpl.id)} data-testid={`settings-template-delete-${tpl.id}`}><Trash2 className="h-4 w-4" /></Button>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

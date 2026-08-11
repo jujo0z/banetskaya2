@@ -7,7 +7,7 @@ import zipfile
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Dict, Annotated
+from typing import List, Optional, Dict, Annotated, Any
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
@@ -45,6 +45,26 @@ load_dotenv(ROOT_DIR / '.env')
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
+
+UPLOAD_DIR = ROOT_DIR / "templates_uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+async def _active_tpl():
+    """Return path (str) of the active custom template, or None for the built-in one."""
+    s = await db.app_settings.find_one({"key": "active_template"})
+    tid = s.get("value") if s else "default"
+    if not tid or tid == "default":
+        return None
+    t = await db.templates.find_one({"id": tid})
+    if not t:
+        return None
+    p = UPLOAD_DIR / t["filename"]
+    return str(p) if p.exists() else None
+
+
+async def _render(fields):
+    return docsvc.render_docx(fields, await _active_tpl())
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -98,6 +118,7 @@ class ManualDuplexRequest(BaseModel):
     back_order: str = "reversed"  # "reversed" | "normal"
     separators: bool = False
     orientation: str = "portrait"  # "portrait" | "landscape"
+    flip_edge: str = "long"        # "long" | "short"
 
 
 class Preset(BaseModel):
@@ -390,7 +411,7 @@ async def download_contract(contract_id: str, format: str = "docx"):
     if not doc:
         raise HTTPException(status_code=404, detail="Договор не найден")
     fields = doc["fields"]
-    docx_bytes = docsvc.render_docx(fields)
+    docx_bytes = await _render(fields)
     if format == "pdf":
         try:
             data = docsvc.convert_to_pdf(docx_bytes)
@@ -414,7 +435,7 @@ async def download_contract(contract_id: str, format: str = "docx"):
 @api_router.post("/contracts/preview")
 async def preview_contract(req: GenerateRequest, format: str = "docx"):
     """Generate a downloadable document without saving to history."""
-    docx_bytes = docsvc.render_docx(req.fields)
+    docx_bytes = await _render(req.fields)
     if format == "pdf":
         try:
             data = docsvc.convert_to_pdf(docx_bytes)
@@ -444,7 +465,7 @@ async def batch_download(req: BatchDownloadRequest):
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for doc in docs:
             fields = doc["fields"]
-            docx_bytes = docsvc.render_docx(fields)
+            docx_bytes = await _render(fields)
             if req.format == "pdf":
                 try:
                     data = docsvc.convert_to_pdf(docx_bytes)
@@ -482,7 +503,7 @@ async def batch_print(req: BatchDownloadRequest):
         doc = by_id.get(cid)
         if not doc:
             continue
-        docx_bytes = docsvc.render_docx(doc["fields"])
+        docx_bytes = await _render(doc["fields"])
         try:
             pdfs.append(docsvc.convert_to_pdf(docx_bytes))
         except Exception as e:
@@ -513,7 +534,7 @@ async def manual_duplex(req: ManualDuplexRequest):
         doc = by_id.get(cid)
         if not doc:
             continue
-        docx_bytes = docsvc.render_docx(doc["fields"])
+        docx_bytes = await _render(doc["fields"])
         try:
             pdfs.append(docsvc.convert_to_pdf(docx_bytes))
         except Exception as e:
@@ -531,6 +552,7 @@ async def manual_duplex(req: ManualDuplexRequest):
     data = docsvc.build_manual_duplex(
         pdfs, side=side, back_order=back_order, separators=bool(req.separators),
         labels=labels, orientation=("landscape" if req.orientation == "landscape" else "portrait"),
+        flip_edge=("short" if req.flip_edge == "short" else "long"),
     )
     return StreamingResponse(
         io.BytesIO(data),
@@ -645,6 +667,118 @@ async def seed_demo():
 async def clear_demo():
     res = await db.contracts.delete_many({"demo": True})
     return {"deleted": res.deleted_count}
+
+
+# ---------- Custom templates (the built-in template is NEVER modified) ----------
+_PAGECOUNT_CACHE = {}
+
+
+@api_router.get("/templates")
+async def list_templates():
+    s = await db.app_settings.find_one({"key": "active_template"})
+    active = s.get("value") if s else "default"
+    items = [{"id": "default", "name": "Стандартный (встроенный)", "builtin": True,
+              "active": active == "default"}]
+    docs = await db.templates.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    for d in docs:
+        items.append({"id": d["id"], "name": d.get("name", "Шаблон"), "builtin": False,
+                      "active": active == d["id"], "created_at": d.get("created_at")})
+    return items
+
+
+@api_router.post("/templates")
+async def upload_template(file: UploadFile = File(...)):
+    name = file.filename or "template.docx"
+    if not name.lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Нужен файл .docx")
+    tid = str(uuid.uuid4())
+    fname = f"{tid}.docx"
+    (UPLOAD_DIR / fname).write_bytes(await file.read())
+    doc = {"id": tid, "name": name, "filename": fname,
+           "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.templates.insert_one(doc)
+    _PAGECOUNT_CACHE.pop(tid, None)
+    return {"id": tid, "name": name, "builtin": False, "active": False}
+
+
+@api_router.post("/templates/{template_id}/activate")
+async def activate_template(template_id: str):
+    if template_id != "default":
+        t = await db.templates.find_one({"id": template_id})
+        if not t:
+            raise HTTPException(status_code=404, detail="Шаблон не найден")
+    await db.app_settings.update_one({"key": "active_template"},
+                                     {"$set": {"value": template_id}}, upsert=True)
+    return {"active": template_id}
+
+
+@api_router.delete("/templates/{template_id}")
+async def delete_template(template_id: str):
+    if template_id == "default":
+        raise HTTPException(status_code=400, detail="Встроенный шаблон удалить нельзя")
+    t = await db.templates.find_one({"id": template_id})
+    if not t:
+        raise HTTPException(status_code=404, detail="Шаблон не найден")
+    try:
+        (UPLOAD_DIR / t["filename"]).unlink(missing_ok=True)
+    except Exception:
+        pass
+    await db.templates.delete_one({"id": template_id})
+    s = await db.app_settings.find_one({"key": "active_template"})
+    if s and s.get("value") == template_id:
+        await db.app_settings.update_one({"key": "active_template"},
+                                         {"$set": {"value": "default"}}, upsert=True)
+    return {"deleted": True}
+
+
+@api_router.get("/template-info")
+async def template_info():
+    """Pages produced by the active template (for paper estimate). Cached."""
+    tpl = await _active_tpl()
+    key = tpl or "default"
+    if key in _PAGECOUNT_CACHE:
+        return {"pages_per_doc": _PAGECOUNT_CACHE[key]}
+    pages = 2
+    try:
+        docx_bytes = docsvc.render_docx({}, tpl)
+        pdf = docsvc.convert_to_pdf(docx_bytes)
+        from pypdf import PdfReader
+        pages = max(1, len(PdfReader(io.BytesIO(pdf)).pages))
+        _PAGECOUNT_CACHE[key] = pages
+    except Exception:
+        logger.exception("template-info failed")
+    return {"pages_per_doc": pages}
+
+
+# ---------- Printer profiles (saved duplex settings) ----------
+class PrintProfileRequest(BaseModel):
+    name: str
+    settings: Dict[str, Any]
+
+
+@api_router.get("/print-profiles")
+async def list_print_profiles():
+    return await db.print_profiles.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+
+
+@api_router.post("/print-profiles")
+async def create_print_profile(req: PrintProfileRequest):
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Укажите название профиля")
+    doc = {"id": str(uuid.uuid4()), "name": name, "settings": req.settings,
+           "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.print_profiles.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.delete("/print-profiles/{profile_id}")
+async def delete_print_profile(profile_id: str):
+    res = await db.print_profiles.delete_one({"id": profile_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Профиль не найден")
+    return {"deleted": True}
+
 
 
 app.include_router(api_router)

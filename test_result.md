@@ -211,14 +211,13 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.2"
-  test_sequence: 3
-  run_ui: true
+  version: "2.3"
+  test_sequence: 4
+  run_ui: false
 
 test_plan:
   current_focus:
-    - "DocumentEditor — двухпанельный редактор с живым PDF-предпросмотром, черновики, пресеты"
-    - "История: фильтр статусов, бейджи, кнопка редактирования; Dashboard карточка черновиков; Settings демо+пресеты; дизайн-апгрейд"
+    - "Свой шаблон .docx (upload/activate/delete), template-info, print-profiles, flip_edge"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -477,3 +476,58 @@ agent_communication:
         4. РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice установлен и работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/stats работает; ✅ GET /api/presets работает; ✅ POST /api/seed-demo идемпотентен.
         
         Все backend API полностью функциональны. Параметр orientation реализован корректно и применяется ко всем страницам PDF (включая разделители). Готово к финализации.
+
+## --- Итерация: свой шаблон + профили принтера + оценка + flip-край ---
+backend:
+  - task: "Свой шаблон .docx (upload/activate/delete), template-info, print-profiles, flip_edge"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Templates CRUD: POST /api/templates (upload .docx), GET /api/templates (default+кастомные, active-флаг), POST /api/templates/{id}/activate, DELETE. Активный шаблон используется в render/preview/generate. ВСТРОЕННЫЙ contract_template.docx НЕ модифицируется. GET /api/template-info -> pages_per_doc (кэш). print-profiles CRUD (GET/POST/DELETE). manual-duplex flip_edge=short -> обороты +180."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 26 тестов новых эндпоинтов прошли успешно (100% success rate). CUSTOM TEMPLATES (10/10 тестов): (1) GET /api/templates возвращает default (builtin:true, active:true); (2) POST /api/templates загружает кастомный .docx (использован contract_template.docx как тестовый файл) → 200, id возвращён, builtin:false; (3) GET /api/templates → кастомный шаблон появился в списке; (4) POST /api/templates/{id}/activate → активирует кастомный шаблон (active={id}); (5) POST /api/contracts/preview?format=pdf → 200, валидный PDF генерируется по активному кастомному шаблону; (6) POST /api/templates/default/activate → возврат к встроенному (active='default'); (7) DELETE /api/templates/{id} → 200 (удалён); (8) КРИТИЧЕСКИ ВАЖНО: файл /app/backend/templates/contract_template.docx НЕ изменился (размер 25490 байт, валиден); (9) POST /api/contracts/preview?format=pdf после удаления кастомного → 200, валидный PDF (встроенный шаблон работает); (10) POST /api/templates с не-.docx файлом (.txt) → 400 (валидация работает). TEMPLATE INFO (1/1 тест): GET /api/template-info → 200, {pages_per_doc: 4} для встроенного шаблона (корректно). PRINT PROFILES (5/5 тестов): (1) POST /api/print-profiles {name:'Тестовый Профиль P1', settings:{orientation:'landscape', flip_edge:'short', backReversed:true}} → 200, id возвращён; (2) GET /api/print-profiles → 200, массив профилей, тестовый профиль присутствует; (3) DELETE /api/print-profiles/{id} → 200 (удалён); (4) Повторный DELETE → 404 (корректная обработка); (5) POST /api/print-profiles с пустым name '' → 400 (валидация работает). FLIP_EDGE PARAMETER (10/10 тестов, проверка /Rotate через pypdf): (1) POST /api/contracts/manual-duplex {ids:[id], side:'back', flip_edge:'short'} → 200, валидный PDF, ВСЕ страницы /Rotate == 180 (короткий край переворота); (2) POST {side:'back', flip_edge:'long'} → 200, валидный PDF, ВСЕ страницы /Rotate == 0/None (длинный край, без доп. поворота); (3) POST {side:'back', flip_edge:'short', orientation:'landscape'} → 200, валидный PDF, ВСЕ страницы /Rotate == 270 (90° landscape + 180° short flip); (4) POST {side:'back'} (без flip_edge) → 200, ВСЕ страницы /Rotate == 0 (по умолчанию 'long'). РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/stats работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/presets работает; ✅ POST /api/seed-demo идемпотентен. Все backend API полностью функциональны. Параметр flip_edge реализован корректно: short-edge flip добавляет 180° к оборотным страницам, long-edge (по умолчанию) не добавляет поворота. Встроенный шаблон защищён от модификации."
+
+agent_communication:
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend, новые эндпоинты.
+        1) GET /api/templates -> есть default (builtin:true, active:true изначально).
+        2) POST /api/templates c файлом .docx (можешь взять любой .docx; если нет — используй backend/templates/contract_template.docx как загружаемый) -> 200, id. GET /api/templates -> появился кастомный.
+        3) POST /api/templates/{id}/activate -> active. Затем POST /api/contracts/preview?format=pdf -> 200 %PDF (генерит по активному шаблону). Верни к default: POST /api/templates/default/activate. DELETE кастомного -> 200. Проверь что файл backend/templates/contract_template.docx НЕ изменился (по-прежнему валиден, preview 200).
+        4) POST /api/templates c не-.docx (например .txt) -> 400.
+        5) GET /api/template-info -> {pages_per_doc:int} (ожидается 4 для встроенного).
+        6) print-profiles: POST {"name":"P1","settings":{"orientation":"landscape","flip_edge":"short"}} -> 200; GET -> есть; DELETE -> 200; повторный DELETE -> 404. POST с пустым name -> 400.
+        7) manual-duplex flip_edge: {"ids":[id],"side":"back","flip_edge":"short"} -> обороты /Rotate=180; "long" -> 0/None. landscape+short back -> /Rotate=270.
+        8) Регрессия: preview/batch-print/export/stats/presets/seed-demo OK; встроенный шаблон рендерится.
+        Не меняй код. Верни отчёт с /Rotate и pages_per_doc.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 72 теста прошли (100% success rate).
+        
+        НОВЫЕ ЭНДПОИНТЫ РАБОТАЮТ ПОЛНОСТЬЮ (26/26 тестов):
+        
+        1. CUSTOM TEMPLATES (10/10 тестов): GET /api/templates возвращает default (builtin:true, active:true); POST /api/templates загружает кастомный .docx → 200 (использован /app/backend/templates/contract_template.docx как тестовый файл); GET /api/templates → кастомный шаблон появился (builtin:false); POST /api/templates/{id}/activate → активирует кастомный; POST /api/contracts/preview?format=pdf → 200, валидный PDF по активному кастомному шаблону; POST /api/templates/default/activate → возврат к встроенному (active='default'); DELETE /api/templates/{id} → 200 (удалён); КРИТИЧЕСКИ ВАЖНО: файл /app/backend/templates/contract_template.docx НЕ изменился (размер 25490 байт, валиден); POST /api/contracts/preview?format=pdf после удаления → 200, валидный PDF (встроенный работает); POST /api/templates с не-.docx (.txt) → 400 (валидация).
+        
+        2. TEMPLATE INFO (1/1 тест): GET /api/template-info → 200, {pages_per_doc: 4} для встроенного шаблона (корректно).
+        
+        3. PRINT PROFILES (5/5 тестов): POST /api/print-profiles {name:'Тестовый Профиль P1', settings:{orientation:'landscape', flip_edge:'short', backReversed:true}} → 200, id; GET /api/print-profiles → 200, массив, тестовый профиль присутствует; DELETE /api/print-profiles/{id} → 200; Повторный DELETE → 404; POST с пустым name '' → 400 (валидация).
+        
+        4. FLIP_EDGE PARAMETER (10/10 тестов, /Rotate проверен через pypdf): POST /api/contracts/manual-duplex {ids:[id], side:'back', flip_edge:'short'} → 200, ВСЕ страницы /Rotate == 180 (короткий край); POST {side:'back', flip_edge:'long'} → 200, ВСЕ страницы /Rotate == 0/None (длинный край); POST {side:'back', flip_edge:'short', orientation:'landscape'} → 200, ВСЕ страницы /Rotate == 270 (90° + 180°); POST {side:'back'} (без flip_edge) → 200, ВСЕ страницы /Rotate == 0 (по умолчанию 'long').
+        
+        5. РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/stats работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/presets работает; ✅ POST /api/seed-demo идемпотентен.
+        
+        ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+        - pages_per_doc для встроенного шаблона: 4 страницы ✅
+        - /Rotate для flip_edge='short' на back: 180° ✅
+        - /Rotate для flip_edge='long' на back: 0° ✅
+        - /Rotate для flip_edge='short' + orientation='landscape' на back: 270° ✅
+        - Встроенный шаблон /app/backend/templates/contract_template.docx защищён от модификации ✅
+        
+        Все backend API полностью функциональны. Готово к финализации.

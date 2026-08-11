@@ -77,10 +77,15 @@ def auto_map_columns(headers):
     return mapping
 
 
-def render_docx(fields: dict) -> bytes:
-    tpl = DocxTemplate(str(TEMPLATE_PATH))
+def render_docx(fields: dict, template_path=None) -> bytes:
+    import jinja2
+    tpl = DocxTemplate(str(template_path or TEMPLATE_PATH))
     context = {k: (fields.get(k) or "") for k in ALL_TEMPLATE_KEYS}
-    tpl.render(context)
+    for k, v in (fields or {}).items():
+        context.setdefault(k, v or "")
+    # ChainableUndefined -> unknown placeholders in custom templates render empty
+    jenv = jinja2.Environment(undefined=jinja2.ChainableUndefined)
+    tpl.render(context, jinja_env=jenv)
     buf = io.BytesIO()
     tpl.save(buf)
     return buf.getvalue()
@@ -246,7 +251,8 @@ def _rotate_pdf(pdf_bytes: bytes, angle: int) -> bytes:
 
 
 def build_manual_duplex(pdf_list, side="front", back_order="reversed",
-                        separators=False, labels=None, orientation="portrait") -> bytes:
+                        separators=False, labels=None, orientation="portrait",
+                        flip_edge="long") -> bytes:
     """Build a PDF for MANUAL double-sided printing on a single-sided printer.
 
     Works sheet-by-sheet: each document is padded to an even number of pages so it
@@ -304,9 +310,12 @@ def build_manual_duplex(pdf_list, side="front", back_order="reversed",
             writer.add_blank_page(width=val[0], height=val[1])
     if len(writer.pages) == 0:
         writer.add_blank_page(width=ref_size[0], height=ref_size[1])
-    if orientation == "landscape":
+    # short-edge flip: back pages need an extra 180° so they aren't upside-down
+    extra = 180 if (side == "back" and flip_edge == "short") else 0
+    rot = (90 if orientation == "landscape" else 0) + extra
+    if rot:
         for p in writer.pages:
-            p.rotate(90)
+            p.rotate(rot % 360)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
