@@ -1,12 +1,53 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Download, FileCheck2, Info } from "lucide-react";
+import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS } from "@/lib/fields";
-import { downloadSampleTemplate } from "@/lib/apiClient";
+import { downloadSampleTemplate, seedDemo, clearDemo, getPresets, deletePreset } from "@/lib/apiClient";
 
 export default function Settings() {
   const [downloading, setDownloading] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [presets, setPresets] = useState([]);
+
+  useEffect(() => {
+    getPresets().then(setPresets).catch(() => {});
+  }, []);
+
+  async function handleSeed() {
+    setSeeding(true);
+    try {
+      const res = await seedDemo();
+      toast.success(res.message || "Демо-данные загружены");
+    } catch {
+      toast.error("Не удалось загрузить демо-данные");
+    } finally {
+      setSeeding(false);
+    }
+  }
+
+  async function handleClearDemo() {
+    setClearing(true);
+    try {
+      const res = await clearDemo();
+      toast.success(`Удалено демо-договоров: ${res.deleted}`);
+    } catch {
+      toast.error("Не удалось очистить демо-данные");
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  async function handleDeletePreset(id) {
+    try {
+      await deletePreset(id);
+      setPresets((prev) => prev.filter((p) => p.id !== id));
+      toast.success("Пресет удалён");
+    } catch {
+      toast.error("Не удалось удалить пресет");
+    }
+  }
 
   async function handleSample() {
     setDownloading(true);
@@ -71,6 +112,87 @@ export default function Settings() {
             Скачать шаблон Excel
           </Button>
         </div>
+      </div>
+
+      {/* Demo data */}
+      <div className="bg-card border border-border p-6" data-testid="settings-demo-card">
+        <div className="flex items-start gap-4">
+          <div className="h-10 w-10 bg-[#E11D48]/10 flex items-center justify-center shrink-0 rounded-md">
+            <Database className="h-5 w-5 text-[#E11D48]" strokeWidth={2} />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-heading text-xl font-bold tracking-tight">Тестовые данные</h2>
+            <p className="text-sm text-muted-foreground mt-1 max-w-xl">
+              Загрузите набор демонстрационных договоров (готовые + черновики), чтобы
+              посмотреть, как выглядит история, редактор и печать. Можно очистить в один клик.
+            </p>
+            <div className="flex flex-wrap gap-2 mt-4">
+              <Button
+                className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white"
+                onClick={handleSeed}
+                disabled={seeding}
+                data-testid="settings-seed-btn"
+              >
+                {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                Загрузить демо-договоры
+              </Button>
+              <Button
+                variant="outline"
+                className="rounded-none"
+                onClick={handleClearDemo}
+                disabled={clearing}
+                data-testid="settings-clear-demo-btn"
+              >
+                {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                Очистить демо
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Presets */}
+      <div className="bg-card border border-border" data-testid="settings-presets-card">
+        <div className="p-4 border-b border-border flex items-center gap-3">
+          <Bookmark className="h-5 w-5 text-[#E11D48]" />
+          <div>
+            <h2 className="font-heading text-xl font-bold tracking-tight">
+              Пресеты полей ({presets.length})
+            </h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Сохранённые наборы полей для быстрого заполнения. Создаются в редакторе договора.
+            </p>
+          </div>
+        </div>
+        {presets.length === 0 ? (
+          <div className="px-4 py-8 text-center text-muted-foreground text-sm">
+            Пресетов пока нет. Откройте редактор договора и нажмите «Сохранить пресет».
+          </div>
+        ) : (
+          <div>
+            {presets.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border"
+                data-testid={`settings-preset-${p.id}`}
+              >
+                <div className="flex items-center gap-3">
+                  <Bookmark className="h-4 w-4 text-[#E11D48]" />
+                  <span className="text-sm font-medium">{p.name}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-none text-[#FF3B30] hover:text-[#FF3B30] hover:bg-red-500/10"
+                  onClick={() => handleDeletePreset(p.id)}
+                  data-testid={`settings-preset-delete-${p.id}`}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Fields list */}

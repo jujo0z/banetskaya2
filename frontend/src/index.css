@@ -54,20 +54,47 @@ h1, h2, h3, h4, .font-heading {
 
 /* Subtle dotted grid texture for large surfaces */
 .bg-grid {
-    background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-    background-size: 24px 24px;
+    background-image:
+        radial-gradient(circle at 15% -10%, rgba(225, 29, 72, 0.10), transparent 42%),
+        radial-gradient(circle at 100% 0%, rgba(225, 29, 72, 0.06), transparent 38%),
+        radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 24px 24px;
+    background-attachment: fixed, fixed, scroll;
 }
 
 .data-row:hover {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
+/* Premium gradient text accent */
+.text-gradient {
+    background: linear-gradient(90deg, #fff 0%, #fecdd3 60%, #E11D48 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Crimson glow helper */
+.glow-crimson {
+    box-shadow: 0 0 24px rgba(225, 29, 72, 0.45);
+}
+
 ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
 }
+::-webkit-scrollbar-track {
+    background: transparent;
+}
 ::-webkit-scrollbar-thumb {
-    background: #26262b;
+    background: #2c2c33;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #3d3d45;
+    background-clip: padding-box;
 }
 ::selection {
     background: #E11D48;

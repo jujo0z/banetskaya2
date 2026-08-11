@@ -17,21 +17,26 @@ import {
   FileSpreadsheet,
   ArrowUpRight,
   Loader2,
+  FileClock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getStats, downloadSavedContract } from "@/lib/apiClient";
 
-function StatCard({ label, value, icon: Icon, testid }) {
+function StatCard({ label, value, icon: Icon, testid, accent }) {
   return (
-    <div className="bg-card border border-border p-6" data-testid={testid}>
-      <div className="flex items-start justify-between">
+    <div
+      className="group relative overflow-hidden bg-card border border-border p-6 rounded-md transition-all duration-300 hover:border-[#E11D48]/40 hover:-translate-y-0.5"
+      data-testid={testid}
+    >
+      <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#E11D48]/5 blur-2xl group-hover:bg-[#E11D48]/15 transition-colors" />
+      <div className="relative flex items-start justify-between">
         <div>
           <div className="text-xs uppercase tracking-[0.2em] font-semibold text-muted-foreground">
             {label}
           </div>
           <div className="font-heading text-4xl font-black tracking-tighter mt-3">{value}</div>
         </div>
-        <div className="h-10 w-10 bg-[#E11D48]/10 flex items-center justify-center">
+        <div className={`h-11 w-11 flex items-center justify-center rounded-md ${accent || "bg-[#E11D48]/10"}`}>
           <Icon className="h-5 w-5 text-[#E11D48]" strokeWidth={2} />
         </div>
       </div>
@@ -79,7 +84,7 @@ export default function Dashboard() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-heading text-4xl sm:text-5xl font-black tracking-tighter">Дашборд</h1>
+          <h1 className="font-heading text-4xl sm:text-5xl font-black tracking-tighter text-gradient">Дашборд</h1>
           <p className="text-muted-foreground mt-2">
             Обзор работы: сформированные договоры и быстрые действия.
           </p>
@@ -94,7 +99,7 @@ export default function Dashboard() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Всего договоров"
           value={stats ? stats.total : "—"}
@@ -106,6 +111,12 @@ export default function Dashboard() {
           value={stats ? stats.this_month : "—"}
           icon={HistoryIcon}
           testid="stat-month"
+        />
+        <StatCard
+          label="Черновики"
+          value={stats ? stats.drafts : "—"}
+          icon={FileClock}
+          testid="stat-drafts"
         />
         <StatCard
           label="Загрузок Excel"

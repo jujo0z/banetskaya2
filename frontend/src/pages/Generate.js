@@ -32,7 +32,7 @@ import {
 import { toast } from "sonner";
 import { FIELDS, mapRowsToStudents } from "@/lib/fields";
 import { uploadExcel, saveContractsBatch, batchDownload, batchPrint, downloadSampleTemplate } from "@/lib/apiClient";
-import EditContractDialog from "@/components/EditContractDialog";
+import EditContractDialog from "@/components/DocumentEditor";
 
 const NONE = "__none__";
 
@@ -344,7 +344,7 @@ export default function Generate() {
 
       <EditContractDialog
         open={editIndex !== null}
-        student={editIndex !== null ? students[editIndex] : null}
+        initial={editIndex !== null ? students[editIndex] : null}
         onClose={() => setEditIndex(null)}
       />
     </div>

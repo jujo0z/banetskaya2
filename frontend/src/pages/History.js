@@ -27,7 +27,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye } from "lucide-react";
+import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye, Pencil, FileClock } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
   listContracts,
@@ -39,6 +40,7 @@ import {
   api,
 } from "@/lib/apiClient";
 import DocumentPreviewDialog from "@/components/DocumentPreviewDialog";
+import DocumentEditor from "@/components/DocumentEditor";
 
 export default function History() {
   const [contracts, setContracts] = useState([]);
@@ -51,11 +53,13 @@ export default function History() {
   const [batchPrinting, setBatchPrinting] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [toDelete, setToDelete] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [editing, setEditing] = useState(null);
 
-  async function load(q = "") {
+  async function load(q = "", status = statusFilter) {
     setLoading(true);
     try {
-      const data = await listContracts(q);
+      const data = await listContracts(q, status);
       setContracts(data);
     } catch (e) {
       toast.error("Не удалось загрузить историю");
@@ -66,13 +70,14 @@ export default function History() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line
   }, []);
 
   useEffect(() => {
-    const t = setTimeout(() => load(search), 300);
+    const t = setTimeout(() => load(search, statusFilter), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line
-  }, [search]);
+  }, [search, statusFilter]);
 
   function toggle(id) {
     setSelected((prev) => {
@@ -196,6 +201,27 @@ export default function History() {
         </p>
       </div>
 
+      <div className="flex items-center gap-1 bg-card border border-border p-1 w-fit rounded-md" data-testid="history-status-tabs">
+        {[
+          { k: "", label: "Все" },
+          { k: "final", label: "Готовые" },
+          { k: "draft", label: "Черновики" },
+        ].map((t) => (
+          <button
+            key={t.k}
+            onClick={() => setStatusFilter(t.k)}
+            className={`px-4 py-1.5 text-sm rounded-sm transition-colors ${
+              statusFilter === t.k
+                ? "bg-[#E11D48] text-white"
+                : "text-muted-foreground hover:text-white"
+            }`}
+            data-testid={`history-filter-${t.k || "all"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="bg-card border border-border">
         <div className="flex flex-wrap items-center gap-3 p-4 border-b border-border">
           <div className="relative flex-1 min-w-[220px]">
@@ -246,6 +272,7 @@ export default function History() {
               </TableHead>
               <TableHead>№ договора</TableHead>
               <TableHead>ФИО</TableHead>
+              <TableHead>Статус</TableHead>
               <TableHead>Дата создания</TableHead>
               <TableHead className="text-right">Действия</TableHead>
             </TableRow>
@@ -253,14 +280,14 @@ export default function History() {
           <TableBody>
             {loading && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center py-10 text-muted-foreground">
+                <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin inline" /> Загрузка…
                 </TableCell>
               </TableRow>
             )}
             {!loading && contracts.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center py-10 text-muted-foreground">
+                <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
                   Договоры не найдены
                 </TableCell>
               </TableRow>
@@ -277,9 +304,30 @@ export default function History() {
                   </TableCell>
                   <TableCell className="font-medium">{c.contract_number || "—"}</TableCell>
                   <TableCell>{c.full_name || "—"}</TableCell>
+                  <TableCell>
+                    {c.status === "draft" ? (
+                      <Badge className="rounded-full border-0 bg-amber-500/15 text-amber-400">
+                        <FileClock className="h-3 w-3 mr-1" /> Черновик
+                      </Badge>
+                    ) : (
+                      <Badge className="rounded-full border-0 bg-emerald-500/15 text-emerald-400">
+                        Готов
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell className="text-muted-foreground">{fmtDate(c.created_at)}</TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-none"
+                        onClick={() => setEditing(c)}
+                        title="Редактировать"
+                        data-testid={`edit-${c.id}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -371,6 +419,15 @@ export default function History() {
           if (previewUrl) window.URL.revokeObjectURL(previewUrl);
           setPreviewUrl(null);
         }}
+      />
+
+      <DocumentEditor
+        open={!!editing}
+        initial={editing ? editing.fields : null}
+        contractId={editing ? editing.id : null}
+        initialStatus={editing ? editing.status || "final" : "final"}
+        onClose={() => setEditing(null)}
+        onSaved={() => load(search, statusFilter)}
       />
     </div>
   );

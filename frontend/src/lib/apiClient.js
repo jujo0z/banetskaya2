@@ -29,8 +29,13 @@ export async function uploadExcel(file) {
   return data;
 }
 
-export async function saveContract(fields) {
-  const { data } = await api.post("/contracts", { fields });
+export async function saveContract(fields, status = "final") {
+  const { data } = await api.post("/contracts", { fields, status });
+  return data;
+}
+
+export async function updateContract(id, fields, status) {
+  const { data } = await api.put(`/contracts/${id}`, { fields, status });
   return data;
 }
 
@@ -39,8 +44,36 @@ export async function saveContractsBatch(contracts) {
   return data;
 }
 
-export async function listContracts(q = "") {
-  const { data } = await api.get("/contracts", { params: q ? { q } : {} });
+export async function listContracts(q = "", status = "") {
+  const params = {};
+  if (q) params.q = q;
+  if (status) params.status = status;
+  const { data } = await api.get("/contracts", { params });
+  return data;
+}
+
+export async function getPresets() {
+  const { data } = await api.get("/presets");
+  return data;
+}
+
+export async function savePreset(name, fields) {
+  const { data } = await api.post("/presets", { name, fields });
+  return data;
+}
+
+export async function deletePreset(id) {
+  const { data } = await api.delete(`/presets/${id}`);
+  return data;
+}
+
+export async function seedDemo() {
+  const { data } = await api.post("/seed-demo");
+  return data;
+}
+
+export async function clearDemo() {
+  const { data } = await api.delete("/seed-demo");
   return data;
 }
 

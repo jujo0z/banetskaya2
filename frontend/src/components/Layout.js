@@ -20,7 +20,7 @@ export default function Layout() {
     <div className="App min-h-screen bg-background flex">
       <aside className="no-print w-64 shrink-0 bg-[#0A0A0C]/80 backdrop-blur-xl border-r border-white/10 flex flex-col sticky top-0 h-screen z-30">
         <div className="flex items-center gap-3 px-5 h-20 border-b border-white/10">
-          <div className="h-10 w-10 bg-[#E11D48] flex items-center justify-center shadow-[0_0_24px_rgba(225,29,72,0.45)]">
+          <div className="h-10 w-10 bg-gradient-to-br from-[#F43F5E] to-[#BE123C] flex items-center justify-center rounded-md glow-crimson">
             <FileSignature className="h-5 w-5 text-white" strokeWidth={2} />
           </div>
           <div>

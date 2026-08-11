@@ -31,6 +31,40 @@ export const SECTIONS = [
 
 export const FIELD_MAP = Object.fromEntries(FIELDS.map((f) => [f.key, f.label]));
 
+// Logical grouping for the document editor (keys reference FIELDS).
+export const FIELD_GROUPS = [
+  {
+    id: "contract",
+    title: "Договор",
+    icon: "FileSignature",
+    keys: ["contract_number", "sign_date", "order_number", "order_date", "contract_end_date"],
+  },
+  {
+    id: "tenant",
+    title: "Наниматель",
+    icon: "User",
+    keys: ["full_name", "citizenship", "birth_date", "phone", "id_number"],
+  },
+  {
+    id: "housing",
+    title: "Проживание",
+    icon: "Home",
+    keys: ["room_number", "registration_address"],
+  },
+  {
+    id: "passport",
+    title: "Паспорт",
+    icon: "BookUser",
+    keys: ["passport_number", "passport_issue_date", "passport_valid_until", "passport_issued_by"],
+  },
+  {
+    id: "extra",
+    title: "Дополнительно",
+    icon: "PlusCircle",
+    keys: ["note"],
+  },
+];
+
 export function mapRowsToStudents(rows, mapping) {
   return rows.map((row) => {
     const s = {};
