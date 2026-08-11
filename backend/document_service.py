@@ -99,48 +99,196 @@ def merge_pdfs(pdf_list) -> bytes:
     return out.getvalue()
 
 
-def build_manual_duplex(pdf_list, side="front", back_order="reversed") -> bytes:
+_FONTS_READY = False
+
+
+def _ensure_fonts():
+    """Register bundled Liberation Sans (Cyrillic) fonts with reportlab once."""
+    global _FONTS_READY
+    if _FONTS_READY:
+        return
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    fonts_dir = _resource_base() / "assets" / "fonts"
+    reg = fonts_dir / "LiberationSans-Regular.ttf"
+    bold = fonts_dir / "LiberationSans-Bold.ttf"
+    # fallback to common system paths
+    if not reg.exists():
+        reg = Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf")
+    if not bold.exists():
+        bold = Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")
+    try:
+        if reg.exists():
+            pdfmetrics.registerFont(TTFont("AppSans", str(reg)))
+        if bold.exists():
+            pdfmetrics.registerFont(TTFont("AppSans-Bold", str(bold)))
+        _FONTS_READY = True
+    except Exception:
+        _FONTS_READY = False
+
+
+def _font(bold=False):
+    if _FONTS_READY:
+        return "AppSans-Bold" if bold else "AppSans"
+    return "Helvetica-Bold" if bold else "Helvetica"
+
+
+def make_separator_page(index, number="", name="", size=(595.0, 842.0)):
+    """A numbered divider sheet (crimson bands + big number) to split the stack."""
+    from reportlab.pdfgen import canvas
+    from pypdf import PdfReader
+
+    _ensure_fonts()
+    w, h = size
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(w, h))
+    # crimson bands
+    c.setFillColorRGB(225 / 255, 29 / 255, 72 / 255)
+    band_h = h * 0.06
+    c.rect(0, h * 0.66, w, band_h, stroke=0, fill=1)
+    c.rect(0, h * 0.30, w, band_h, stroke=0, fill=1)
+    # big number
+    c.setFillColorRGB(0.12, 0.12, 0.14)
+    c.setFont(_font(True), min(w, h) * 0.20)
+    c.drawCentredString(w / 2, h * 0.46, f"№ {index}")
+    # sub labels
+    c.setFont(_font(False), 16)
+    if number:
+        c.drawCentredString(w / 2, h * 0.24, f"Договор: {number}")
+    if name:
+        c.setFont(_font(True), 18)
+        c.drawCentredString(w / 2, h * 0.20, str(name))
+    c.setFillColorRGB(0.5, 0.5, 0.55)
+    c.setFont(_font(False), 12)
+    c.drawCentredString(w / 2, h * 0.74, "— РАЗДЕЛИТЕЛЬ —")
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return PdfReader(buf).pages[0]
+
+
+def make_test_page(side="front", size=(595.0, 842.0)):
+    """One-sheet duplex test page (front / back) with orientation markers."""
+    from reportlab.pdfgen import canvas
+    from pypdf import PdfReader
+
+    _ensure_fonts()
+    w, h = size
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(w, h))
+    is_front = side == "front"
+
+    # top band with arrow + "ВЕРХ ЛИСТА"
+    c.setFillColorRGB(225 / 255, 29 / 255, 72 / 255)
+    c.rect(0, h - h * 0.08, w, h * 0.08, stroke=0, fill=1)
+    c.setFillColorRGB(1, 1, 1)
+    c.setFont(_font(True), 22)
+    c.drawCentredString(w / 2, h - h * 0.058, "\u25B2  ВЕРХ ЛИСТА  \u25B2")
+
+    c.setFillColorRGB(0.12, 0.12, 0.14)
+    c.setFont(_font(True), min(w, h) * 0.09)
+    c.drawCentredString(w / 2, h * 0.60, "ЛИЦЕВАЯ" if is_front else "ОБОРОТ")
+    c.setFont(_font(True), min(w, h) * 0.16)
+    c.drawCentredString(w / 2, h * 0.46, "1")
+
+    c.setFont(_font(False), 14)
+    lines_front = [
+        "Это ЛИЦЕВАЯ сторона пробного листа.",
+        "1) Распечатайте её (кнопка «Печать лицевой»).",
+        "2) Переверните лист и вставьте обратно в лоток.",
+        "3) Распечатайте ОБОРОТ (кнопка «Печать оборота»).",
+    ]
+    lines_back = [
+        "Это ОБОРОТ пробного листа.",
+        "Если надпись «ВЕРХ ЛИСТА» вверху и совпала с лицевой,",
+        "а текст НЕ перевёрнут — переворот выбран правильно.",
+        "Если оборот вверх ногами — переворачивайте лист",
+        "по ДРУГОМУ краю (короткому вместо длинного).",
+    ]
+    y = h * 0.30
+    for ln in (lines_front if is_front else lines_back):
+        c.drawCentredString(w / 2, y, ln)
+        y -= 22
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return PdfReader(buf).pages[0]
+
+
+def _page_to_pdf_bytes(page, size=(595.0, 842.0)) -> bytes:
+    from pypdf import PdfWriter
+    writer = PdfWriter()
+    writer.add_page(page)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def build_test_sheet(side="front") -> bytes:
+    """Return a single-page PDF for the duplex orientation test."""
+    return _page_to_pdf_bytes(make_test_page(side))
+
+
+def build_manual_duplex(pdf_list, side="front", back_order="reversed",
+                        separators=False, labels=None) -> bytes:
     """Build a PDF for MANUAL double-sided printing on a single-sided printer.
 
-    Each document is padded to an even number of pages (a blank page is appended
-    when the page count is odd) so every document starts on a fresh sheet's FRONT
-    and the backs never shift onto the wrong document.
+    Works sheet-by-sheet: each document is padded to an even number of pages so it
+    always begins on a fresh sheet FRONT. Optionally inserts a numbered separator
+    sheet before each document (front=divider, back=blank) so stacks are easy to sort.
 
-    side="front" -> pages 1,3,5,... of every document (in normal order).
-    side="back"  -> pages 2,4,6,... ; when back_order="reversed" the whole back
-                    sequence is reversed (correct for the common case where you
-                    flip the entire printed stack at once).
+    side="front" -> front side of every sheet (pages 1,3,5,... + separators), normal order.
+    side="back"  -> back side of every sheet; when back_order="reversed" the whole
+                    back sequence is reversed (flip the entire printed stack at once).
     """
     from pypdf import PdfReader, PdfWriter
 
-    fronts, backs = [], []  # items: ("page", page_obj) | ("blank", (w, h))
-    for b in pdf_list:
+    labels = labels or []
+    sheets = []  # list of (front_item, back_item); item = ("page", obj) | ("blank", (w,h))
+    ref_size = (595.0, 842.0)
+
+    for di, b in enumerate(pdf_list):
         reader = PdfReader(io.BytesIO(b))
         pages = list(reader.pages)
-        n = len(pages)
-        if n == 0:
+        if not pages:
             continue
         ref = pages[-1]
         w = float(ref.mediabox.width)
         h = float(ref.mediabox.height)
-        seq = [("page", p) for p in pages]
-        if n % 2 == 1:
-            seq.append(("blank", (w, h)))
-        for i, item in enumerate(seq):
-            (fronts if i % 2 == 0 else backs).append(item)
+        ref_size = (w, h)
 
-    chosen = fronts if side == "front" else backs
-    if side == "back" and back_order == "reversed":
-        chosen = list(reversed(chosen))
+        if separators:
+            lbl = labels[di] if di < len(labels) else {}
+            sep = make_separator_page(
+                index=di + 1,
+                number=lbl.get("number", "") if isinstance(lbl, dict) else "",
+                name=lbl.get("name", "") if isinstance(lbl, dict) else "",
+                size=(w, h),
+            )
+            sheets.append((("page", sep), ("blank", (w, h))))
+
+        seq = [("page", p) for p in pages]
+        if len(pages) % 2 == 1:
+            seq.append(("blank", (w, h)))
+        for i in range(0, len(seq), 2):
+            sheets.append((seq[i], seq[i + 1]))
+
+    if side == "front":
+        items = [s[0] for s in sheets]
+    else:
+        items = [s[1] for s in sheets]
+        if back_order == "reversed":
+            items = list(reversed(items))
 
     writer = PdfWriter()
-    for kind, val in chosen:
+    for kind, val in items:
         if kind == "page":
             writer.add_page(val)
         else:
             writer.add_blank_page(width=val[0], height=val[1])
     if len(writer.pages) == 0:
-        writer.add_blank_page(width=595, height=842)
+        writer.add_blank_page(width=ref_size[0], height=ref_size[1])
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()

@@ -96,6 +96,7 @@ class ManualDuplexRequest(BaseModel):
     ids: List[str]
     side: str = "front"          # "front" | "back"
     back_order: str = "reversed"  # "reversed" | "normal"
+    separators: bool = False
 
 
 class Preset(BaseModel):
@@ -519,11 +520,32 @@ async def manual_duplex(req: ManualDuplexRequest):
             raise HTTPException(status_code=500, detail=f"Ошибка конвертации в PDF: {e}")
     side = req.side if req.side in ("front", "back") else "front"
     back_order = req.back_order if req.back_order in ("reversed", "normal") else "reversed"
-    data = docsvc.build_manual_duplex(pdfs, side=side, back_order=back_order)
+    labels = []
+    for cid in req.ids:
+        doc = by_id.get(cid)
+        if not doc:
+            continue
+        f = doc.get("fields", {}) or {}
+        labels.append({"number": f.get("contract_number", ""), "name": f.get("full_name", "")})
+    data = docsvc.build_manual_duplex(
+        pdfs, side=side, back_order=back_order, separators=bool(req.separators), labels=labels
+    )
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename=duplex_{side}.pdf"},
+    )
+
+
+@api_router.get("/print-test")
+async def print_test(side: str = "front"):
+    """One-sheet duplex orientation test page (front/back)."""
+    side = side if side in ("front", "back") else "front"
+    data = docsvc.build_test_sheet(side)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=test_{side}.pdf"},
     )
 
 

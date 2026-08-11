@@ -392,3 +392,44 @@ agent_communication:
         РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice установлен и работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/stats работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/presets работает; ✅ GET /api/sample-template возвращает Excel-файл.
         
         Все backend API полностью функциональны. Готово к финализации.
+
+## --- Итерация: диапазон + разделитель + пробный лист (duplex) ---
+backend:
+  - task: "Duplex: разделители (separators) + пробный лист GET /api/print-test"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "manual-duplex получил параметр separators:bool — вставляет пронумерованный лист-разделитель (reportlab, кириллица через Liberation Sans) перед каждым договором (front=разделитель, back=blank). Новый GET /api/print-test?side=front|back — 1-страничный тест переворота. Диапазон N-M реализован на фронте (срез ids)."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 8 тестов новых возможностей двусторонней печати прошли успешно (100% success rate). ПРОБНЫЙ ЛИСТ: (1) GET /api/print-test?side=front возвращает 200, Content-Type application/pdf, валидный PDF начинается с %PDF, ровно 1 страница; (2) GET /api/print-test?side=back возвращает 200, валидный PDF, 1 страница; (3) GET /api/print-test без параметра возвращает 200, валидный PDF, 1 страница (front по умолчанию). РАЗДЕЛИТЕЛИ (separators) для 2 договоров: (4) POST /api/contracts/manual-duplex {ids:[id1,id2], side:'front', separators:true} → 200, валидный PDF, РОВНО 6 страниц (2 договора × 2 лицевые + 2 разделителя); (5) POST {side:'back', separators:true} → 200, валидный PDF, РОВНО 6 страниц (2 договора × 2 оборотные + 2 blank); (6) POST {side:'back', separators:true, back_order:'normal'} → 200, валидный PDF, 6 страниц. БЕЗ РАЗДЕЛИТЕЛЕЙ (обратная совместимость): (7) POST {ids:[id1,id2], side:'front'} (separators по умолчанию false) → 200, валидный PDF, РОВНО 4 страницы (2 договора × 2 лицевые, без разделителей); (8) POST {side:'back'} → 200, валидный PDF, РОВНО 4 страницы. РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/stats работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/presets работает; ✅ GET /api/sample-template возвращает Excel-файл. Все backend API полностью функциональны."
+
+agent_communication:
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend, новые вещи duplex.
+        1) GET /api/print-test?side=front -> 200 %PDF, 1 страница. side=back -> 200 %PDF 1 страница. Без параметра -> 200 (front).
+        2) POST /api/contracts/manual-duplex с 2 реальными id и {"side":"front","separators":true} -> 200 %PDF, 6 страниц (2 док*2 стр лицевых + 2 разделителя). {"side":"back","separators":true} -> 200 %PDF, 6 страниц.
+        3) Без separators (по умолчанию false): 2 док -> front 4 страницы, back 4 страницы.
+        4) separators + back_order normal/reversed -> оба 200.
+        5) Регрессия: preview pdf, batch-print, export xlsx, stats, presets — не сломаны; soffice работает.
+        Не меняй код. Верни отчёт с числом страниц.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 52 теста прошли (100% success rate).
+        
+        НОВЫЕ ВОЗМОЖНОСТИ ДВУСТОРОННЕЙ ПЕЧАТИ РАБОТАЮТ ПОЛНОСТЬЮ:
+        
+        1. ПРОБНЫЙ ЛИСТ (3/3 теста): GET /api/print-test?side=front возвращает валидный 1-страничный PDF; GET /api/print-test?side=back возвращает валидный 1-страничный PDF; GET /api/print-test без параметра возвращает валидный 1-страничный PDF (front по умолчанию).
+        
+        2. РАЗДЕЛИТЕЛИ (separators) в manual-duplex для 2 договоров (5/5 тестов): POST /api/contracts/manual-duplex {ids:[id1,id2], side:'front', separators:true} → 200, валидный PDF, РОВНО 6 страниц (2 договора × 2 лицевые + 2 разделителя); POST {side:'back', separators:true} → 200, валидный PDF, РОВНО 6 страниц (2 договора × 2 оборотные + 2 blank); POST {side:'back', separators:true, back_order:'normal'} → 200, валидный PDF, 6 страниц; POST {side:'front'} (без separators) → 200, валидный PDF, РОВНО 4 страницы (обратная совместимость); POST {side:'back'} (без separators) → 200, валидный PDF, РОВНО 4 страницы.
+        
+        3. РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice установлен и работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/stats работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/presets работает; ✅ GET /api/sample-template возвращает Excel-файл.
+        
+        Все backend API полностью функциональны. Готово к финализации.

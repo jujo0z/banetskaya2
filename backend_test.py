@@ -865,18 +865,174 @@ except Exception as e:
     test("7.10 POST /api/contracts/manual-duplex with mixed IDs", False, str(e))
 
 # ============================================================================
-# 8. REGRESSION TESTS (LibreOffice, batch-print, stats, export, presets)
+# 8. PRINT TEST SHEET TESTS (NEW FEATURE - GET /api/print-test)
 # ============================================================================
-print("\n🔄 8. REGRESSION TESTS")
+print("\n📄 8. PRINT TEST SHEET TESTS (Пробный лист)")
 print("-" * 80)
 
+# Test 8.1: GET /api/print-test?side=front
+try:
+    resp = requests.get(f"{API_BASE}/print-test", params={"side": "front"}, timeout=10)
+    is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+    pages = count_pdf_pages(resp.content) if is_pdf else 0
+    test(
+        "8.1 GET /api/print-test?side=front returns 1-page PDF",
+        resp.status_code == 200 and 
+        resp.headers.get("content-type") == "application/pdf" and 
+        is_pdf and
+        pages == 1,
+        f"Status: {resp.status_code}, Content-Type: {resp.headers.get('content-type')}, Valid PDF: {is_pdf}, Pages: {pages}"
+    )
+except Exception as e:
+    test("8.1 GET /api/print-test?side=front", False, str(e))
+
+# Test 8.2: GET /api/print-test?side=back
+try:
+    resp = requests.get(f"{API_BASE}/print-test", params={"side": "back"}, timeout=10)
+    is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+    pages = count_pdf_pages(resp.content) if is_pdf else 0
+    test(
+        "8.2 GET /api/print-test?side=back returns 1-page PDF",
+        resp.status_code == 200 and 
+        resp.headers.get("content-type") == "application/pdf" and 
+        is_pdf and
+        pages == 1,
+        f"Status: {resp.status_code}, Content-Type: {resp.headers.get('content-type')}, Valid PDF: {is_pdf}, Pages: {pages}"
+    )
+except Exception as e:
+    test("8.2 GET /api/print-test?side=back", False, str(e))
+
+# Test 8.3: GET /api/print-test (no parameter, should default to front)
+try:
+    resp = requests.get(f"{API_BASE}/print-test", timeout=10)
+    is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+    pages = count_pdf_pages(resp.content) if is_pdf else 0
+    test(
+        "8.3 GET /api/print-test (no param) returns 1-page PDF (defaults to front)",
+        resp.status_code == 200 and 
+        resp.headers.get("content-type") == "application/pdf" and 
+        is_pdf and
+        pages == 1,
+        f"Status: {resp.status_code}, Content-Type: {resp.headers.get('content-type')}, Valid PDF: {is_pdf}, Pages: {pages}"
+    )
+except Exception as e:
+    test("8.3 GET /api/print-test (no param)", False, str(e))
+
 # ============================================================================
-# 8. REGRESSION TESTS (LibreOffice, batch-print, stats, export, presets)
+# 9. SEPARATORS IN MANUAL DUPLEX TESTS (NEW FEATURE)
 # ============================================================================
-print("\n🔄 8. REGRESSION TESTS")
+print("\n📑 9. SEPARATORS IN MANUAL DUPLEX TESTS")
 print("-" * 80)
 
-# Test 8.1: LibreOffice is installed and working (critical for manual-duplex)
+# Get 2 contract IDs for separator tests
+separator_test_ids = []
+if len(contract_ids_for_duplex) >= 2:
+    separator_test_ids = contract_ids_for_duplex[:2]
+    print(f"📋 Using 2 contract IDs for separator tests: {separator_test_ids}")
+else:
+    print("⚠️  Not enough contracts for separator testing")
+
+# Test 9.1: POST manual-duplex with separators=true, side=front (2 contracts)
+# Expected: 6 pages (2 contracts × 2 front pages + 2 separators)
+if len(separator_test_ids) == 2:
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": separator_test_ids, "side": "front", "separators": True},
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        pages = count_pdf_pages(resp.content) if is_pdf else 0
+        # Each contract = 4 pages, 2 contracts = 8 pages total
+        # Front pages: pages 1,3 of each = 2 per contract = 4 pages
+        # With separators: 2 separators (each separator is 1 front page) = 2 pages
+        # Total front with separators: 4 + 2 = 6 pages
+        test(
+            "9.1 POST manual-duplex side='front' separators=true returns 6 pages (2 contracts)",
+            resp.status_code == 200 and is_pdf and pages == 6,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Pages: {pages} (expected 6: 2 contracts × 2 front + 2 separators)"
+        )
+    except Exception as e:
+        test("9.1 POST manual-duplex side='front' separators=true", False, str(e))
+
+    # Test 9.2: POST manual-duplex with separators=true, side=back (2 contracts)
+    # Expected: 6 pages (2 contracts × 2 back pages + 2 blank backs for separators)
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": separator_test_ids, "side": "back", "separators": True},
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        pages = count_pdf_pages(resp.content) if is_pdf else 0
+        test(
+            "9.2 POST manual-duplex side='back' separators=true returns 6 pages (2 contracts)",
+            resp.status_code == 200 and is_pdf and pages == 6,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Pages: {pages} (expected 6: 2 contracts × 2 back + 2 blank)"
+        )
+    except Exception as e:
+        test("9.2 POST manual-duplex side='back' separators=true", False, str(e))
+
+    # Test 9.3: POST manual-duplex with separators=true, side=back, back_order=normal
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": separator_test_ids, "side": "back", "separators": True, "back_order": "normal"},
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        pages = count_pdf_pages(resp.content) if is_pdf else 0
+        test(
+            "9.3 POST manual-duplex side='back' separators=true back_order='normal' returns 6 pages",
+            resp.status_code == 200 and is_pdf and pages == 6,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Pages: {pages} (expected 6)"
+        )
+    except Exception as e:
+        test("9.3 POST manual-duplex side='back' separators=true back_order='normal'", False, str(e))
+
+    # Test 9.4: POST manual-duplex WITHOUT separators (default false), side=front (2 contracts)
+    # Expected: 4 pages (2 contracts × 2 front pages, no separators)
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": separator_test_ids, "side": "front"},
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        pages = count_pdf_pages(resp.content) if is_pdf else 0
+        test(
+            "9.4 POST manual-duplex side='front' (no separators) returns 4 pages (2 contracts)",
+            resp.status_code == 200 and is_pdf and pages == 4,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Pages: {pages} (expected 4: 2 contracts × 2 front, no separators)"
+        )
+    except Exception as e:
+        test("9.4 POST manual-duplex side='front' (no separators)", False, str(e))
+
+    # Test 9.5: POST manual-duplex WITHOUT separators, side=back (2 contracts)
+    # Expected: 4 pages (2 contracts × 2 back pages, no separators)
+    try:
+        resp = requests.post(
+            f"{API_BASE}/contracts/manual-duplex",
+            json={"ids": separator_test_ids, "side": "back"},
+            timeout=60
+        )
+        is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+        pages = count_pdf_pages(resp.content) if is_pdf else 0
+        test(
+            "9.5 POST manual-duplex side='back' (no separators) returns 4 pages (2 contracts)",
+            resp.status_code == 200 and is_pdf and pages == 4,
+            f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Pages: {pages} (expected 4: 2 contracts × 2 back, no separators)"
+        )
+    except Exception as e:
+        test("9.5 POST manual-duplex side='back' (no separators)", False, str(e))
+
+# ============================================================================
+# 10. REGRESSION TESTS (LibreOffice, batch-print, stats, export, presets)
+# ============================================================================
+print("\n🔄 10. REGRESSION TESTS")
+print("-" * 80)
+
+# Test 10.1: LibreOffice is installed and working (critical for manual-duplex)
 try:
     resp = requests.post(
         f"{API_BASE}/contracts/preview",
@@ -886,14 +1042,14 @@ try:
     )
     is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
     test(
-        "8.1 REGRESSION: POST /api/contracts/preview?format=pdf works (LibreOffice installed)",
+        "10.1 REGRESSION: POST /api/contracts/preview?format=pdf works (LibreOffice installed)",
         resp.status_code == 200 and is_pdf,
         f"Status: {resp.status_code}, Valid PDF: {is_pdf}"
     )
 except Exception as e:
-    test("8.1 REGRESSION: POST /api/contracts/preview?format=pdf", False, str(e))
+    test("10.1 REGRESSION: POST /api/contracts/preview?format=pdf", False, str(e))
 
-# Test 8.2: Batch print still works
+# Test 10.2: Batch print still works
 if len(contract_ids_for_duplex) >= 2:
     try:
         resp = requests.post(
@@ -903,68 +1059,67 @@ if len(contract_ids_for_duplex) >= 2:
         )
         is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
         test(
-            "8.2 REGRESSION: POST /api/contracts/batch-print works",
+            "10.2 REGRESSION: POST /api/contracts/batch-print works",
             resp.status_code == 200 and is_pdf,
             f"Status: {resp.status_code}, Valid PDF: {is_pdf}"
         )
     except Exception as e:
-        test("8.2 REGRESSION: POST /api/contracts/batch-print", False, str(e))
+        test("10.2 REGRESSION: POST /api/contracts/batch-print", False, str(e))
 
-# Test 8.3: Stats endpoint works
+# Test 10.3: Stats endpoint works
 try:
     resp = requests.get(f"{API_BASE}/stats", timeout=10)
     test(
-        "8.3 REGRESSION: GET /api/stats works",
+        "10.3 REGRESSION: GET /api/stats works",
         resp.status_code == 200 and "total" in resp.json(),
         f"Status: {resp.status_code}"
     )
 except Exception as e:
-    test("8.3 REGRESSION: GET /api/stats", False, str(e))
+    test("10.3 REGRESSION: GET /api/stats", False, str(e))
 
-# Test 8.4: Export endpoint works
+# Test 10.4: Export endpoint works
 try:
     resp = requests.get(f"{API_BASE}/contracts/export", timeout=30)
     is_xlsx = resp.content.startswith(b'PK\x03\x04') if resp.status_code == 200 else False
     test(
-        "8.4 REGRESSION: GET /api/contracts/export works",
+        "10.4 REGRESSION: GET /api/contracts/export works",
         resp.status_code == 200 and is_xlsx,
         f"Status: {resp.status_code}, Valid XLSX: {is_xlsx}"
     )
 except Exception as e:
-    test("8.4 REGRESSION: GET /api/contracts/export", False, str(e))
+    test("10.4 REGRESSION: GET /api/contracts/export", False, str(e))
 
-# Test 8.5: Presets endpoint works
+# Test 10.5: Presets endpoint works
 try:
     resp = requests.get(f"{API_BASE}/presets", timeout=10)
     test(
-        "8.5 REGRESSION: GET /api/presets works",
+        "10.5 REGRESSION: GET /api/presets works",
         resp.status_code == 200 and isinstance(resp.json(), list),
         f"Status: {resp.status_code}"
     )
 except Exception as e:
-    test("8.5 REGRESSION: GET /api/presets", False, str(e))
+    test("10.5 REGRESSION: GET /api/presets", False, str(e))
 
-# Test 8.6: GET /api/sample-template
-# Test 8.6: GET /api/sample-template
+# Test 10.6: GET /api/sample-template
 try:
     resp = requests.get(f"{API_BASE}/sample-template", timeout=10)
     is_xlsx = resp.content.startswith(b'PK\x03\x04') if resp.status_code == 200 else False
     test(
-        "8.6 REGRESSION: GET /api/sample-template returns Excel file",
+        "10.6 REGRESSION: GET /api/sample-template returns Excel file",
         resp.status_code == 200 and 
         "spreadsheetml" in resp.headers.get("content-type", "") and 
         is_xlsx,
         f"Status: {resp.status_code}, Content-Type: {resp.headers.get('content-type')}"
     )
 except Exception as e:
-    test("8.6 REGRESSION: GET /api/sample-template", False, str(e))
+    test("10.6 REGRESSION: GET /api/sample-template", False, str(e))
 
-# Test 8.7: POST /api/upload (would need actual file, skip for now but verify endpoint exists)
+# Test 10.7: POST /api/upload (would need actual file, skip for now but verify endpoint exists)
 # Note: This would require creating a test Excel file, which is complex in this context
-print("ℹ️  8.7 POST /api/upload - Skipped (requires file upload, tested separately)")
+print("ℹ️  10.7 POST /api/upload - Skipped (requires file upload, tested separately)")
 
-# Test 8.8: Run existing pytest if available
-print("\n🧪 8.8 Running existing pytest suite...")
+# Test 10.8: Run existing pytest if available
+print("\n🧪 10.8 Running existing pytest suite...")
 try:
     import subprocess
     result = subprocess.run(
@@ -976,14 +1131,14 @@ try:
     )
     pytest_passed = result.returncode == 0
     test(
-        "8.8 REGRESSION: Existing pytest suite passes",
+        "10.8 REGRESSION: Existing pytest suite passes",
         pytest_passed,
         f"Exit code: {result.returncode}"
     )
     if not pytest_passed:
         print(f"   Pytest output:\n{result.stdout}\n{result.stderr}")
 except Exception as e:
-    print(f"ℹ️  8.8 Existing pytest - Could not run: {e}")
+    print(f"ℹ️  10.8 Existing pytest - Could not run: {e}")
 
 # ============================================================================
 # CLEANUP
