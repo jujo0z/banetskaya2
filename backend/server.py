@@ -92,6 +92,12 @@ class BatchDownloadRequest(BaseModel):
     format: str = "docx"
 
 
+class ManualDuplexRequest(BaseModel):
+    ids: List[str]
+    side: str = "front"          # "front" | "back"
+    back_order: str = "reversed"  # "reversed" | "normal"
+
+
 class Preset(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -485,6 +491,39 @@ async def batch_print(req: BatchDownloadRequest):
         io.BytesIO(merged),
         media_type="application/pdf",
         headers={"Content-Disposition": "inline; filename=contracts.pdf"},
+    )
+
+
+@api_router.post("/contracts/manual-duplex")
+async def manual_duplex(req: ManualDuplexRequest):
+    """Manual double-sided printing on a single-sided printer (batch).
+
+    Returns one merged PDF for the requested side: 'front' (odd pages of every
+    document) or 'back' (even pages). Each document is padded to an even number
+    of pages so documents never share a sheet.
+    """
+    docs = await db.contracts.find({"id": {"$in": req.ids}}, {"_id": 0}).to_list(5000)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Договоры не найдены")
+    by_id = {d["id"]: d for d in docs}
+    pdfs = []
+    for cid in req.ids:  # preserve selection order
+        doc = by_id.get(cid)
+        if not doc:
+            continue
+        docx_bytes = docsvc.render_docx(doc["fields"])
+        try:
+            pdfs.append(docsvc.convert_to_pdf(docx_bytes))
+        except Exception as e:
+            logger.exception("PDF conversion failed")
+            raise HTTPException(status_code=500, detail=f"Ошибка конвертации в PDF: {e}")
+    side = req.side if req.side in ("front", "back") else "front"
+    back_order = req.back_order if req.back_order in ("reversed", "normal") else "reversed"
+    data = docsvc.build_manual_duplex(pdfs, side=side, back_order=back_order)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=duplex_{side}.pdf"},
     )
 
 

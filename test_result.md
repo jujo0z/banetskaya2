@@ -211,8 +211,8 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.1"
-  test_sequence: 2
+  version: "2.2"
+  test_sequence: 3
   run_ui: true
 
 test_plan:
@@ -344,3 +344,51 @@ agent_communication:
         ✅ ОСТАЛЬНЫЕ ЭНДПОИНТЫ: GET /api/stats (200, поля total/drafts), GET /api/presets (200, массив), POST /api/seed-demo (200, идемпотентен) — все работают.
         
         ❌ КРИТИЧЕСКАЯ РЕГРЕССИЯ ОБНАРУЖЕНА: POST /api/contracts/preview?format=pdf возвращает 500 '[Errno 2] No such file or directory: soffice'. LibreOffice НЕ установлен (which soffice → не найден, /app/.emergent/system_deps.txt содержит только 'cron', LibreOffice отсутствует). Предыдущий фикс не сохранился после перезапуска контейнера. Требуется добавить LibreOffice в system_deps.txt для персистентности.
+
+## --- Итерация: ручная двусторонняя печать (пачкой) ---
+backend:
+  - task: "Ручная двусторонняя печать: POST /api/contracts/manual-duplex (side=front|back, back_order)"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Новый эндпоинт для принтеров без дуплекса. side=front -> нечётные страницы (1,3,5) всех выбранных договоров; side=back -> чётные (2,4,6), при back_order=reversed вся последовательность оборотов разворачивается. Каждый документ дополняется пустой страницей при нечётном числе страниц (чтобы не съезжали обороты). Логика build_manual_duplex проверена юнит-тестом (pad+split+reverse)."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 10 тестов ручной двусторонней печати прошли успешно (100%): (1) POST /api/contracts/manual-duplex с side='front' возвращает 200, Content-Type application/pdf, валидный PDF начинается с %PDF, содержит 6 страниц; (2) POST с side='back', back_order='reversed' возвращает 200, валидный PDF, 6 страниц; (3) POST с side='back', back_order='normal' возвращает 200, валидный PDF, 6 страниц; (4-7) ЛОГИКА ПОДТВЕРЖДЕНА: каждый договор рендерится в 4 страницы (чётное число), для 3 выбранных договоров front содержит ровно 6 страниц (страницы 1 и 3 каждого договора), back содержит ровно 6 страниц (страницы 2 и 4 каждого договора), front_pages == back_pages == 6; (8) POST с пустым массивом ids=[] возвращает 404 (корректная валидация); (9) POST с несуществующим UUID возвращает 404 (НЕ 500-краш, корректная обработка); (10) POST со смешанными валидными/невалидными ID обрабатывает только валидные (2 договора → 4 страницы). LibreOffice soffice работает корректно, PDF-конвертация стабильна."
+
+agent_communication:
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend, фокус на POST /api/contracts/manual-duplex.
+        Возьми 3 реальных id из GET /api/contracts.
+        1) side=front -> 200, тело %PDF. Проверь число страниц через размер/валидность.
+        2) side=back, back_order=reversed -> 200 %PDF. 3) side=back, back_order=normal -> 200 %PDF.
+        4) Логика: каждый договор рендерится в 4 страницы. Для N выбранных договоров: front должен
+           содержать 2*N страниц (стр.1 и 3 каждого), back тоже 2*N (стр.2 и 4). Т.е. front_pages==back_pages==2*N.
+        5) Пустой ids -> 404. Несуществующий id в списке игнорируется (не падает).
+        6) Регрессия: batch-print и manual-duplex используют LibreOffice — убедись что PDF реально генерится
+           (soffice установлен). stats/export/presets не сломаны.
+        Не меняй код. Верни отчёт с числом страниц front/back для 3 договоров.
+    - agent: "testing"
+      message: >
+        ✅ РУЧНАЯ ДВУСТОРОННЯЯ ПЕЧАТЬ РАБОТАЕТ ПОЛНОСТЬЮ (10/10 тестов, 100% success rate).
+        
+        НОВЫЙ ЭНДПОИНТ POST /api/contracts/manual-duplex: Все 3 варианта (side='front', side='back' с back_order='reversed'/'normal') возвращают валидные PDF-файлы (200, Content-Type application/pdf, начинаются с %PDF).
+        
+        ЛОГИКА ПОДТВЕРЖДЕНА: Для 3 выбранных договоров (каждый рендерится в 4 страницы):
+        - front содержит РОВНО 6 страниц (страницы 1 и 3 каждого договора)
+        - back (reversed) содержит РОВНО 6 страниц (страницы 2 и 4 каждого договора, в обратном порядке)
+        - back (normal) содержит РОВНО 6 страниц (страницы 2 и 4 каждого договора, в нормальном порядке)
+        - front_pages == back_pages == 6 ✅
+        
+        ОБРАБОТКА ОШИБОК: (1) Пустой массив ids=[] → 404 (корректная валидация); (2) Несуществующий UUID → 404 (НЕ 500-краш); (3) Смешанные валидные/невалидные ID → обрабатывает только валидные (2 договора → 4 страницы).
+        
+        РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice установлен и работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/stats работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/presets работает; ✅ GET /api/sample-template возвращает Excel-файл.
+        
+        Все backend API полностью функциональны. Готово к финализации.

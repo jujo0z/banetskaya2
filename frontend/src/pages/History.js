@@ -27,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye, Pencil, FileClock, FileSpreadsheet } from "lucide-react";
+import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye, Pencil, FileClock, FileSpreadsheet, Layers } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
@@ -42,6 +42,7 @@ import {
 } from "@/lib/apiClient";
 import DocumentPreviewDialog from "@/components/DocumentPreviewDialog";
 import DocumentEditor from "@/components/DocumentEditor";
+import ManualDuplexDialog from "@/components/ManualDuplexDialog";
 
 export default function History() {
   const [contracts, setContracts] = useState([]);
@@ -57,6 +58,7 @@ export default function History() {
   const [statusFilter, setStatusFilter] = useState("");
   const [editing, setEditing] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const [duplexOpen, setDuplexOpen] = useState(false);
 
   async function handleExport() {
     setExporting(true);
@@ -288,6 +290,17 @@ export default function History() {
             {batchPrinting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
             Печать выбранных ({selected.size})
           </Button>
+          <Button
+            variant="outline"
+            className="rounded-none border-white/15"
+            onClick={() => setDuplexOpen(true)}
+            disabled={selected.size === 0}
+            title="Двусторонняя печать вручную для принтера без дуплекса"
+            data-testid="history-duplex-btn"
+          >
+            <Layers className="h-4 w-4" />
+            Двусторонняя вручную ({selected.size})
+          </Button>
         </div>
 
         <Table>
@@ -454,6 +467,12 @@ export default function History() {
         initialStatus={editing ? editing.status || "final" : "final"}
         onClose={() => setEditing(null)}
         onSaved={() => load(search, statusFilter)}
+      />
+
+      <ManualDuplexDialog
+        open={duplexOpen}
+        ids={[...selected]}
+        onClose={() => setDuplexOpen(false)}
       />
     </div>
   );

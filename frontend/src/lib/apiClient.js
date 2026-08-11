@@ -140,6 +140,17 @@ export async function batchPrint(ids) {
   if (w) w.onload = () => w.print();
 }
 
+export async function manualDuplexPrint(ids, side, backReversed = true) {
+  const res = await api.post(
+    `/contracts/manual-duplex`,
+    { ids, side, back_order: backReversed ? "reversed" : "normal" },
+    { responseType: "blob" }
+  );
+  const url = window.URL.createObjectURL(res.data);
+  const w = window.open(url);
+  if (w) w.onload = () => w.print();
+}
+
 export async function batchDownload(ids, format) {
   const res = await api.post(`/contracts/batch-download`, { ids, format }, {
     responseType: "blob",

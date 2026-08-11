@@ -28,11 +28,13 @@ import {
   FileSpreadsheet,
   Download,
   Printer,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS, mapRowsToStudents } from "@/lib/fields";
 import { uploadExcel, saveContractsBatch, batchDownload, batchPrint, downloadSampleTemplate } from "@/lib/apiClient";
 import EditContractDialog from "@/components/DocumentEditor";
+import ManualDuplexDialog from "@/components/ManualDuplexDialog";
 
 const NONE = "__none__";
 
@@ -47,6 +49,9 @@ export default function Generate() {
   const [batchFormat, setBatchFormat] = useState("docx");
   const [batching, setBatching] = useState(false);
   const [batchPrinting, setBatchPrinting] = useState(false);
+  const [duplexOpen, setDuplexOpen] = useState(false);
+  const [duplexIds, setDuplexIds] = useState([]);
+  const [preparingDuplex, setPreparingDuplex] = useState(false);
   const fileRef = useRef();
 
   const students = useMemo(
@@ -131,6 +136,21 @@ export default function Generate() {
       toast.error("Не удалось открыть на печать");
     } finally {
       setBatchPrinting(false);
+    }
+  }
+
+  async function handleManualDuplex() {
+    const items = [...selected].map((i) => students[i]);
+    if (items.length === 0) return;
+    setPreparingDuplex(true);
+    try {
+      const res = await saveContractsBatch(items);
+      setDuplexIds(res.created.map((c) => c.id));
+      setDuplexOpen(true);
+    } catch (err) {
+      toast.error("Не удалось подготовить документы");
+    } finally {
+      setPreparingDuplex(false);
     }
   }
 
@@ -283,6 +303,21 @@ export default function Generate() {
               )}
               Печать выбранных ({selected.size})
             </Button>
+            <Button
+              variant="outline"
+              className="rounded-none"
+              onClick={handleManualDuplex}
+              disabled={selected.size === 0 || preparingDuplex}
+              title="Двусторонняя печать вручную для принтера без дуплекса"
+              data-testid="duplex-print-btn"
+            >
+              {preparingDuplex ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Layers className="h-4 w-4" />
+              )}
+              Двусторонняя вручную ({selected.size})
+            </Button>
           </div>
 
           <Table>
@@ -346,6 +381,12 @@ export default function Generate() {
         open={editIndex !== null}
         initial={editIndex !== null ? students[editIndex] : null}
         onClose={() => setEditIndex(null)}
+      />
+
+      <ManualDuplexDialog
+        open={duplexOpen}
+        ids={duplexIds}
+        onClose={() => setDuplexOpen(false)}
       />
     </div>
   );

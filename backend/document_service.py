@@ -99,6 +99,53 @@ def merge_pdfs(pdf_list) -> bytes:
     return out.getvalue()
 
 
+def build_manual_duplex(pdf_list, side="front", back_order="reversed") -> bytes:
+    """Build a PDF for MANUAL double-sided printing on a single-sided printer.
+
+    Each document is padded to an even number of pages (a blank page is appended
+    when the page count is odd) so every document starts on a fresh sheet's FRONT
+    and the backs never shift onto the wrong document.
+
+    side="front" -> pages 1,3,5,... of every document (in normal order).
+    side="back"  -> pages 2,4,6,... ; when back_order="reversed" the whole back
+                    sequence is reversed (correct for the common case where you
+                    flip the entire printed stack at once).
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    fronts, backs = [], []  # items: ("page", page_obj) | ("blank", (w, h))
+    for b in pdf_list:
+        reader = PdfReader(io.BytesIO(b))
+        pages = list(reader.pages)
+        n = len(pages)
+        if n == 0:
+            continue
+        ref = pages[-1]
+        w = float(ref.mediabox.width)
+        h = float(ref.mediabox.height)
+        seq = [("page", p) for p in pages]
+        if n % 2 == 1:
+            seq.append(("blank", (w, h)))
+        for i, item in enumerate(seq):
+            (fronts if i % 2 == 0 else backs).append(item)
+
+    chosen = fronts if side == "front" else backs
+    if side == "back" and back_order == "reversed":
+        chosen = list(reversed(chosen))
+
+    writer = PdfWriter()
+    for kind, val in chosen:
+        if kind == "page":
+            writer.add_page(val)
+        else:
+            writer.add_blank_page(width=val[0], height=val[1])
+    if len(writer.pages) == 0:
+        writer.add_blank_page(width=595, height=842)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def convert_to_pdf(docx_bytes: bytes) -> bytes:
     """Convert docx bytes to PDF using LibreOffice headless.
 
