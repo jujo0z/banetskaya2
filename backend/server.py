@@ -284,6 +284,71 @@ async def list_contracts(q: Optional[str] = None, status: Optional[str] = None):
     return docs
 
 
+@api_router.get("/contracts/export")
+async def export_contracts(q: Optional[str] = None, status: Optional[str] = None):
+    """Export the whole contracts history into a single .xlsx registry."""
+    query = {}
+    if status in ("final", "draft"):
+        query["status"] = status if status == "draft" else {"$ne": "draft"}
+    if q:
+        query["$or"] = [
+            {"full_name": {"$regex": re.escape(q), "$options": "i"}},
+            {"contract_number": {"$regex": re.escape(q), "$options": "i"}},
+        ]
+    docs = await db.contracts.find(query, {"_id": 0}).sort("created_at", -1).to_list(5000)
+
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Реестр договоров"
+
+    headers = ["№", "Дата создания", "Статус"] + [f["label"] for f in docsvc.FIELDS]
+    ws.append(headers)
+
+    header_fill = PatternFill("solid", fgColor="E11D48")
+    header_font = Font(color="FFFFFF", bold=True)
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(vertical="center")
+
+    def fmt_date(iso):
+        try:
+            return datetime.fromisoformat(iso).strftime("%d.%m.%Y %H:%M")
+        except Exception:
+            return iso or ""
+
+    for i, doc in enumerate(docs, start=1):
+        fields = doc.get("fields", {}) or {}
+        status_ru = "Черновик" if doc.get("status") == "draft" else "Готов"
+        row = [i, fmt_date(doc.get("created_at", "")), status_ru]
+        row += [fields.get(f["key"], "") for f in docsvc.FIELDS]
+        ws.append(row)
+
+    # auto-ish column widths
+    for col_idx, header in enumerate(headers, start=1):
+        max_len = len(str(header))
+        for r in range(2, ws.max_row + 1):
+            v = ws.cell(row=r, column=col_idx).value
+            if v is not None:
+                max_len = max(max_len, len(str(v)))
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max(max_len + 2, 10), 45)
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    fname = f"Реестр_договоров_{stamp}.xlsx"
+    from urllib.parse import quote
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
 @api_router.get("/contracts/{contract_id}")
 async def get_contract(contract_id: str):
     doc = await db.contracts.find_one({"id": contract_id}, {"_id": 0})

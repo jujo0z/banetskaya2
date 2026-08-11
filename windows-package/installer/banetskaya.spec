@@ -5,6 +5,7 @@ import os
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 BACKEND = os.path.join(ROOT, "backend")
+ICON = os.path.join(SPECPATH, "assets", "icon.ico")
 
 datas = [
     (os.path.join(BACKEND, "templates"), "templates"),
@@ -55,7 +56,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=True,
-    icon=None,
+    icon=ICON,
 )
 coll = COLLECT(
     exe,

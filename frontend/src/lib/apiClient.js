@@ -146,3 +146,11 @@ export async function batchDownload(ids, format) {
   });
   downloadBlob(res.data, "contracts.zip");
 }
+
+export async function exportHistory(q = "", status = "") {
+  const params = {};
+  if (q) params.q = q;
+  if (status) params.status = status;
+  const res = await api.get("/contracts/export", { params, responseType: "blob" });
+  downloadBlob(res.data, parseFilename(res.headers, "Реестр_договоров.xlsx"));
+}

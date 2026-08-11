@@ -293,3 +293,54 @@ agent_communication:
         КОНСОЛЬ И API: Никаких ошибок не обнаружено (0 console errors, 0 API errors).
         
         Приложение полностью функционально и готово к использованию.
+
+## --- Итерация: экспорт истории в Excel + брендинг установщика ---
+backend:
+  - task: "Экспорт истории в Excel: GET /api/contracts/export (?q=&status=)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Новый эндпоинт: .xlsx-реестр всех договоров (openpyxl), колонки №/Дата/Статус + все поля. Фильтры q и status. Маршрут добавлен ДО /contracts/{id} — проверить что get_contract по id не сломан."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 6 тестов экспорта прошли успешно (100%): (1) GET /api/contracts/export возвращает 200, Content-Type=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, тело начинается с 'PK' (валидный XLSX), Content-Disposition содержит filename='Реестр_договоров_20260811.xlsx' (URL-encoded UTF-8), размер >1KB; (2) GET /api/contracts/export?status=draft → 200, валидный XLSX; (3) GET /api/contracts/export?status=final → 200, валидный XLSX; (4) GET /api/contracts/export?q=Иванова → 200, валидный XLSX (поиск работает); (5) РЕГРЕССИЯ: GET /api/contracts/{id} с реальным ID возвращает 200 и объект договора с полями 'id' и 'fields' (маршрут /export НЕ перехватывает /{id}); (6) GET /api/contracts (список) → 200, возвращает массив договоров. Порядок маршрутов корректен, фильтры работают."
+  - task: "LibreOffice восстановлен (soffice) для PDF-конвертации"
+    implemented: true
+    working: false
+    file: "document_service.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Окружение восстановлено без LibreOffice — preview/pdf/print давали 500 'soffice not found'. Установлен libreoffice-writer/core. Проверить /api/contracts/preview?format=pdf возвращает PDF."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 5 тестов PDF-конвертации прошли успешно: (1) POST /api/contracts/preview?format=pdf возвращает валидный PDF с Content-Type application/pdf и начинается с %PDF; (2) POST /api/contracts/preview?format=docx возвращает валидный DOCX; (3) GET /api/contracts/{id}/download?format=pdf возвращает валидный PDF; (4) GET /api/contracts/{id}/download?format=docx возвращает валидный DOCX; (5) POST /api/contracts/batch-print возвращает объединённый PDF. LibreOffice soffice работает корректно."
+        - working: false
+          agent: "testing"
+          comment: "❌ КРИТИЧЕСКАЯ РЕГРЕССИЯ: POST /api/contracts/preview?format=pdf возвращает 500 с ошибкой '[Errno 2] No such file or directory: soffice'. LibreOffice НЕ установлен в текущем контейнере. Команда 'which soffice' не находит исполняемый файл. Файл /app/.emergent/system_deps.txt содержит только 'cron=3.0pl1-162', LibreOffice отсутствует. Это означает, что предыдущий фикс (установка LibreOffice и добавление в system_deps.txt) не был применён или не сохранился после перезапуска контейнера. Все остальные эндпоинты работают корректно."
+
+agent_communication:
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend, фокус на новом эндпоинте GET /api/contracts/export.
+        1) GET /api/contracts/export → 200, Content-Type xlsx (application/vnd.openxmlformats-officedocument.spreadsheetml.sheet), тело начинается с 'PK', Content-Disposition с именем файла.
+        2) GET /api/contracts/export?status=draft и ?status=final → 200 xlsx (фильтр применяется).
+        3) GET /api/contracts/export?q=<часть ФИО> → 200 xlsx.
+        4) РЕГРЕССИЯ порядка маршрутов: GET /api/contracts/{id} по реальному id всё ещё 200 (не перехватывается export). GET /api/contracts (список) 200. Существующие эндпоинты (preview pdf/docx, stats, presets, seed-demo) не сломаны.
+        Не меняй код. Верни отчёт.
+    - agent: "testing"
+      message: >
+        ✅ ЭКСПОРТ В EXCEL РАБОТАЕТ ПОЛНОСТЬЮ (6/6 тестов). Новый эндпоинт GET /api/contracts/export возвращает валидный XLSX-файл с корректными заголовками (Content-Type, Content-Disposition с именем файла 'Реестр_договоров_YYYYMMDD.xlsx'). Все фильтры работают: ?status=draft, ?status=final, ?q=<поиск>. РЕГРЕССИЯ НЕ ОБНАРУЖЕНА: GET /api/contracts/{id} и GET /api/contracts (список) работают корректно — маршрут /export НЕ перехватывает /{id}.
+        
+        ✅ ОСТАЛЬНЫЕ ЭНДПОИНТЫ: GET /api/stats (200, поля total/drafts), GET /api/presets (200, массив), POST /api/seed-demo (200, идемпотентен) — все работают.
+        
+        ❌ КРИТИЧЕСКАЯ РЕГРЕССИЯ ОБНАРУЖЕНА: POST /api/contracts/preview?format=pdf возвращает 500 '[Errno 2] No such file or directory: soffice'. LibreOffice НЕ установлен (which soffice → не найден, /app/.emergent/system_deps.txt содержит только 'cron', LibreOffice отсутствует). Предыдущий фикс не сохранился после перезапуска контейнера. Требуется добавить LibreOffice в system_deps.txt для персистентности.
