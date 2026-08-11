@@ -25,7 +25,10 @@ echo "== mongodb =="
 curl -fsSL https://pgp.mongodb.com/server-7.0.asc | gpg -o /usr/share/keyrings/mongodb.gpg --dearmor
 . /etc/os-release
 if [ "$ID" = "ubuntu" ]; then
-  echo "deb [ signed-by=/usr/share/keyrings/mongodb.gpg ] https://repo.mongodb.org/apt/ubuntu ${VERSION_CODENAME}/mongodb-org/7.0 multiverse" > /etc/apt/sources.list.d/mongodb.list
+  # MongoDB 7.0 не публикует репозиторий для noble(24.04); пакеты jammy(22.04) работают.
+  MONGO_CODENAME="$VERSION_CODENAME"
+  [ "$VERSION_CODENAME" = "noble" ] && MONGO_CODENAME="jammy"
+  echo "deb [ signed-by=/usr/share/keyrings/mongodb.gpg ] https://repo.mongodb.org/apt/ubuntu ${MONGO_CODENAME}/mongodb-org/7.0 multiverse" > /etc/apt/sources.list.d/mongodb.list
 else
   echo "deb [ signed-by=/usr/share/keyrings/mongodb.gpg ] http://repo.mongodb.org/apt/debian ${VERSION_CODENAME}/mongodb-org/7.0 main" > /etc/apt/sources.list.d/mongodb.list
 fi
