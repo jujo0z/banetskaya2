@@ -82,3 +82,11 @@
 - ПРОБНЫЙ ЛИСТ: GET /api/print-test?side=front|back — 1-страничный тест переворота с подсказками (ЛИЦЕВАЯ/ОБОРОТ, ВЕРХ ЛИСТА, инструкции). Кнопки «Пробная лицевая»/«Пробный оборот» в диалоге. apiClient.printDuplexTest.
 - Зависимость reportlab==5.0.0 добавлена в requirements.txt и windows-package/requirements-windows.txt. Шрифты забандлены (кроссплатформенно для Windows-сборки).
 - Тесты backend: 52/52 (print-test 1 стр; separators 6/6 для 2 док; без separators 4/4; регрессия чистая; soffice OK). Фронт проверен скриншотом.
+
+## Implemented (2026-08 — duplex: гид, ориентация, self-heal)
+- ПОШАГОВЫЙ ГИД в ManualDuplexDialog: стадии front -> flip -> done. Шаг 1 «Печать лицевых»; после — экран «Переверните стопку» с кнопкой «Шаг 2. Печать оборотов» + «Перепечатать лицевые»; после — «Партия напечатана» с «Следующая партия (t+1..N)» / «Начать заново». Настройки (диапазон/ориентация/разделители/реверс) блокируются после старта печати.
+- ОРИЕНТАЦИЯ: параметр orientation (portrait|landscape) в POST /api/contracts/manual-duplex и GET /api/print-test. landscape поворачивает все выходные страницы на 90 (/Rotate=90), включая разделители. Селектор «Книжная (обычная)/Альбомная» в диалоге.
+- РАЗДЕЛИТЕЛИ: переключатель (выбор включать/нет) — уже был, оставлен явным.
+- SELF-HEAL soffice: @app.on_event('startup') — если на Linux нет soffice, фоновая доустановка LibreOffice (контейнер периодически пересоздаётся и стирает /usr; system_deps.txt восстанавливает не всегда). SOFFICE_BIN конфигурируем; на Windows пропускается.
+- apiClient: manualDuplexPrint(ids, side, backReversed, separators, orientation); printDuplexTest(side, orientation).
+- Тесты backend 16/16 (ориентация fronts/backs/separators, регрессия чистая). Фронт проверен скриншотами (гид: front->flip; селектор ориентации).

@@ -225,13 +225,28 @@ def _page_to_pdf_bytes(page, size=(595.0, 842.0)) -> bytes:
     return out.getvalue()
 
 
-def build_test_sheet(side="front") -> bytes:
+def build_test_sheet(side="front", orientation="portrait") -> bytes:
     """Return a single-page PDF for the duplex orientation test."""
-    return _page_to_pdf_bytes(make_test_page(side))
+    data = _page_to_pdf_bytes(make_test_page(side))
+    if orientation == "landscape":
+        data = _rotate_pdf(data, 90)
+    return data
+
+
+def _rotate_pdf(pdf_bytes: bytes, angle: int) -> bytes:
+    from pypdf import PdfReader, PdfWriter
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+    for p in reader.pages:
+        p.rotate(angle)
+        writer.add_page(p)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
 
 
 def build_manual_duplex(pdf_list, side="front", back_order="reversed",
-                        separators=False, labels=None) -> bytes:
+                        separators=False, labels=None, orientation="portrait") -> bytes:
     """Build a PDF for MANUAL double-sided printing on a single-sided printer.
 
     Works sheet-by-sheet: each document is padded to an even number of pages so it
@@ -289,6 +304,9 @@ def build_manual_duplex(pdf_list, side="front", back_order="reversed",
             writer.add_blank_page(width=val[0], height=val[1])
     if len(writer.pages) == 0:
         writer.add_blank_page(width=ref_size[0], height=ref_size[1])
+    if orientation == "landscape":
+        for p in writer.pages:
+            p.rotate(90)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()

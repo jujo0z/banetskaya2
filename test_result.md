@@ -433,3 +433,47 @@ agent_communication:
         3. РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice установлен и работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/stats работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/presets работает; ✅ GET /api/sample-template возвращает Excel-файл.
         
         Все backend API полностью функциональны. Готово к финализации.
+
+## --- Итерация: ориентация + гид + self-heal soffice ---
+backend:
+  - task: "Duplex ориентация (portrait|landscape) + print-test orientation + self-heal soffice"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "manual-duplex и print-test получили параметр orientation. landscape поворачивает все страницы на 90 (/Rotate=90). Добавлен startup self-heal: при отсутствии soffice фоновая доустановка LibreOffice (soffice снова пропадал после пересоздания контейнера)."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 16 тестов ориентации прошли успешно (100% success rate). MANUAL DUPLEX ORIENTATION: (1) POST /api/contracts/manual-duplex с orientation='landscape' side='front' → 200, валидный PDF, 4 страницы, ВСЕ страницы имеют /Rotate == 90; (2) POST с orientation='portrait' side='front' → 200, валидный PDF, 4 страницы, ВСЕ страницы имеют /Rotate == None/0 (без поворота); (3) POST с orientation='landscape' side='back' → 200, валидный PDF, 4 страницы, ВСЕ страницы /Rotate == 90; (4) POST с orientation='portrait' side='back' → 200, валидный PDF, 4 страницы, ВСЕ страницы /Rotate == None/0. PRINT-TEST ORIENTATION: (5) GET /api/print-test?side=front&orientation=landscape → 200, валидный PDF, 1 страница, /Rotate == 90; (6) GET /api/print-test?side=back&orientation=portrait → 200, валидный PDF, 1 страница, /Rotate == None/0; (7) GET /api/print-test?side=front&orientation=portrait → 200, валидный PDF, 1 страница, /Rotate == None/0; (8) GET /api/print-test?side=back&orientation=landscape → 200, валидный PDF, 1 страница, /Rotate == 90. SEPARATORS + ORIENTATION: (9) POST /api/contracts/manual-duplex с separators=true, orientation='landscape', side='front' → 200, валидный PDF, РОВНО 6 страниц (2 договора × 2 лицевые + 2 разделителя), ВСЕ страницы /Rotate == 90; (10) POST с separators=true, orientation='portrait', side='front' → 200, валидный PDF, РОВНО 6 страниц, ВСЕ страницы /Rotate == None/0. РЕГРЕССИЯ (6/6 тестов): ✅ POST /api/contracts/preview?format=pdf работает (LibreOffice установлен); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/stats работает; ✅ GET /api/presets работает; ✅ POST /api/seed-demo идемпотентен. Все backend API полностью функциональны. Параметр orientation работает корректно для обоих эндпоинтов (manual-duplex и print-test), поворот на 90° применяется ко всем страницам при landscape, включая разделители."
+
+agent_communication:
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend. Фокус на orientation.
+        Возьми 2 id из GET /api/contracts.
+        1) POST /api/contracts/manual-duplex {"ids":[..2..],"side":"front","orientation":"landscape"} -> 200 %PDF, у страниц /Rotate=90.
+        2) orientation":"portrait" -> 200 %PDF, /Rotate отсутствует/0.
+        3) GET /api/print-test?side=front&orientation=landscape -> 200 %PDF, /Rotate=90; orientation=portrait -> /Rotate None.
+        4) landscape + separators:true -> 200, 6 страниц, все повернуты.
+        5) Регрессия: preview pdf, batch-print, export, stats, presets, seed-demo — OK; soffice доступен (PDF генерится).
+        Проверь /Rotate через pypdf. Не меняй код.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ОРИЕНТАЦИИ ЗАВЕРШЕНО УСПЕШНО. Все 16 тестов прошли (100% success rate).
+        
+        ПАРАМЕТР ORIENTATION РАБОТАЕТ ПОЛНОСТЬЮ:
+        
+        1. MANUAL DUPLEX ORIENTATION (4/4 теста): POST /api/contracts/manual-duplex с orientation='landscape' (side='front' и side='back') → все страницы имеют /Rotate == 90; POST с orientation='portrait' (side='front' и side='back') → все страницы имеют /Rotate == None/0 (без поворота). Проверено через pypdf PdfReader(...).pages[i].get('/Rotate').
+        
+        2. PRINT-TEST ORIENTATION (4/4 теста): GET /api/print-test?side=front&orientation=landscape → /Rotate == 90; GET /api/print-test?side=back&orientation=portrait → /Rotate == None/0; GET /api/print-test?side=front&orientation=portrait → /Rotate == None/0; GET /api/print-test?side=back&orientation=landscape → /Rotate == 90.
+        
+        3. SEPARATORS + ORIENTATION (2/2 теста): POST /api/contracts/manual-duplex с separators=true, orientation='landscape' → 6 страниц (2 договора × 2 лицевые + 2 разделителя), ВСЕ страницы /Rotate == 90; POST с separators=true, orientation='portrait' → 6 страниц, ВСЕ страницы /Rotate == None/0. Разделители также поворачиваются корректно.
+        
+        4. РЕГРЕССИЯ (6/6 тестов): ✅ LibreOffice установлен и работает (POST /api/contracts/preview?format=pdf → валидный PDF); ✅ POST /api/contracts/batch-print работает; ✅ GET /api/contracts/export возвращает валидный XLSX; ✅ GET /api/stats работает; ✅ GET /api/presets работает; ✅ POST /api/seed-demo идемпотентен.
+        
+        Все backend API полностью функциональны. Параметр orientation реализован корректно и применяется ко всем страницам PDF (включая разделители). Готово к финализации.

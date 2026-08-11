@@ -140,10 +140,10 @@ export async function batchPrint(ids) {
   if (w) w.onload = () => w.print();
 }
 
-export async function manualDuplexPrint(ids, side, backReversed = true, separators = false) {
+export async function manualDuplexPrint(ids, side, backReversed = true, separators = false, orientation = "portrait") {
   const res = await api.post(
     `/contracts/manual-duplex`,
-    { ids, side, back_order: backReversed ? "reversed" : "normal", separators },
+    { ids, side, back_order: backReversed ? "reversed" : "normal", separators, orientation },
     { responseType: "blob" }
   );
   const url = window.URL.createObjectURL(res.data);
@@ -151,8 +151,8 @@ export async function manualDuplexPrint(ids, side, backReversed = true, separato
   if (w) w.onload = () => w.print();
 }
 
-export async function printDuplexTest(side) {
-  const res = await api.get(`/print-test`, { params: { side }, responseType: "blob" });
+export async function printDuplexTest(side, orientation = "portrait") {
+  const res = await api.get(`/print-test`, { params: { side, orientation }, responseType: "blob" });
   const url = window.URL.createObjectURL(res.data);
   const w = window.open(url);
   if (w) w.onload = () => w.print();

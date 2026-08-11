@@ -97,6 +97,7 @@ class ManualDuplexRequest(BaseModel):
     side: str = "front"          # "front" | "back"
     back_order: str = "reversed"  # "reversed" | "normal"
     separators: bool = False
+    orientation: str = "portrait"  # "portrait" | "landscape"
 
 
 class Preset(BaseModel):
@@ -528,7 +529,8 @@ async def manual_duplex(req: ManualDuplexRequest):
         f = doc.get("fields", {}) or {}
         labels.append({"number": f.get("contract_number", ""), "name": f.get("full_name", "")})
     data = docsvc.build_manual_duplex(
-        pdfs, side=side, back_order=back_order, separators=bool(req.separators), labels=labels
+        pdfs, side=side, back_order=back_order, separators=bool(req.separators),
+        labels=labels, orientation=("landscape" if req.orientation == "landscape" else "portrait"),
     )
     return StreamingResponse(
         io.BytesIO(data),
@@ -538,10 +540,11 @@ async def manual_duplex(req: ManualDuplexRequest):
 
 
 @api_router.get("/print-test")
-async def print_test(side: str = "front"):
+async def print_test(side: str = "front", orientation: str = "portrait"):
     """One-sheet duplex orientation test page (front/back)."""
     side = side if side in ("front", "back") else "front"
-    data = docsvc.build_test_sheet(side)
+    orientation = "landscape" if orientation == "landscape" else "portrait"
+    data = docsvc.build_test_sheet(side, orientation=orientation)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/pdf",
@@ -686,3 +689,32 @@ if (FRONTEND_BUILD / "index.html").exists():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+
+@app.on_event("startup")
+async def ensure_soffice():
+    """Self-heal: on Linux, if LibreOffice (soffice) is missing after a container
+    recycle, install it in the background so PDF/print keep working."""
+    import platform
+    import shutil
+    import subprocess
+    import threading
+
+    if platform.system() != "Linux":
+        return
+    if shutil.which(os.environ.get("SOFFICE_BIN", "soffice")):
+        return
+
+    def _install():
+        try:
+            logger.warning("soffice missing -> installing LibreOffice in background ...")
+            subprocess.run(
+                ["apt-get", "install", "-y", "--no-install-recommends",
+                 "libreoffice-writer", "libreoffice-core"],
+                capture_output=True, timeout=900,
+            )
+            logger.warning("LibreOffice background install finished")
+        except Exception:
+            logger.exception("LibreOffice auto-install failed")
+
+    threading.Thread(target=_install, daemon=True).start()
