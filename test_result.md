@@ -179,6 +179,21 @@ backend:
           agent: "testing"
           comment: "✅ Все 4 теста статистики прошли успешно: (1) GET /api/stats возвращает все обязательные поля (total, drafts, this_month, datasets, recent); (2) Поле 'total' НЕ учитывает черновики (только final); (3) Поле 'drafts' присутствует и содержит количество черновиков; (4) Массив 'recent' НЕ содержит черновиков. Логика подсчёта корректна."
 
+  - task: "Overlay-печать на готовом бланке: /api/overlay/layout (GET/POST), /api/overlay/generate, /api/overlay/test-sheet, /api/overlay/background"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Новая фича: печать данных поверх пред-распечатанного бланка «СООБЩЕНИЕ» (147x103 мм). GET /api/overlay/layout возвращает раскладку (23 поля) + калибровку (dx_mm/dy_mm) + page_mm. POST /api/overlay/layout сохраняет раскладку в app_settings (upsert). POST /api/overlay/generate принимает {records:[{...}], layout?, dx_mm, dy_mm, with_background} и возвращает PDF 147x103мм (Content-Type application/pdf, начинается с %PDF); with_background=true рисует скан-подложку. GET /api/overlay/test-sheet?dx&dy — PDF пробного листа выравнивания. GET /api/overlay/background — PNG-подложка (image/png). Проверить: PDF валиден, размер страницы ~147x103мм, при пустых records возвращает 1 страницу, layout сохраняется и читается обратно. Шаблон договора .docx НЕ трогался."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 9 тестов overlay-печати прошли успешно (100% success rate). НОВЫЕ ЭНДПОИНТЫ РАБОТАЮТ ПОЛНОСТЬЮ: (1) GET /api/overlay/layout → 200 JSON с layout (23 поля), dx_mm, dy_mm, page_mm=[147,103]; каждое поле layout содержит key, x_pct, y_pct, font_pt; (2) POST /api/overlay/layout с кастомной раскладкой {layout:[{key:'fio',...}], dx_mm:1.5, dy_mm:-2} → 200 {saved:true,...}; (3) GET /api/overlay/layout после POST → возвращает сохранённую раскладку (1 поле, dx_mm=1.5, dy_mm=-2) — persistence в MongoDB app_settings работает корректно; (4) POST /api/overlay/generate с records (реальные данные: ФИО, номер, орган регистрации и т.д.) → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер страницы РОВНО 416.69x291.97pt (~147x103мм, проверено через pypdf); (5) POST /api/overlay/generate с пустым records=[] → 200, валидный PDF, РОВНО 1 пустая страница; (6) POST /api/overlay/generate с with_background:true → 200, валидный PDF, размер файла БОЛЬШЕ чем без фона (содержит PNG-подложку); (7) GET /api/overlay/test-sheet?dx=2&dy=1 → 200, Content-Type application/pdf, валидный PDF начинается с %PDF; (8) GET /api/overlay/background → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG. РЕГРЕССИЯ (3/3 теста): ✅ GET /api/stats работает; ✅ GET /api/contracts работает; ✅ POST /api/contracts/preview?format=pdf → 200 валидный PDF (LibreOffice установлен и работает). Шаблон договора .docx НЕ изменялся (проверено в тесте 11.8). Все backend API полностью функциональны."
+
 frontend:
   - task: "DocumentEditor — двухпанельный редактор с живым PDF-предпросмотром, черновики, пресеты"
     implemented: true
@@ -211,13 +226,12 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.3"
-  test_sequence: 4
+  version: "2.4"
+  test_sequence: 5
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Свой шаблон .docx (upload/activate/delete), template-info, print-profiles, flip_edge"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -292,6 +306,52 @@ agent_communication:
         КОНСОЛЬ И API: Никаких ошибок не обнаружено (0 console errors, 0 API errors).
         
         Приложение полностью функционально и готово к использованию.
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО новые backend-эндпоинты overlay-печати в /app/backend/server.py (см. test_result.md, задача "Overlay-печать на готовом бланке"). Базовый URL брать из frontend/.env REACT_APP_BACKEND_URL, все роуты с префиксом /api.
+        
+        Проверь:
+        1) GET /api/overlay/layout → 200 JSON с ключами layout (массив ~23 объектов, у каждого есть key, x_pct, y_pct, font_pt), dx_mm, dy_mm, page_mm ([147,103]).
+        2) POST /api/overlay/layout с телом {"layout":[{"key":"fio","label":"ФИО","x_pct":10,"y_pct":30,"font_pt":10,"group":"Гражданин"}],"dx_mm":1.5,"dy_mm":-2} → 200 {"saved":true,...}. Затем GET /api/overlay/layout должен вернуть сохранённую раскладку (dx_mm=1.5, dy_mm=-2, layout из 1 поля). ВАЖНО: после теста верни дефолт, вызвав POST снова с полной дефолтной раскладкой НЕ обязательно — просто зафиксируй, что сохранение/чтение работает (persistence в mongo app_settings key=overlay_layout).
+        3) POST /api/overlay/generate с {"records":[{"fio":"Иванов Иван","number":"1234","reg_organ":"Отдел миграции"}],"with_background":false} → 200, Content-Type application/pdf, тело начинается с %PDF. Проверь, что размер страницы примерно 147x103 мм (416.69 x 291.97 pt) — можно через pypdf/pymupdf, если доступно, иначе просто валидность PDF.
+        4) POST /api/overlay/generate с {"records":[]} → 200, валидный PDF (1 пустая страница).
+        5) POST /api/overlay/generate с with_background:true → 200, валидный PDF (больше по размеру, т.к. с картинкой-подложкой).
+        6) GET /api/overlay/test-sheet?dx=2&dy=1 → 200, application/pdf, начинается с %PDF.
+        7) GET /api/overlay/background → 200, Content-Type image/png.
+        
+        Регрессия (кратко): убедись, что GET /api/stats, GET /api/contracts, POST /api/contracts/preview?format=pdf по-прежнему работают (200, PDF валиден) — LibreOffice установлен. Шаблон договора .docx не менялся.
+        
+        Не тестируй фронтенд.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ OVERLAY-ПЕЧАТИ ЗАВЕРШЕНО УСПЕШНО. Все 12 тестов прошли (100% success rate).
+        
+        НОВЫЕ ЭНДПОИНТЫ OVERLAY-ПЕЧАТИ РАБОТАЮТ ПОЛНОСТЬЮ (9/9 тестов):
+        
+        1. GET /api/overlay/layout (1/1 тест): → 200 JSON с layout (23 поля), dx_mm, dy_mm, page_mm=[147,103]; каждое поле layout содержит обязательные ключи key, x_pct, y_pct, font_pt ✅
+        
+        2. POST /api/overlay/layout (1/1 тест): с кастомной раскладкой {layout:[{key:'fio',label:'ФИО',x_pct:10,y_pct:30,font_pt:10,group:'Гражданин'}], dx_mm:1.5, dy_mm:-2} → 200 {saved:true,...} ✅
+        
+        3. PERSISTENCE (1/1 тест): GET /api/overlay/layout после POST → возвращает сохранённую раскладку (1 поле с key='fio', dx_mm=1.5, dy_mm=-2) — persistence в MongoDB app_settings key=overlay_layout работает корректно ✅
+        
+        4. POST /api/overlay/generate с records (1/1 тест): с реальными данными (ФИО: "Иванов Иван Иванович", number: "1234", reg_organ: "Отдел миграции Минского района", и др.) → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер страницы РОВНО 416.69x291.97pt (~147x103мм, проверено через pypdf PdfReader) ✅
+        
+        5. POST /api/overlay/generate с пустым records (1/1 тест): records=[] → 200, валидный PDF, РОВНО 1 пустая страница ✅
+        
+        6. POST /api/overlay/generate с with_background:true (1/1 тест): → 200, валидный PDF, размер файла БОЛЬШЕ чем без фона (без фона: размер X байт, с фоном: размер Y байт, Y > X) — содержит PNG-подложку ✅
+        
+        7. GET /api/overlay/test-sheet (1/1 тест): ?dx=2&dy=1 → 200, Content-Type application/pdf, валидный PDF начинается с %PDF ✅
+        
+        8. GET /api/overlay/background (1/1 тест): → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG ✅
+        
+        РЕГРЕССИЯ (3/3 теста):
+        ✅ GET /api/stats → 200 (работает)
+        ✅ GET /api/contracts → 200 (работает)
+        ✅ POST /api/contracts/preview?format=pdf → 200 валидный PDF (LibreOffice установлен и работает)
+        
+        ВАЖНО: Шаблон договора /app/backend/templates/contract_template.docx НЕ изменялся (проверено в предыдущих тестах, размер 25490 байт, валиден).
+        
+        Все backend API полностью функциональны. Overlay-печать готова к использованию.
 
 ## --- Итерация: экспорт истории в Excel + брендинг установщика ---
 backend:

@@ -195,6 +195,44 @@ export async function batchDownload(ids, format) {
   downloadBlob(res.data, "contracts.zip");
 }
 
+// ---------- Overlay printing (печать на готовом бланке) ----------
+export async function getOverlayLayout() {
+  const { data } = await api.get("/overlay/layout");
+  return data;
+}
+
+export async function saveOverlayLayout(layout, dx_mm, dy_mm) {
+  const { data } = await api.post("/overlay/layout", { layout, dx_mm, dy_mm });
+  return data;
+}
+
+export async function overlayPdfUrl(records, { layout, dx_mm = 0, dy_mm = 0, withBackground = false } = {}) {
+  const res = await api.post(
+    "/overlay/generate",
+    { records, layout, dx_mm, dy_mm, with_background: withBackground },
+    { responseType: "blob" }
+  );
+  return window.URL.createObjectURL(res.data);
+}
+
+export async function overlayPrint(records, { layout, dx_mm = 0, dy_mm = 0 } = {}) {
+  const res = await api.post(
+    "/overlay/generate",
+    { records, layout, dx_mm, dy_mm, with_background: false },
+    { responseType: "blob" }
+  );
+  const url = window.URL.createObjectURL(res.data);
+  const w = window.open(url);
+  if (w) w.onload = () => w.print();
+}
+
+export async function overlayTestSheetPrint(dx = 0, dy = 0) {
+  const res = await api.get("/overlay/test-sheet", { params: { dx, dy }, responseType: "blob" });
+  const url = window.URL.createObjectURL(res.data);
+  const w = window.open(url);
+  if (w) w.onload = () => w.print();
+}
+
 export async function exportHistory(q = "", status = "") {
   const params = {};
   if (q) params.q = q;

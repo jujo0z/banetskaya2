@@ -364,3 +364,171 @@ def convert_to_pdf(docx_bytes: bytes) -> bytes:
                 )
             time.sleep(0.6)
         raise last_err or RuntimeError("Не удалось конвертировать в PDF")
+
+
+
+# ============================================================================
+#  OVERLAY PRINTING — печать данных поверх готового (пред-распечатанного) бланка
+# ============================================================================
+
+MM = 72.0 / 25.4  # points per millimetre
+
+# Физический размер бланка «СООБЩЕНИЕ» (альбомная ориентация), мм
+SOOBSHENIE_PAGE_MM = (147.0, 103.0)
+
+# Дефолтная раскладка полей: координаты в процентах от листа (0..100),
+# x_pct — от левого края, y_pct — от ВЕРХНЕГО края. Пользователь двигает мышкой.
+SOOBSHENIE_LAYOUT = [
+    {"key": "reg_organ",       "label": "Орган регистрации",        "x_pct": 58.0, "y_pct": 9.0,  "font_pt": 9,  "group": "Шапка"},
+    {"key": "date_day",        "label": "День (дата сообщения)",    "x_pct": 8.0,  "y_pct": 15.5, "font_pt": 9,  "group": "Шапка"},
+    {"key": "date_month",      "label": "Месяц (дата сообщения)",   "x_pct": 13.5, "y_pct": 15.5, "font_pt": 9,  "group": "Шапка"},
+    {"key": "date_year",       "label": "Год (20__)",               "x_pct": 27.5, "y_pct": 15.5, "font_pt": 9,  "group": "Шапка"},
+    {"key": "number",          "label": "№ сообщения",              "x_pct": 11.0, "y_pct": 20.0, "font_pt": 9,  "group": "Шапка"},
+    {"key": "fio",             "label": "ФИО",                       "x_pct": 11.0, "y_pct": 28.5, "font_pt": 10, "group": "Гражданин"},
+    {"key": "fio2",            "label": "ФИО (2-я строка)",          "x_pct": 7.0,  "y_pct": 36.0, "font_pt": 10, "group": "Гражданин"},
+    {"key": "birth",           "label": "Год и место рождения",      "x_pct": 7.0,  "y_pct": 41.5, "font_pt": 10, "group": "Гражданин"},
+    {"key": "address",         "label": "Адрес пребывания",          "x_pct": 43.0, "y_pct": 44.5, "font_pt": 9,  "group": "Регистрация"},
+    {"key": "address2",        "label": "Адрес (2-я строка)",        "x_pct": 7.0,  "y_pct": 50.5, "font_pt": 9,  "group": "Регистрация"},
+    {"key": "passport_series", "label": "Серия",                     "x_pct": 13.0, "y_pct": 61.0, "font_pt": 9,  "group": "Документ"},
+    {"key": "passport_number", "label": "Номер",                     "x_pct": 24.0, "y_pct": 61.0, "font_pt": 9,  "group": "Документ"},
+    {"key": "issue_day",       "label": "День выдачи",               "x_pct": 61.5, "y_pct": 61.0, "font_pt": 9,  "group": "Документ"},
+    {"key": "issue_month",     "label": "Месяц выдачи",              "x_pct": 68.0, "y_pct": 61.0, "font_pt": 9,  "group": "Документ"},
+    {"key": "issue_year",      "label": "Год выдачи (20__)",         "x_pct": 88.0, "y_pct": 61.0, "font_pt": 9,  "group": "Документ"},
+    {"key": "issued_by",       "label": "Кем выдан",                 "x_pct": 16.5, "y_pct": 65.5, "font_pt": 8,  "group": "Документ"},
+    {"key": "from_day",        "label": "С: день",                   "x_pct": 10.5, "y_pct": 72.5, "font_pt": 9,  "group": "Срок"},
+    {"key": "from_month",      "label": "С: месяц",                  "x_pct": 17.0, "y_pct": 72.5, "font_pt": 9,  "group": "Срок"},
+    {"key": "from_year",       "label": "С: год (20__)",             "x_pct": 36.0, "y_pct": 72.5, "font_pt": 9,  "group": "Срок"},
+    {"key": "to_day",          "label": "По: день",                  "x_pct": 45.0, "y_pct": 72.5, "font_pt": 9,  "group": "Срок"},
+    {"key": "to_month",        "label": "По: месяц",                 "x_pct": 52.5, "y_pct": 72.5, "font_pt": 9,  "group": "Срок"},
+    {"key": "to_year",         "label": "По: год (20__)",            "x_pct": 70.5, "y_pct": 72.5, "font_pt": 9,  "group": "Срок"},
+    {"key": "chief",           "label": "Начальник",                 "x_pct": 17.5, "y_pct": 79.0, "font_pt": 9,  "group": "Подпись"},
+]
+
+
+def _overlay_bg_path():
+    p = _resource_base() / "assets" / "soobshenie_blank.png"
+    return p if p.exists() else None
+
+
+def build_overlay(records, layout=None, page_mm=SOOBSHENIE_PAGE_MM,
+                  dx_mm=0.0, dy_mm=0.0, with_background=False):
+    """Generate a multi-page PDF where only the field VALUES are drawn at exact
+    positions, sized to the physical blank. Printed on top of a pre-printed form.
+
+    records: list of dicts {field_key: value}
+    layout:  list of {key, x_pct, y_pct, font_pt}
+    dx_mm/dy_mm: global calibration shift (right/down positive)
+    with_background: draw the scanned blank behind (preview only, NOT for real print)
+    """
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+
+    _ensure_fonts()
+    layout = layout or SOOBSHENIE_LAYOUT
+    w = page_mm[0] * MM
+    h = page_mm[1] * MM
+    ddx = dx_mm * MM
+    ddy = dy_mm * MM
+
+    bg = None
+    if with_background:
+        bp = _overlay_bg_path()
+        if bp:
+            try:
+                bg = ImageReader(str(bp))
+            except Exception:
+                bg = None
+
+    if not records:
+        records = [{}]
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(w, h))
+    for rec in records:
+        if bg is not None:
+            c.drawImage(bg, 0, 0, width=w, height=h, preserveAspectRatio=False, mask=None)
+        c.setFillColorRGB(0.05, 0.05, 0.12)
+        for f in layout:
+            key = f.get("key")
+            val = rec.get(key, "")
+            if val is None:
+                val = ""
+            val = str(val).strip()
+            if not val:
+                continue
+            font_pt = float(f.get("font_pt", 9) or 9)
+            x = float(f.get("x_pct", 0)) / 100.0 * w + ddx
+            y = h - (float(f.get("y_pct", 0)) / 100.0 * h) - ddy
+            c.setFont(_font(False), font_pt)
+            c.drawString(x, y, val)
+        c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def build_overlay_test_sheet(page_mm=SOOBSHENIE_PAGE_MM, dx_mm=0.0, dy_mm=0.0):
+    """Alignment test sheet: corner crosses, 1 cm grid ruler and centre cross.
+    Print it on a blank sheet of the same size and measure the offset."""
+    from reportlab.pdfgen import canvas
+
+    _ensure_fonts()
+    w = page_mm[0] * MM
+    h = page_mm[1] * MM
+    ddx = dx_mm * MM
+    ddy = dy_mm * MM
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(w, h))
+
+    # translate whole drawing by calibration (down positive -> negative y)
+    c.saveState()
+    c.translate(ddx, -ddy)
+
+    # outer frame 5 mm inset
+    inset = 5 * MM
+    c.setStrokeColorRGB(0.7, 0.1, 0.25)
+    c.setLineWidth(0.6)
+    c.rect(inset, inset, w - 2 * inset, h - 2 * inset, stroke=1, fill=0)
+
+    # corner crosses
+    def cross(cx, cy, s=4 * MM):
+        c.line(cx - s, cy, cx + s, cy)
+        c.line(cx, cy - s, cx, cy + s)
+    c.setStrokeColorRGB(0.1, 0.1, 0.15)
+    for cx in (inset, w - inset):
+        for cy in (inset, h - inset):
+            cross(cx, cy)
+    # centre cross
+    c.setStrokeColorRGB(0.7, 0.1, 0.25)
+    cross(w / 2, h / 2, 6 * MM)
+
+    # ruler ticks every 10 mm along top and left, labelled in cm
+    c.setStrokeColorRGB(0.3, 0.3, 0.4)
+    c.setFillColorRGB(0.3, 0.3, 0.4)
+    c.setFont(_font(False), 6)
+    n_x = int(page_mm[0] // 10)
+    for i in range(0, n_x + 1):
+        x = i * 10 * MM
+        c.line(x, h - inset, x, h - inset - 3 * MM)
+        c.drawString(x + 1, h - inset - 3 * MM - 6, str(i))
+    n_y = int(page_mm[1] // 10)
+    for i in range(0, n_y + 1):
+        y = h - i * 10 * MM
+        c.line(inset, y, inset + 3 * MM, y)
+        c.drawString(inset + 3 * MM + 1, y - 2, str(i))
+
+    c.restoreState()
+
+    # title (not shifted)
+    c.setFillColorRGB(0.7, 0.1, 0.25)
+    c.setFont(_font(True), 10)
+    c.drawCentredString(w / 2, h - 4 * MM, "ПРОБНЫЙ ЛИСТ ВЫРАВНИВАНИЯ — %.0f×%.0f мм" % (page_mm[0], page_mm[1]))
+    c.setFillColorRGB(0.3, 0.3, 0.4)
+    c.setFont(_font(False), 7)
+    c.drawCentredString(w / 2, 2.2 * MM, "Сдвиг X=%.1f мм  Y=%.1f мм. Кресты должны попасть в углы бланка." % (dx_mm, dy_mm))
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()

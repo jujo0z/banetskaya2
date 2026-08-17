@@ -6,6 +6,7 @@ import Dashboard from "@/pages/Dashboard";
 import Generate from "@/pages/Generate";
 import History from "@/pages/History";
 import Settings from "@/pages/Settings";
+import BlankOverlay from "@/pages/BlankOverlay";
 
 function App() {
   return (
@@ -15,6 +16,7 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="generate" element={<Generate />} />
           <Route path="history" element={<History />} />
+          <Route path="blank" element={<BlankOverlay />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

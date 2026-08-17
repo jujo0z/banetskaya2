@@ -780,6 +780,94 @@ async def delete_print_profile(profile_id: str):
     return {"deleted": True}
 
 
+# ---------- Overlay printing (печать на готовом бланке) ----------
+class OverlayGenerateRequest(BaseModel):
+    records: List[Dict[str, Any]] = []
+    layout: Optional[List[Dict[str, Any]]] = None
+    dx_mm: float = 0.0
+    dy_mm: float = 0.0
+    with_background: bool = False
+
+
+class OverlayLayoutSave(BaseModel):
+    layout: List[Dict[str, Any]]
+    dx_mm: float = 0.0
+    dy_mm: float = 0.0
+
+
+@api_router.get("/overlay/layout")
+async def get_overlay_layout():
+    """Return saved field layout + calibration, or the built-in default."""
+    s = await db.app_settings.find_one({"key": "overlay_layout"})
+    if s and s.get("value"):
+        v = s["value"]
+        return {
+            "layout": v.get("layout", docsvc.SOOBSHENIE_LAYOUT),
+            "dx_mm": v.get("dx_mm", 0.0),
+            "dy_mm": v.get("dy_mm", 0.0),
+            "page_mm": list(docsvc.SOOBSHENIE_PAGE_MM),
+        }
+    return {
+        "layout": docsvc.SOOBSHENIE_LAYOUT,
+        "dx_mm": 0.0,
+        "dy_mm": 0.0,
+        "page_mm": list(docsvc.SOOBSHENIE_PAGE_MM),
+    }
+
+
+@api_router.post("/overlay/layout")
+async def save_overlay_layout(req: OverlayLayoutSave):
+    value = {"layout": req.layout, "dx_mm": req.dx_mm, "dy_mm": req.dy_mm}
+    await db.app_settings.update_one(
+        {"key": "overlay_layout"},
+        {"$set": {"key": "overlay_layout", "value": value,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"saved": True, **value}
+
+
+@api_router.post("/overlay/generate")
+async def generate_overlay(req: OverlayGenerateRequest):
+    """PDF with only the field values, sized to the physical blank (147×103 mm)."""
+    try:
+        data = docsvc.build_overlay(
+            records=req.records,
+            layout=req.layout,
+            dx_mm=req.dx_mm,
+            dy_mm=req.dy_mm,
+            with_background=req.with_background,
+        )
+    except Exception as e:
+        logger.exception("overlay generation failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=soobshenie_overlay.pdf"},
+    )
+
+
+@api_router.get("/overlay/test-sheet")
+async def overlay_test_sheet(dx: float = 0.0, dy: float = 0.0):
+    data = docsvc.build_overlay_test_sheet(dx_mm=dx, dy_mm=dy)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=overlay_test.pdf"},
+    )
+
+
+@api_router.get("/overlay/background")
+async def overlay_background():
+    """Scanned blank image used as the editor backdrop."""
+    p = ROOT_DIR / "assets" / "soobshenie_blank.png"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Фон не найден")
+    return FileResponse(str(p), media_type="image/png")
+
+
+
 
 app.include_router(api_router)
 
