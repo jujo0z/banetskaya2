@@ -26,6 +26,7 @@ jobs:
         working-directory: frontend
         env:
           REACT_APP_BACKEND_URL: http://127.0.0.1:8001
+          REACT_APP_IS_DESKTOP: '1'
           CI: 'false'
         run: |
           corepack enable
@@ -50,6 +51,30 @@ jobs:
 
       - name: Build backend bundle (PyInstaller)
         run: pyinstaller windows-package/installer/banetskaya.spec --noconfirm
+
+      - name: Bundle LibreOffice (portable, into the app folder)
+        shell: pwsh
+        run: |
+          # Download the official LibreOffice MSI and do an ADMIN extract (no install),
+          # then copy the LibreOffice tree next to the app so soffice.exe ships inside.
+          $ver = "24.8.4"
+          $url = "https://download.documentfoundation.org/libreoffice/stable/$ver/win/x86_64/LibreOffice_${ver}_Win_x86-64.msi"
+          Write-Host "Downloading LibreOffice $ver ..."
+          Invoke-WebRequest -Uri $url -OutFile lo.msi
+          New-Item -ItemType Directory -Force -Path lo_extract | Out-Null
+          $target = (Resolve-Path lo_extract).Path
+          Write-Host "Administrative extract ..."
+          Start-Process msiexec.exe -ArgumentList "/a `"$((Resolve-Path lo.msi).Path)`" /qn TARGETDIR=`"$target`"" -Wait
+          $soffice = Get-ChildItem -Recurse $target -Filter soffice.exe | Select-Object -First 1
+          if (-not $soffice) { throw "soffice.exe not found after extraction" }
+          # LibreOffice root = parent of the 'program' folder
+          $loRoot = $soffice.Directory.Parent.FullName
+          $dest = "dist/Banetskaya/libreoffice"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Write-Host "Copying LibreOffice tree from $loRoot -> $dest"
+          Copy-Item -Path (Join-Path $loRoot '*') -Destination $dest -Recurse -Force
+          if (-not (Test-Path "$dest/program/soffice.exe")) { throw "Bundled soffice.exe missing at $dest/program" }
+          Write-Host "LibreOffice bundled OK."
 
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress

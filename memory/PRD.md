@@ -113,3 +113,12 @@ Frontend (pages/BlankOverlay.js):
 
 Статус: backend протестирован (83/83). Позиции полей — стартовые, донастраиваются перетаскиванием.
 Данные пока вводятся вручную / случайные; интеграция с реальными студентами — следующий шаг (обсуждается).
+
+---
+
+## Дополнение 2: Стартовая страница + десктоп-упаковка (июль 2025)
+
+- Стартовая страница `/welcome` (pages/Landing.js): сверху блок «Приложение для Windows» (кнопка «Скачать для Windows», REACT_APP_WINDOWS_DOWNLOAD_URL), снизу «Начать работу в браузере».
+- Показывается ТОЛЬКО в веб-версии: EntryGate в App.js перекидывает `/` → `/welcome` (пока не нажали «Начать работу», флаг sessionStorage bnk_entered). Десктоп-сборка (lib/env.js: IS_DESKTOP по hostname 127.0.0.1/localhost или REACT_APP_IS_DESKTOP=1) стартовую страницу ПРОПУСКАЕТ.
+- LibreOffice вшивается в установщик: .github/workflows/windows-installer.yml — admin-extract LibreOffice MSI в dist/Banetskaya/libreoffice (перед Inno); document_service._resolve_soffice() авто-находит вшитый soffice.exe рядом с приложением; frontend build получает REACT_APP_IS_DESKTOP=1.
+- Проверка сборки .exe — на GitHub Actions (в облаке Linux Windows-сборку не проверить).

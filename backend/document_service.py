@@ -20,7 +20,24 @@ def _resource_base() -> Path:
 TEMPLATE_PATH = _resource_base() / "templates" / "contract_template.docx"
 
 # LibreOffice binary — configurable for Windows (e.g. C:\Program Files\LibreOffice\program\soffice.exe)
-SOFFICE_BIN = os.environ.get("SOFFICE_BIN", "soffice")
+def _resolve_soffice():
+    env = os.environ.get("SOFFICE_BIN")
+    if env:
+        return env
+    # Desktop build: prefer a LibreOffice bundled next to the app (portable, no install).
+    candidates = [_resource_base() / "libreoffice" / "program" / "soffice.exe"]
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).parent / "libreoffice" / "program" / "soffice.exe")
+    for c in candidates:
+        try:
+            if c.exists():
+                return str(c)
+        except Exception:
+            pass
+    return "soffice"
+
+
+SOFFICE_BIN = _resolve_soffice()
 
 # Ordered contract fields with Russian labels + Excel column-matching keywords.
 FIELDS = [
