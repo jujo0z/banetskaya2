@@ -787,6 +787,7 @@ class OverlayGenerateRequest(BaseModel):
     dx_mm: float = 0.0
     dy_mm: float = 0.0
     with_background: bool = False
+    page_size: str = "card"  # "card" (147x103) | "a4"
 
 
 class OverlayLayoutSave(BaseModel):
@@ -834,6 +835,7 @@ async def generate_overlay(req: OverlayGenerateRequest):
         data = docsvc.build_overlay(
             records=req.records,
             layout=req.layout,
+            page_size=req.page_size,
             dx_mm=req.dx_mm,
             dy_mm=req.dy_mm,
             with_background=req.with_background,
@@ -849,8 +851,8 @@ async def generate_overlay(req: OverlayGenerateRequest):
 
 
 @api_router.get("/overlay/test-sheet")
-async def overlay_test_sheet(dx: float = 0.0, dy: float = 0.0):
-    data = docsvc.build_overlay_test_sheet(dx_mm=dx, dy_mm=dy)
+async def overlay_test_sheet(dx: float = 0.0, dy: float = 0.0, page_size: str = "card"):
+    data = docsvc.build_overlay_test_sheet(page_size=page_size, dx_mm=dx, dy_mm=dy)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/pdf",

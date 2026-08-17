@@ -206,31 +206,41 @@ export async function saveOverlayLayout(layout, dx_mm, dy_mm) {
   return data;
 }
 
-export async function overlayPdfUrl(records, { layout, dx_mm = 0, dy_mm = 0, withBackground = false } = {}) {
+export async function overlayPdfUrl(records, { layout, dx_mm = 0, dy_mm = 0, withBackground = false, pageSize = "card" } = {}) {
   const res = await api.post(
     "/overlay/generate",
-    { records, layout, dx_mm, dy_mm, with_background: withBackground },
+    { records, layout, dx_mm, dy_mm, with_background: withBackground, page_size: pageSize },
     { responseType: "blob" }
   );
   return window.URL.createObjectURL(res.data);
 }
 
-export async function overlayPrint(records, { layout, dx_mm = 0, dy_mm = 0 } = {}) {
+// Open the overlay PDF in a NEW TAB so the user prints from the PDF viewer
+// (reliable + lets them pick "Actual size / 100%"). Auto window.print() on a
+// blob PDF often prints a blank page on some printers, so we avoid it.
+export async function openOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card" } = {}) {
   const res = await api.post(
     "/overlay/generate",
-    { records, layout, dx_mm, dy_mm, with_background: false },
+    { records, layout, dx_mm, dy_mm, with_background: false, page_size: pageSize },
     { responseType: "blob" }
   );
   const url = window.URL.createObjectURL(res.data);
-  const w = window.open(url);
-  if (w) w.onload = () => w.print();
+  window.open(url, "_blank");
 }
 
-export async function overlayTestSheetPrint(dx = 0, dy = 0) {
-  const res = await api.get("/overlay/test-sheet", { params: { dx, dy }, responseType: "blob" });
+export async function downloadOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card" } = {}) {
+  const res = await api.post(
+    "/overlay/generate",
+    { records, layout, dx_mm, dy_mm, with_background: false, page_size: pageSize },
+    { responseType: "blob" }
+  );
+  downloadBlob(res.data, "soobshenie_overlay.pdf");
+}
+
+export async function openOverlayTestSheet(dx = 0, dy = 0, pageSize = "card") {
+  const res = await api.get("/overlay/test-sheet", { params: { dx, dy, page_size: pageSize }, responseType: "blob" });
   const url = window.URL.createObjectURL(res.data);
-  const w = window.open(url);
-  if (w) w.onload = () => w.print();
+  window.open(url, "_blank");
 }
 
 export async function exportHistory(q = "", status = "") {

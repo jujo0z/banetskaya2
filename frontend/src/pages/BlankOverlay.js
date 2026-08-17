@@ -19,13 +19,16 @@ import {
   Plus,
   Minus,
   RotateCcw,
+  Download,
+  Info,
 } from "lucide-react";
 import {
   getOverlayLayout,
   saveOverlayLayout,
   overlayPdfUrl,
-  overlayPrint,
-  overlayTestSheetPrint,
+  openOverlayPdf,
+  downloadOverlayPdf,
+  openOverlayTestSheet,
 } from "@/lib/apiClient";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -92,6 +95,7 @@ export default function BlankOverlay() {
   const [values, setValues] = useState({});
   const [dx, setDx] = useState(0);
   const [dy, setDy] = useState(0);
+  const [pageSize, setPageSize] = useState("a4");
   const [selected, setSelected] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -189,9 +193,17 @@ export default function BlankOverlay() {
   };
   const doPrint = async () => {
     try {
-      await overlayPrint([values], { layout, dx_mm: dx, dy_mm: dy });
+      await openOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize });
+      toast("PDF открыт в новой вкладке — печатайте с масштабом «Фактический размер» (100%)");
     } catch (e) {
       toast.error("Ошибка печати");
+    }
+  };
+  const doDownload = async () => {
+    try {
+      await downloadOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize });
+    } catch (e) {
+      toast.error("Ошибка скачивания");
     }
   };
   const doSave = async () => {
@@ -204,7 +216,8 @@ export default function BlankOverlay() {
   };
   const doTestSheet = async () => {
     try {
-      await overlayTestSheetPrint(dx, dy);
+      await openOverlayTestSheet(dx, dy, pageSize);
+      toast("Пробный лист открыт — печатайте с масштабом 100%");
     } catch (e) {
       toast.error("Ошибка пробного листа");
     }
@@ -319,6 +332,45 @@ export default function BlankOverlay() {
             </div>
           )}
 
+          {/* Paper size */}
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <Printer className="h-4 w-4 text-[#E11D48]" /> Размер листа для печати
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPageSize("a4")}
+                className={`rounded-md border px-3 py-2 text-sm text-left transition ${
+                  pageSize === "a4" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
+                }`}
+                data-testid="paper-a4"
+              >
+                <div className="font-semibold">Лист A4</div>
+                <div className="text-[11px] text-muted-foreground">рекомендуется · бланк в углу</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPageSize("card")}
+                className={`rounded-md border px-3 py-2 text-sm text-left transition ${
+                  pageSize === "card" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
+                }`}
+                data-testid="paper-card"
+              >
+                <div className="font-semibold">147×103 мм</div>
+                <div className="text-[11px] text-muted-foreground">точно по размеру бланка</div>
+              </button>
+            </div>
+            <div className="mt-3 flex gap-2 text-[11px] text-muted-foreground bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
+              <Info className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <span>
+                Если принтер «выплёвывает» пустой лист — выберите <b>A4</b> и в окне печати
+                поставьте масштаб <b>«Фактический размер» (100%)</b>, а не «По размеру страницы».
+                Для A4: положите бланк в <b>левый верхний угол</b> листа (по рамке-подсказке).
+              </span>
+            </div>
+          </div>
+
           {/* Calibration */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="text-sm font-semibold mb-3 flex items-center gap-2">
@@ -361,13 +413,16 @@ export default function BlankOverlay() {
               <Eye className="h-4 w-4 mr-2" /> Предпросмотр
             </Button>
             <Button onClick={doPrint} variant="outline" data-testid="btn-print">
-              <Printer className="h-4 w-4 mr-2" /> Печать
+              <Printer className="h-4 w-4 mr-2" /> Печать (PDF)
+            </Button>
+            <Button onClick={doDownload} variant="outline" data-testid="btn-download">
+              <Download className="h-4 w-4 mr-2" /> Скачать PDF
             </Button>
             <Button onClick={doSave} variant="outline" data-testid="btn-save">
               <Save className="h-4 w-4 mr-2" /> Сохранить
             </Button>
-            <Button onClick={resetLayout} variant="ghost">
-              <RotateCcw className="h-4 w-4 mr-2" /> Сброс
+            <Button onClick={resetLayout} variant="ghost" className="col-span-2">
+              <RotateCcw className="h-4 w-4 mr-2" /> Сбросить раскладку
             </Button>
           </div>
 

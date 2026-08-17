@@ -410,25 +410,33 @@ def _overlay_bg_path():
     return p if p.exists() else None
 
 
-def build_overlay(records, layout=None, page_mm=SOOBSHENIE_PAGE_MM,
+def build_overlay(records, layout=None, blank_mm=SOOBSHENIE_PAGE_MM, page_size="card",
                   dx_mm=0.0, dy_mm=0.0, with_background=False):
     """Generate a multi-page PDF where only the field VALUES are drawn at exact
     positions, sized to the physical blank. Printed on top of a pre-printed form.
 
     records: list of dicts {field_key: value}
     layout:  list of {key, x_pct, y_pct, font_pt}
+    blank_mm: physical size of the pre-printed form (the "zone"), default 147x103
+    page_size: "card" -> page equals the blank; "a4" -> A4 sheet with the blank
+               anchored at the TOP-LEFT corner (universal-printer friendly)
     dx_mm/dy_mm: global calibration shift (right/down positive)
-    with_background: draw the scanned blank behind (preview only, NOT for real print)
+    with_background: draw the scanned blank behind (preview / plain-paper test)
     """
     from reportlab.pdfgen import canvas
     from reportlab.lib.utils import ImageReader
 
     _ensure_fonts()
     layout = layout or SOOBSHENIE_LAYOUT
-    w = page_mm[0] * MM
-    h = page_mm[1] * MM
+    zone_w = blank_mm[0] * MM
+    zone_h = blank_mm[1] * MM
+    if str(page_size).lower() == "a4":
+        pw, ph = 210 * MM, 297 * MM
+    else:
+        pw, ph = zone_w, zone_h
     ddx = dx_mm * MM
     ddy = dy_mm * MM
+    zone_top = ph  # blank top edge is aligned with the top of the page
 
     bg = None
     if with_background:
@@ -443,10 +451,17 @@ def build_overlay(records, layout=None, page_mm=SOOBSHENIE_PAGE_MM,
         records = [{}]
 
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(w, h))
+    c = canvas.Canvas(buf, pagesize=(pw, ph))
     for rec in records:
         if bg is not None:
-            c.drawImage(bg, 0, 0, width=w, height=h, preserveAspectRatio=False, mask=None)
+            c.drawImage(bg, 0, zone_top - zone_h, width=zone_w, height=zone_h,
+                        preserveAspectRatio=False, mask=None)
+        # On A4 draw a faint placement guide so the pre-printed card can be
+        # positioned in the top-left corner (harmless when testing on plain A4).
+        if str(page_size).lower() == "a4" and bg is None:
+            c.setStrokeColorRGB(0.75, 0.75, 0.8)
+            c.setLineWidth(0.4)
+            c.rect(0.3 * MM, zone_top - zone_h, zone_w, zone_h - 0.3 * MM, stroke=1, fill=0)
         c.setFillColorRGB(0.05, 0.05, 0.12)
         for f in layout:
             key = f.get("key")
@@ -457,8 +472,8 @@ def build_overlay(records, layout=None, page_mm=SOOBSHENIE_PAGE_MM,
             if not val:
                 continue
             font_pt = float(f.get("font_pt", 9) or 9)
-            x = float(f.get("x_pct", 0)) / 100.0 * w + ddx
-            y = h - (float(f.get("y_pct", 0)) / 100.0 * h) - ddy
+            x = float(f.get("x_pct", 0)) / 100.0 * zone_w + ddx
+            y = zone_top - (float(f.get("y_pct", 0)) / 100.0 * zone_h) - ddy
             c.setFont(_font(False), font_pt)
             c.drawString(x, y, val)
         c.showPage()
@@ -467,66 +482,73 @@ def build_overlay(records, layout=None, page_mm=SOOBSHENIE_PAGE_MM,
     return buf.getvalue()
 
 
-def build_overlay_test_sheet(page_mm=SOOBSHENIE_PAGE_MM, dx_mm=0.0, dy_mm=0.0):
-    """Alignment test sheet: corner crosses, 1 cm grid ruler and centre cross.
-    Print it on a blank sheet of the same size and measure the offset."""
+def build_overlay_test_sheet(blank_mm=SOOBSHENIE_PAGE_MM, page_size="card", dx_mm=0.0, dy_mm=0.0):
+    """Alignment test sheet: frame, corner crosses, 1 cm ruler and centre cross,
+    drawn within the blank zone. page_size 'a4' puts the zone in the top-left of A4."""
     from reportlab.pdfgen import canvas
 
     _ensure_fonts()
-    w = page_mm[0] * MM
-    h = page_mm[1] * MM
+    zw = blank_mm[0] * MM
+    zh = blank_mm[1] * MM
+    if str(page_size).lower() == "a4":
+        pw, ph = 210 * MM, 297 * MM
+    else:
+        pw, ph = zw, zh
     ddx = dx_mm * MM
     ddy = dy_mm * MM
 
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(w, h))
+    c = canvas.Canvas(buf, pagesize=(pw, ph))
 
-    # translate whole drawing by calibration (down positive -> negative y)
+    # move origin so the zone sits in the TOP-LEFT of the page, then apply calibration
     c.saveState()
-    c.translate(ddx, -ddy)
+    c.translate(ddx, (ph - zh) - ddy)  # zone bottom-left -> (0,0) local + shift
 
-    # outer frame 5 mm inset
-    inset = 5 * MM
+    # outer frame of the zone
     c.setStrokeColorRGB(0.7, 0.1, 0.25)
     c.setLineWidth(0.6)
-    c.rect(inset, inset, w - 2 * inset, h - 2 * inset, stroke=1, fill=0)
+    c.rect(0.3 * MM, 0.3 * MM, zw - 0.6 * MM, zh - 0.6 * MM, stroke=1, fill=0)
 
-    # corner crosses
+    inset = 5 * MM
+
     def cross(cx, cy, s=4 * MM):
         c.line(cx - s, cy, cx + s, cy)
         c.line(cx, cy - s, cx, cy + s)
+
     c.setStrokeColorRGB(0.1, 0.1, 0.15)
-    for cx in (inset, w - inset):
-        for cy in (inset, h - inset):
+    for cx in (inset, zw - inset):
+        for cy in (inset, zh - inset):
             cross(cx, cy)
     # centre cross
     c.setStrokeColorRGB(0.7, 0.1, 0.25)
-    cross(w / 2, h / 2, 6 * MM)
+    cross(zw / 2, zh / 2, 6 * MM)
 
-    # ruler ticks every 10 mm along top and left, labelled in cm
+    # ruler ticks every 10 mm along top and left of the zone, labelled in cm
     c.setStrokeColorRGB(0.3, 0.3, 0.4)
     c.setFillColorRGB(0.3, 0.3, 0.4)
     c.setFont(_font(False), 6)
-    n_x = int(page_mm[0] // 10)
+    n_x = int(blank_mm[0] // 10)
     for i in range(0, n_x + 1):
         x = i * 10 * MM
-        c.line(x, h - inset, x, h - inset - 3 * MM)
-        c.drawString(x + 1, h - inset - 3 * MM - 6, str(i))
-    n_y = int(page_mm[1] // 10)
+        c.line(x, zh - inset, x, zh - inset - 3 * MM)
+        c.drawString(x + 1, zh - inset - 3 * MM - 6, str(i))
+    n_y = int(blank_mm[1] // 10)
     for i in range(0, n_y + 1):
-        y = h - i * 10 * MM
+        y = zh - i * 10 * MM
         c.line(inset, y, inset + 3 * MM, y)
         c.drawString(inset + 3 * MM + 1, y - 2, str(i))
 
     c.restoreState()
 
-    # title (not shifted)
+    # title inside the zone top edge (accounts for A4 offset), not calibration-shifted
+    top_y = ph - 4 * MM
     c.setFillColorRGB(0.7, 0.1, 0.25)
-    c.setFont(_font(True), 10)
-    c.drawCentredString(w / 2, h - 4 * MM, "ПРОБНЫЙ ЛИСТ ВЫРАВНИВАНИЯ — %.0f×%.0f мм" % (page_mm[0], page_mm[1]))
+    c.setFont(_font(True), 9)
+    c.drawCentredString(zw / 2, top_y, "ПРОБНЫЙ ЛИСТ — %.0f×%.0f мм" % (blank_mm[0], blank_mm[1]))
     c.setFillColorRGB(0.3, 0.3, 0.4)
     c.setFont(_font(False), 7)
-    c.drawCentredString(w / 2, 2.2 * MM, "Сдвиг X=%.1f мм  Y=%.1f мм. Кресты должны попасть в углы бланка." % (dx_mm, dy_mm))
+    c.drawCentredString(zw / 2, ph - zh + 2.2 * MM,
+                        "Сдвиг X=%.1f мм  Y=%.1f мм. Печать: масштаб 100%% (Фактический размер)." % (dx_mm, dy_mm))
 
     c.showPage()
     c.save()
