@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check, MonitorDown, Save } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS } from "@/lib/fields";
 import {
   downloadSampleTemplate, seedDemo, clearDemo, getPresets, deletePreset,
   listTemplates, uploadTemplate, activateTemplate, deleteTemplateById,
+  getAppConfig, saveAppConfig,
 } from "@/lib/apiClient";
 
 export default function Settings() {
@@ -15,11 +17,26 @@ export default function Settings() {
   const [presets, setPresets] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [tplBusy, setTplBusy] = useState(false);
+  const [winUrl, setWinUrl] = useState("");
+  const [savingWin, setSavingWin] = useState(false);
 
   useEffect(() => {
     getPresets().then(setPresets).catch(() => {});
     loadTemplates();
+    getAppConfig().then((c) => setWinUrl(c?.windows_download_url || "")).catch(() => {});
   }, []);
+
+  async function handleSaveWin() {
+    setSavingWin(true);
+    try {
+      await saveAppConfig(winUrl.trim());
+      toast.success("Ссылка на установщик сохранена");
+    } catch {
+      toast.error("Не удалось сохранить ссылку");
+    } finally {
+      setSavingWin(false);
+    }
+  }
 
   function loadTemplates() {
     listTemplates().then(setTemplates).catch(() => {});
@@ -117,6 +134,48 @@ export default function Settings() {
         <p className="text-muted-foreground mt-2">
           Шаблон договора, поля автозаполнения и образец Excel.
         </p>
+      </div>
+
+      {/* Windows installer link */}
+      <div className="bg-card border border-border p-6" data-testid="settings-winlink-card">
+        <div className="flex items-start gap-4">
+          <div className="h-10 w-10 bg-[#38bdf8]/10 flex items-center justify-center shrink-0 rounded-md">
+            <MonitorDown className="h-5 w-5 text-[#38bdf8]" strokeWidth={2} />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-heading text-xl font-bold tracking-tight">Установщик Windows</h2>
+            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+              Прямая ссылка на <b>BanetskayaSetup.exe</b> для кнопки «Скачать для Windows» на стартовой
+              странице. Сборка публикуется в разделе <b>Releases</b> вашего GitHub-репозитория —
+              удобнее всего вставить ссылку вида:
+            </p>
+            <code className="block text-xs bg-accent px-3 py-2 mt-2 rounded overflow-x-auto">
+              https://github.com/ВАШ_ЛОГИН/ВАШ_РЕПО/releases/latest/download/BanetskayaSetup.exe
+            </code>
+            <div className="flex flex-wrap items-center gap-2 mt-4">
+              <Input
+                value={winUrl}
+                onChange={(e) => setWinUrl(e.target.value)}
+                placeholder="https://github.com/.../releases/latest/download/BanetskayaSetup.exe"
+                className="flex-1 min-w-[260px]"
+                data-testid="settings-winurl-input"
+              />
+              <Button
+                className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white"
+                onClick={handleSaveWin}
+                disabled={savingWin}
+                data-testid="settings-winurl-save"
+              >
+                {savingWin ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                Сохранить ссылку
+              </Button>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground bg-accent px-3 py-2 mt-3">
+              <Info className="h-4 w-4 shrink-0" />
+              Пока ссылка не задана, кнопка «Скачать для Windows» показывает инструкцию по сборке.
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Template info */}

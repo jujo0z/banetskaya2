@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -90,3 +92,12 @@ jobs:
           name: BanetskayaSetup
           path: installer_output/BanetskayaSetup.exe
           if-no-files-found: error
+
+      - name: Publish to GitHub Release (stable direct link)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Banetskaya.by — последняя сборка
+          files: installer_output/BanetskayaSetup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

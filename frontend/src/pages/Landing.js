@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,19 @@ import {
   FileSignature,
 } from "lucide-react";
 import { WINDOWS_DOWNLOAD_URL } from "@/lib/env";
+import { getAppConfig } from "@/lib/apiClient";
 
 export default function Landing() {
   const navigate = useNavigate();
+  const [downloadUrl, setDownloadUrl] = useState(WINDOWS_DOWNLOAD_URL || "");
+
+  useEffect(() => {
+    getAppConfig()
+      .then((c) => {
+        if (c && c.windows_download_url) setDownloadUrl(c.windows_download_url);
+      })
+      .catch(() => {});
+  }, []);
 
   const enter = () => {
     try {
@@ -26,11 +36,11 @@ export default function Landing() {
   };
 
   const download = () => {
-    if (WINDOWS_DOWNLOAD_URL) {
-      window.open(WINDOWS_DOWNLOAD_URL, "_blank");
+    if (downloadUrl) {
+      window.location.href = downloadUrl;
     } else {
       toast(
-        "Установщик собирается автоматически. После сборки на GitHub (Actions → Build Windows Installer) появится BanetskayaSetup.exe."
+        "Прямая ссылка ещё не задана. Соберите .exe на GitHub (Actions → Build Windows Installer), затем вставьте ссылку в Настройках → «Установщик Windows»."
       );
     }
   };

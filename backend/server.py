@@ -869,6 +869,30 @@ async def overlay_background():
     return FileResponse(str(p), media_type="image/png")
 
 
+# ---------- App config (e.g. Windows installer download link) ----------
+class AppConfig(BaseModel):
+    windows_download_url: str = ""
+
+
+@api_router.get("/app-config")
+async def get_app_config():
+    s = await db.app_settings.find_one({"key": "app_config"})
+    v = (s or {}).get("value", {}) or {}
+    return {"windows_download_url": v.get("windows_download_url", "")}
+
+
+@api_router.post("/app-config")
+async def set_app_config(cfg: AppConfig):
+    value = {"windows_download_url": (cfg.windows_download_url or "").strip()}
+    await db.app_settings.update_one(
+        {"key": "app_config"},
+        {"$set": {"key": "app_config", "value": value,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"saved": True, **value}
+
+
 
 
 app.include_router(api_router)

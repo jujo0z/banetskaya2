@@ -201,6 +201,17 @@ export async function getOverlayLayout() {
   return data;
 }
 
+// ---------- App config (Windows installer link) ----------
+export async function getAppConfig() {
+  const { data } = await api.get("/app-config");
+  return data;
+}
+
+export async function saveAppConfig(windows_download_url) {
+  const { data } = await api.post("/app-config", { windows_download_url });
+  return data;
+}
+
 export async function saveOverlayLayout(layout, dx_mm, dy_mm) {
   const { data } = await api.post("/overlay/layout", { layout, dx_mm, dy_mm });
   return data;
