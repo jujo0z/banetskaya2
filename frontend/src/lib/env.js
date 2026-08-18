@@ -3,6 +3,11 @@
 // In desktop mode the marketing/start "/welcome" page is skipped.
 function computeIsDesktop() {
   try {
+    // Most reliable: the bundled desktop backend (PyInstaller .exe) injects this
+    // flag into index.html, so it is impossible to be mistaken for the web version.
+    if (typeof window !== "undefined" && window.__IS_DESKTOP__ === true) {
+      return true;
+    }
     if (String(process.env.REACT_APP_IS_DESKTOP || "").toLowerCase() === "1" ||
         String(process.env.REACT_APP_IS_DESKTOP || "").toLowerCase() === "true") {
       return true;

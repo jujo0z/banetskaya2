@@ -210,6 +210,20 @@ backend:
           comment: "Новый эндпоинт для ссылки на установщик Windows. GET /api/app-config → {windows_download_url:''} по умолчанию. POST /api/app-config {windows_download_url:'https://...'} → {saved:true, windows_download_url:'...'}, сохраняется в app_settings key=app_config (upsert), читается обратно через GET. Пустая строка также сохраняется. Проверить GET(default)→POST(set)→GET(persisted)→POST(clear)→GET(empty)."
 
 frontend:
+  - task: "Desktop vs Web entry-gate logic (window.__IS_DESKTOP__ flag detection)"
+    implemented: true
+    working: true
+    file: "App.js, lib/env.js, pages/Landing.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "BUGFIX (desktop-mode detection). Фикс defense-in-depth: (1) server.py serve_spa инжектит window.__IS_DESKTOP__=true в index.html когда бэкенд запущен как PyInstaller .exe; (2) frontend lib/env.js computeIsDesktop() первым делом проверяет window.__IS_DESKTOP__===true. В веб-версии первый визит уходит на /welcome, кнопка 'Начать работу' входит в апп. Проверить: (A) Без флага: '/' → редирект на /welcome → клик 'Начать работу' → Dashboard, повторный '/' остаёмся в апп; (B) С window.__IS_DESKTOP__=true ПЕРЕД загрузкой: '/' → НЕ редиректит на /welcome, сразу Dashboard/сайдбар."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 11 тестов прошли (100% success rate). SCENARIO A (WEB, 7/7 PASS): первый визит '/' корректно редиректит на '/welcome', landing page с заголовком 'Автозаполнение и печать документов' отображается, кнопка 'Начать работу' найдена, после клика навигация на '/' (app root), app sidebar с навигацией (Генерация, История, Настройки) отображается, повторная навигация '/' в той же сессии НЕ редиректит на /welcome (остаёмся в app), sidebar остаётся видимым. SCENARIO B (DESKTOP, 4/4 PASS): с флагом window.__IS_DESKTOP__=true (инжектирован через add_init_script ПЕРЕД загрузкой) навигация '/' НЕ редиректит на /welcome, флаг корректно установлен в true, app открывается сразу в Dashboard с sidebar (Генерация, История, Настройки видны), landing page заголовок НЕ отображается. Логика entry-gate работает корректно в обоих режимах: WEB (первый визит → /welcome → клик → app → последующие визиты остаются в app через sessionStorage 'bnk_entered'='1') и DESKTOP (window.__IS_DESKTOP__===true → сразу в app без /welcome)."
   - task: "DocumentEditor — двухпанельный редактор с живым PDF-предпросмотром, черновики, пресеты"
     implemented: true
     working: true
@@ -241,8 +255,8 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.4"
-  test_sequence: 5
+  version: "2.5"
+  test_sequence: 6
   run_ui: false
 
 test_plan:
@@ -606,3 +620,45 @@ agent_communication:
         - Встроенный шаблон /app/backend/templates/contract_template.docx защищён от модификации ✅
         
         Все backend API полностью функциональны. Готово к финализации.
+
+
+agent_communication:
+    - agent: "main"
+      message: >
+        BUGFIX (desktop-mode detection). Пользователь: установленное Windows-приложение всё равно
+        перекидывает на веб-стартовую (/welcome). Фикс defense-in-depth: (1) server.py serve_spa —
+        когда бэкенд запущен как PyInstaller .exe (sys.frozen), в index.html инжектится
+        <script>window.__IS_DESKTOP__=true</script>; (2) frontend lib/env.js computeIsDesktop()
+        теперь первым делом проверяет window.__IS_DESKTOP__===true. В веб-версии (не frozen) ничего
+        не меняется — первый визит по-прежнему уходит на /welcome, кнопка "Начать работу" входит в апп.
+        ЗАДАЧА ТЕСТЕРУ (frontend, web): проверить регрессию веб-флоу И логику desktop-детекта через
+        Playwright add_init_script:
+        (A) Без флага: открыть "/" → должно редиректить на /welcome; клик "Начать работу" → попадаем в
+            приложение (Dashboard), при повторном "/" в той же сессии остаёмся в апп.
+        (B) С init-script window.__IS_DESKTOP__=true ПЕРЕД загрузкой: открыть "/" → НЕ должно быть
+            редиректа на /welcome, сразу показывается приложение (Dashboard/сайдбар).
+        Примечание: реальный .exe тестер запустить не может — проверяем именно фронтенд-логику флага.
+    - agent: "testing"
+      message: >
+        ✅ DESKTOP VS WEB ENTRY-GATE LOGIC ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все тесты прошли (100% success rate).
+        
+        SCENARIO A — WEB BEHAVIOR (7/7 тестов PASS):
+        ✅ [A.1] Первый визит на "/" корректно редиректит на "/welcome"
+        ✅ [A.2] Landing page отображается с заголовком "Автозаполнение и печать документов"
+        ✅ [A.3] Кнопка "Начать работу" (data-testid="btn-start-work") найдена
+        ✅ [A.4] После клика на "Начать работу" происходит навигация на "/" (app root)
+        ✅ [A.5] App sidebar с навигационными ссылками отображается (Генерация, История, Настройки)
+        ✅ [A.6] Повторная навигация на "/" в той же сессии НЕ редиректит на /welcome (остаёмся в app)
+        ✅ [A.6] App sidebar остаётся видимым после повторной навигации
+        
+        SCENARIO B — DESKTOP BEHAVIOR (4/4 теста PASS):
+        ✅ [B.1] С флагом window.__IS_DESKTOP__=true (инжектирован через add_init_script ПЕРЕД загрузкой) навигация на "/" НЕ редиректит на /welcome
+        ✅ [B.2] Флаг window.__IS_DESKTOP__ корректно установлен в true
+        ✅ [B.3] App открывается сразу в Dashboard с sidebar (Генерация, История, Настройки видны)
+        ✅ [B.4] Landing page заголовок НЕ отображается (подтверждение что НЕ на /welcome)
+        
+        КРИТИЧЕСКИ ВАЖНО: Логика entry-gate работает корректно в обоих режимах:
+        - WEB режим: первый визит → /welcome → клик "Начать работу" → app → последующие визиты остаются в app (sessionStorage "bnk_entered"="1")
+        - DESKTOP режим: window.__IS_DESKTOP__===true → сразу в app, без /welcome
+        
+        Все frontend компоненты (App.js EntryGate, lib/env.js computeIsDesktop, Landing.js) работают как задумано. Готово к финализации.

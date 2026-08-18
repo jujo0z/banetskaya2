@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Annotated, Any
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -918,6 +918,20 @@ FRONTEND_BUILD = Path(os.environ.get("FRONTEND_BUILD_DIR", str(_default_build)))
 if (FRONTEND_BUILD / "index.html").exists():
     logger.info("Serving frontend build from %s", FRONTEND_BUILD)
 
+    # Only the bundled desktop app runs "frozen" (PyInstaller .exe). In that case we
+    # mark the served HTML as desktop so the frontend never shows the web start page.
+    _IS_DESKTOP_BUILD = bool(getattr(sys, "frozen", False))
+
+    def _index_html() -> Response:
+        html = (FRONTEND_BUILD / "index.html").read_text(encoding="utf-8")
+        if _IS_DESKTOP_BUILD and "__IS_DESKTOP__" not in html:
+            html = html.replace(
+                "<head>",
+                "<head><script>window.__IS_DESKTOP__=true;</script>",
+                1,
+            )
+        return Response(content=html, media_type="text/html")
+
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         # /api/* is handled by the router above; return 404 for unknown API paths
@@ -931,7 +945,7 @@ if (FRONTEND_BUILD / "index.html").exists():
             and candidate.is_file()
         ):
             return FileResponse(str(candidate))
-        return FileResponse(str(FRONTEND_BUILD / "index.html"))
+        return _index_html()
 
 
 @app.on_event("shutdown")

@@ -122,3 +122,7 @@ Frontend (pages/BlankOverlay.js):
 - Показывается ТОЛЬКО в веб-версии: EntryGate в App.js перекидывает `/` → `/welcome` (пока не нажали «Начать работу», флаг sessionStorage bnk_entered). Десктоп-сборка (lib/env.js: IS_DESKTOP по hostname 127.0.0.1/localhost или REACT_APP_IS_DESKTOP=1) стартовую страницу ПРОПУСКАЕТ.
 - LibreOffice вшивается в установщик: .github/workflows/windows-installer.yml — admin-extract LibreOffice MSI в dist/Banetskaya/libreoffice (перед Inno); document_service._resolve_soffice() авто-находит вшитый soffice.exe рядом с приложением; frontend build получает REACT_APP_IS_DESKTOP=1.
 - Проверка сборки .exe — на GitHub Actions (в облаке Linux Windows-сборку не проверить).
+
+## Багфикс: десктоп всё равно уходил на /welcome (июль 2025)
+Причина: детект десктопа полагался на hostname 127.0.0.1, что в собранном .exe срабатывало ненадёжно.
+Фикс defense-in-depth: server.py (serve_spa) при sys.frozen инжектит <script>window.__IS_DESKTOP__=true</script> в index.html; frontend lib/env.js читает этот флаг первым. Веб-версия не меняется. Требует ПЕРЕСБОРКИ .exe. Frontend-тест 11/11 PASS.
