@@ -94,6 +94,25 @@ jobs:
           if (-not (Test-Path "$dest/program/soffice.exe")) { throw "Bundled soffice.exe missing at $dest/program" }
           Write-Host "LibreOffice bundled OK."
 
+      - name: Bundle SumatraPDF (silent printing)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64.exe"
+          $dest = "dist/Banetskaya/sumatra"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Write-Host "Downloading SumatraPDF (attempt $i) ..."
+              Invoke-WebRequest -Uri $url -OutFile "$dest/SumatraPDF.exe" -UseBasicParsing
+              if ((Test-Path "$dest/SumatraPDF.exe") -and ((Get-Item "$dest/SumatraPDF.exe").Length -gt 1MB)) { $ok = $true; break }
+            } catch { Write-Host "Failed: $($_.Exception.Message)" }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $ok) { throw "Could not download SumatraPDF" }
+          Write-Host "SumatraPDF bundled OK."
+
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 

@@ -1831,6 +1831,142 @@ except Exception as e:
     test("16.3 REGRESSION: POST /api/contracts/preview?format=pdf", False, str(e))
 
 # ============================================================================
+# TEST 17: OVERLAY SILENT PRINTING (Windows desktop app only)
+# ============================================================================
+print("\n📄 TEST 17: OVERLAY SILENT PRINTING")
+print("-" * 80)
+
+# Test 17.1: GET /api/printers -> 200 with supported=false on Linux
+try:
+    resp = requests.get(f"{API_BASE}/printers", timeout=10)
+    is_json = resp.headers.get('Content-Type', '').startswith('application/json')
+    data = resp.json() if is_json and resp.status_code == 200 else {}
+    has_supported = 'supported' in data
+    is_false = data.get('supported') == False
+    has_printers = 'printers' in data
+    is_empty_list = isinstance(data.get('printers'), list) and len(data.get('printers', [])) == 0
+    test(
+        "17.1 GET /api/printers -> 200 {supported:false, printers:[]} (Linux)",
+        resp.status_code == 200 and is_json and has_supported and is_false and has_printers and is_empty_list,
+        f"Status: {resp.status_code}, supported: {data.get('supported')}, printers: {data.get('printers')}"
+    )
+except Exception as e:
+    test("17.1 GET /api/printers", False, str(e))
+
+# Test 17.2: POST /api/overlay/print-silent with records -> 400 (not available on Linux)
+try:
+    resp = requests.post(
+        f"{API_BASE}/overlay/print-silent",
+        json={"records": [{"fio": "Тестовый Гражданин"}]},
+        timeout=10
+    )
+    is_400 = resp.status_code == 400
+    is_json = resp.headers.get('Content-Type', '').startswith('application/json')
+    data = resp.json() if is_json else {}
+    has_detail = 'detail' in data
+    detail_msg = data.get('detail', '')
+    is_windows_only = 'Windows' in detail_msg or 'установленном' in detail_msg
+    test(
+        "17.2 POST /api/overlay/print-silent with records -> 400 (Windows app only)",
+        is_400 and is_json and has_detail and is_windows_only,
+        f"Status: {resp.status_code}, detail: {detail_msg}"
+    )
+except Exception as e:
+    test("17.2 POST /api/overlay/print-silent with records", False, str(e))
+
+# Test 17.3: POST /api/overlay/print-silent with empty records -> 400
+try:
+    resp = requests.post(
+        f"{API_BASE}/overlay/print-silent",
+        json={"records": []},
+        timeout=10
+    )
+    is_400 = resp.status_code == 400
+    is_json = resp.headers.get('Content-Type', '').startswith('application/json')
+    data = resp.json() if is_json else {}
+    has_detail = 'detail' in data
+    test(
+        "17.3 POST /api/overlay/print-silent with empty records -> 400",
+        is_400 and is_json and has_detail,
+        f"Status: {resp.status_code}, detail: {data.get('detail', '')}"
+    )
+except Exception as e:
+    test("17.3 POST /api/overlay/print-silent with empty records", False, str(e))
+
+# Test 17.4: REGRESSION - POST /api/overlay/generate with page_size=card
+try:
+    resp = requests.post(
+        f"{API_BASE}/overlay/generate",
+        json={
+            "records": [{"fio": "Иванов Иван", "number": "1234"}],
+            "page_size": "card"
+        },
+        timeout=30
+    )
+    is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+    content_type = resp.headers.get('Content-Type', '')
+    is_pdf_type = 'application/pdf' in content_type
+    test(
+        "17.4 REGRESSION: POST /api/overlay/generate page_size=card -> 200 PDF",
+        resp.status_code == 200 and is_pdf and is_pdf_type,
+        f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Content-Type: {content_type}"
+    )
+except Exception as e:
+    test("17.4 REGRESSION: POST /api/overlay/generate page_size=card", False, str(e))
+
+# Test 17.5: REGRESSION - POST /api/overlay/generate with page_size=a4
+try:
+    resp = requests.post(
+        f"{API_BASE}/overlay/generate",
+        json={
+            "records": [{"fio": "Иванов Иван", "number": "1234"}],
+            "page_size": "a4"
+        },
+        timeout=30
+    )
+    is_pdf = check_pdf_valid(resp.content) if resp.status_code == 200 else False
+    content_type = resp.headers.get('Content-Type', '')
+    is_pdf_type = 'application/pdf' in content_type
+    test(
+        "17.5 REGRESSION: POST /api/overlay/generate page_size=a4 -> 200 PDF",
+        resp.status_code == 200 and is_pdf and is_pdf_type,
+        f"Status: {resp.status_code}, Valid PDF: {is_pdf}, Content-Type: {content_type}"
+    )
+except Exception as e:
+    test("17.5 REGRESSION: POST /api/overlay/generate page_size=a4", False, str(e))
+
+# Test 17.6: REGRESSION - GET /api/overlay/layout
+try:
+    resp = requests.get(f"{API_BASE}/overlay/layout", timeout=10)
+    is_json = resp.headers.get('Content-Type', '').startswith('application/json')
+    data = resp.json() if is_json and resp.status_code == 200 else {}
+    has_layout = 'layout' in data
+    has_dx = 'dx_mm' in data
+    has_dy = 'dy_mm' in data
+    has_page = 'page_mm' in data
+    test(
+        "17.6 REGRESSION: GET /api/overlay/layout -> 200 with keys",
+        resp.status_code == 200 and is_json and has_layout and has_dx and has_dy and has_page,
+        f"Status: {resp.status_code}, Keys: {list(data.keys())}"
+    )
+except Exception as e:
+    test("17.6 REGRESSION: GET /api/overlay/layout", False, str(e))
+
+# Test 17.7: REGRESSION - GET /api/stats
+try:
+    resp = requests.get(f"{API_BASE}/stats", timeout=10)
+    is_json = resp.headers.get('Content-Type', '').startswith('application/json')
+    data = resp.json() if is_json and resp.status_code == 200 else {}
+    has_total = 'total' in data
+    test(
+        "17.7 REGRESSION: GET /api/stats -> 200",
+        resp.status_code == 200 and is_json and has_total,
+        f"Status: {resp.status_code}, Has total: {has_total}"
+    )
+except Exception as e:
+    test("17.7 REGRESSION: GET /api/stats", False, str(e))
+
+# ============================================================================
 # CLEANUP
 # ============================================================================
 print("\n🧹 CLEANUP")

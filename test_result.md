@@ -662,3 +662,52 @@ agent_communication:
         - DESKTOP режим: window.__IS_DESKTOP__===true → сразу в app, без /welcome
         
         Все frontend компоненты (App.js EntryGate, lib/env.js computeIsDesktop, Landing.js) работают как задумано. Готово к финализации.
+  - task: "Overlay silent printing: GET /api/printers, POST /api/overlay/print-silent"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Новая фича: тихая печать overlay для десктопа. Добавлены эндпоинты GET /api/printers и POST /api/overlay/print-silent (server.py); логика в document_service.py (list_printers/print_pdf_silent/printing_supported через SumatraPDF, на Linux не работает). GET /api/printers возвращает {supported:bool, printers:[]}. POST /api/overlay/print-silent печатает PDF на локальный принтер без диалога (только Windows desktop app). На Linux/веб: supported=false, print-silent возвращает 400 с понятной ошибкой. Проверить: (1) GET /api/printers → 200 {supported:false, printers:[]} на Linux; (2) POST /api/overlay/print-silent с records → 400 (Windows-only); (3) POST с пустым records → 400; (4) РЕГРЕССИЯ: overlay/generate, overlay/layout, stats работают."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 7 тестов overlay silent printing прошли успешно (100% success rate). НОВЫЕ ЭНДПОИНТЫ РАБОТАЮТ КОРРЕКТНО: (1) GET /api/printers → 200 JSON с ключами 'supported' и 'printers', на Linux supported=false и printers=[] (пустой массив) — грейсфул деградация работает корректно; (2) POST /api/overlay/print-silent с records=[{fio:'Тестовый Гражданин'}] → 400 (Bad Request), Content-Type application/json, detail содержит сообщение о том что тихая печать доступна только в установленном Windows-приложении ('Windows' или 'установленном' в тексте) — понятная ошибка для пользователя; (3) POST /api/overlay/print-silent с пустым records=[] → 400 (Bad Request), detail присутствует — валидация работает. РЕГРЕССИЯ (4/4 теста): ✅ POST /api/overlay/generate с page_size='card' → 200, Content-Type application/pdf, валидный PDF начинается с %PDF; ✅ POST /api/overlay/generate с page_size='a4' → 200, валидный PDF; ✅ GET /api/overlay/layout → 200 JSON с ключами layout, dx_mm, dy_mm, page_mm; ✅ GET /api/stats → 200 JSON с ключом 'total'. Все backend API полностью функциональны. Тихая печать корректно недоступна на Linux (ожидаемое поведение), API контракты соблюдены, грейсфул деградация работает."
+
+agent_communication:
+    - agent: "main"
+      message: >
+        FEATURE (тихая печать overlay для десктопа). Добавлены эндпоинты: GET /api/printers
+        и POST /api/overlay/print-silent (server.py); логика в document_service.py
+        (list_printers/print_pdf_silent/printing_supported через SumatraPDF, на Linux не работает).
+        ЗАДАЧА ТЕСТЕРУ (ТОЛЬКО BACKEND): среда — Linux, поэтому реальная печать невозможна;
+        проверь именно контракты/грейсфул-деградацию:
+        (1) GET /api/printers → 200, JSON {"supported": false, "printers": []} (на Linux всегда false).
+        (2) POST /api/overlay/print-silent с телом {"records":[{"fio":"Тест"}]} → 400 и понятная
+            ошибка (тихая печать только в Windows-приложении).
+        (3) POST /api/overlay/print-silent с пустым/без records → 400.
+        (4) РЕГРЕССИЯ: POST /api/overlay/generate (records=[{...}], page_size='card'|'a4') → 200 валидный PDF;
+            GET /api/overlay/layout → 200; POST /api/overlay/layout сохраняет; GET /api/stats → 200.
+        Не пытайся реально печатать — на Linux это ожидаемо недоступно.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ OVERLAY SILENT PRINTING ЗАВЕРШЕНО УСПЕШНО. Все 7 новых тестов прошли (100% success rate).
+        
+        НОВЫЕ ЭНДПОИНТЫ РАБОТАЮТ КОРРЕКТНО (3/3 теста):
+        
+        1. GET /api/printers (1/1 тест): → 200 JSON с ключами 'supported' и 'printers'; на Linux supported=false и printers=[] (пустой массив) — грейсфул деградация работает корректно ✅
+        
+        2. POST /api/overlay/print-silent с records (1/1 тест): с телом {records:[{fio:'Тестовый Гражданин'}]} → 400 (Bad Request), Content-Type application/json, detail содержит понятное сообщение о том что тихая печать доступна только в установленном Windows-приложении ('Windows' или 'установленном' в тексте) ✅
+        
+        3. POST /api/overlay/print-silent с пустым records (1/1 тест): records=[] → 400 (Bad Request), detail присутствует — валидация работает корректно ✅
+        
+        РЕГРЕССИЯ (4/4 теста):
+        ✅ POST /api/overlay/generate с page_size='card' → 200, Content-Type application/pdf, валидный PDF начинается с %PDF
+        ✅ POST /api/overlay/generate с page_size='a4' → 200, валидный PDF
+        ✅ GET /api/overlay/layout → 200 JSON с ключами layout, dx_mm, dy_mm, page_mm
+        ✅ GET /api/stats → 200 JSON с ключом 'total'
+        
+        ВАЖНО: Тихая печать корректно недоступна на Linux (ожидаемое поведение по дизайну). API контракты соблюдены, грейсфул деградация работает как задумано. Все backend API полностью функциональны. Готово к финализации.

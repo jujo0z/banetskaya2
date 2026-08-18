@@ -850,6 +850,45 @@ async def generate_overlay(req: OverlayGenerateRequest):
     )
 
 
+class OverlayPrintRequest(OverlayGenerateRequest):
+    printer_name: str = ""
+
+
+@api_router.get("/printers")
+async def list_printers_endpoint():
+    """Local printers (Windows desktop app only). supported=false in the web version."""
+    return {"supported": docsvc.printing_supported(), "printers": docsvc.list_printers()}
+
+
+@api_router.post("/overlay/print-silent")
+async def overlay_print_silent(req: OverlayPrintRequest):
+    """Print the overlay straight to a local printer at actual size — no dialog.
+    Available only in the Windows desktop app (backend runs on the user's machine)."""
+    if not docsvc.printing_supported():
+        raise HTTPException(
+            status_code=400,
+            detail="Тихая печать доступна только в установленном Windows-приложении.",
+        )
+    if not req.records:
+        raise HTTPException(status_code=400, detail="Нет данных для печати")
+    try:
+        data = docsvc.build_overlay(
+            records=req.records,
+            layout=req.layout,
+            page_size=req.page_size,
+            dx_mm=req.dx_mm,
+            dy_mm=req.dy_mm,
+            with_background=False,
+        )
+        docsvc.print_pdf_silent(data, req.printer_name)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("silent print failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка печати: {e}")
+    return {"printed": True, "printer": req.printer_name or "по умолчанию", "pages": len(req.records)}
+
+
 @api_router.get("/overlay/test-sheet")
 async def overlay_test_sheet(dx: float = 0.0, dy: float = 0.0, page_size: str = "card"):
     data = docsvc.build_overlay_test_sheet(page_size=page_size, dx_mm=dx, dy_mm=dy)

@@ -254,6 +254,24 @@ export async function openOverlayTestSheet(dx = 0, dy = 0, pageSize = "card") {
   window.open(url, "_blank");
 }
 
+// ---------- Silent printing (desktop app only) ----------
+export async function getPrinters() {
+  const { data } = await api.get("/printers");
+  return data; // { supported: bool, printers: [{name, default}] }
+}
+
+export async function printOverlaySilent(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", printerName = "" } = {}) {
+  const { data } = await api.post("/overlay/print-silent", {
+    records,
+    layout,
+    dx_mm,
+    dy_mm,
+    page_size: pageSize,
+    printer_name: printerName,
+  });
+  return data; // { printed, printer, pages }
+}
+
 export async function exportHistory(q = "", status = "") {
   const params = {};
   if (q) params.q = q;

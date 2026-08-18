@@ -39,6 +39,119 @@ def _resolve_soffice():
 
 SOFFICE_BIN = _resolve_soffice()
 
+
+# ---------- Silent printing (Windows desktop app only) ----------
+# SumatraPDF is a tiny, reliable PDF printer that supports "actual size" (noscale)
+# printing straight to a named printer with NO dialog — perfect for overlay printing
+# onto a pre-inserted 147x103 mm blank.
+def _resolve_sumatra():
+    env = os.environ.get("SUMATRA_BIN")
+    if env:
+        return env
+    names = ["SumatraPDF.exe", "SumatraPDF-3.5.2-64.exe", "SumatraPDF-64.exe"]
+    bases = [_resource_base() / "sumatra"]
+    if getattr(sys, "frozen", False):
+        bases.append(Path(sys.executable).parent / "sumatra")
+    for b in bases:
+        for n in names:
+            try:
+                c = b / n
+                if c.exists():
+                    return str(c)
+            except Exception:
+                pass
+    return "SumatraPDF.exe"
+
+
+SUMATRA_BIN = _resolve_sumatra()
+
+
+def printing_supported() -> bool:
+    """Silent printing works only when running on Windows (the desktop app)."""
+    return sys.platform.startswith("win")
+
+
+def list_printers():
+    """Return [{'name': str, 'default': bool}] of local Windows printers."""
+    if not printing_supported():
+        return []
+    try:
+        import json as _json
+        cmd = [
+            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+            "Get-CimInstance Win32_Printer | Select-Object Name,Default | ConvertTo-Json -Compress",
+        ]
+        out = subprocess.run(cmd, capture_output=True, timeout=20)
+        raw = out.stdout.decode("utf-8", "ignore").strip()
+        if not raw:
+            return []
+        parsed = _json.loads(raw)
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        printers = []
+        for p in parsed:
+            name = (p.get("Name") or "").strip()
+            if name:
+                printers.append({"name": name, "default": bool(p.get("Default"))})
+        return printers
+    except Exception:
+        return []
+
+
+def print_pdf_silent(pdf_bytes: bytes, printer_name: str = "") -> bool:
+    """Print a PDF silently at actual size (no scaling) to the given printer.
+
+    Uses SumatraPDF (-print-to / -print-to-default) with 'noscale' so the content
+    lands exactly where placed on the 147x103 mm blank. Falls back to LibreOffice
+    (soffice --pt) if SumatraPDF is not available.
+    """
+    if not printing_supported():
+        raise RuntimeError("Тихая печать доступна только в Windows-приложении")
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+        tf.write(pdf_bytes)
+        pdf_path = tf.name
+
+    try:
+        sumatra = SUMATRA_BIN
+        have_sumatra = False
+        try:
+            have_sumatra = Path(sumatra).exists() or sumatra == "SumatraPDF.exe"
+        except Exception:
+            have_sumatra = False
+
+        if have_sumatra:
+            if printer_name:
+                cmd = [sumatra, "-print-to", printer_name,
+                       "-print-settings", "noscale", "-silent", pdf_path]
+            else:
+                cmd = [sumatra, "-print-to-default",
+                       "-print-settings", "noscale", "-silent", pdf_path]
+            res = subprocess.run(cmd, capture_output=True, timeout=120)
+            if res.returncode != 0:
+                err = res.stderr.decode("utf-8", "ignore")[:300]
+                raise RuntimeError(f"SumatraPDF error: {err or res.returncode}")
+            return True
+
+        # Fallback: LibreOffice silent print (paper size follows PDF/printer defaults)
+        if printer_name:
+            cmd = [SOFFICE_BIN, "--headless", "--pt", printer_name, pdf_path]
+        else:
+            cmd = [SOFFICE_BIN, "--headless", "-p", pdf_path]
+        res = subprocess.run(cmd, capture_output=True, timeout=120)
+        if res.returncode != 0:
+            err = res.stderr.decode("utf-8", "ignore")[:300]
+            raise RuntimeError(f"soffice print error: {err or res.returncode}")
+        return True
+    finally:
+        try:
+            time.sleep(1.0)  # let the spooler read the file before deletion
+            os.unlink(pdf_path)
+        except Exception:
+            pass
+
+
+
 # Ordered contract fields with Russian labels + Excel column-matching keywords.
 FIELDS = [
     {"key": "contract_number", "label": "Номер договора", "keywords": ["номер договора", "№ договора", "договор"]},

@@ -29,7 +29,10 @@ import {
   openOverlayPdf,
   downloadOverlayPdf,
   openOverlayTestSheet,
+  getPrinters,
+  printOverlaySilent,
 } from "@/lib/apiClient";
+import { IS_DESKTOP } from "@/lib/env";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const BG_URL = `${BACKEND_URL}/api/overlay/background`;
@@ -101,6 +104,10 @@ export default function BlankOverlay() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [cw, setCw] = useState(700);
+  // Silent printing (desktop app only)
+  const [printers, setPrinters] = useState([]);
+  const [selectedPrinter, setSelectedPrinter] = useState("");
+  const [printing, setPrinting] = useState(false);
 
   const canvasRef = useRef(null);
   const dragRef = useRef(null);
@@ -117,6 +124,23 @@ export default function BlankOverlay() {
         toast.error("Не удалось загрузить раскладку");
       } finally {
         setLoading(false);
+      }
+    })();
+  }, []);
+
+  // ---- load printers (desktop app only) ----
+  useEffect(() => {
+    if (!IS_DESKTOP) return;
+    (async () => {
+      try {
+        const res = await getPrinters();
+        if (res && res.supported && Array.isArray(res.printers)) {
+          setPrinters(res.printers);
+          const def = res.printers.find((p) => p.default) || res.printers[0];
+          if (def) setSelectedPrinter(def.name);
+        }
+      } catch (e) {
+        // printing UI simply won't appear if this fails
       }
     })();
   }, []);
@@ -197,6 +221,20 @@ export default function BlankOverlay() {
       toast("PDF открыт в новой вкладке — печатайте с масштабом «Фактический размер» (100%)");
     } catch (e) {
       toast.error("Ошибка печати");
+    }
+  };
+  const doPrintSilent = async () => {
+    setPrinting(true);
+    try {
+      const res = await printOverlaySilent([values], {
+        layout, dx_mm: dx, dy_mm: dy, pageSize, printerName: selectedPrinter,
+      });
+      toast.success(`Отправлено на печать: ${res.printer}`);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || "Ошибка печати";
+      toast.error(msg);
+    } finally {
+      setPrinting(false);
     }
   };
   const doDownload = async () => {
@@ -406,6 +444,41 @@ export default function BlankOverlay() {
               подвиньте X/Y и повторите.
             </p>
           </div>
+
+          {/* Silent printing — desktop app only */}
+          {IS_DESKTOP && (
+            <div className="rounded-lg border border-[#E11D48]/40 bg-[#E11D48]/5 p-3 space-y-2" data-testid="silent-print-box">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <Printer className="h-4 w-4 text-[#E11D48]" /> Печать на принтер (без окон)
+              </div>
+              <select
+                value={selectedPrinter}
+                onChange={(e) => setSelectedPrinter(e.target.value)}
+                data-testid="printer-select"
+                className="w-full rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm outline-none focus:border-[#E11D48]"
+              >
+                {printers.length === 0 && <option value="">Принтеры не найдены</option>}
+                {printers.map((p) => (
+                  <option key={p.name} value={p.name} className="bg-neutral-900">
+                    {p.name}{p.default ? " (по умолчанию)" : ""}
+                  </option>
+                ))}
+              </select>
+              <Button
+                onClick={doPrintSilent}
+                disabled={printing || printers.length === 0}
+                className="w-full bg-[#E11D48] hover:bg-[#BE123C]"
+                data-testid="btn-print-silent"
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                {printing ? "Печать…" : "Печать на бланк (тихо, 100%)"}
+              </Button>
+              <p className="text-[11px] text-white/50 leading-snug">
+                Печатает сразу на выбранный принтер, в фактическом размере (147×103 мм),
+                без окна выбора формата. Вставьте бланк в принтер и нажмите.
+              </p>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="grid grid-cols-2 gap-2">

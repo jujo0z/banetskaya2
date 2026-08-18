@@ -126,3 +126,6 @@ Frontend (pages/BlankOverlay.js):
 ## Багфикс: десктоп всё равно уходил на /welcome (июль 2025)
 Причина: детект десктопа полагался на hostname 127.0.0.1, что в собранном .exe срабатывало ненадёжно.
 Фикс defense-in-depth: server.py (serve_spa) при sys.frozen инжектит <script>window.__IS_DESKTOP__=true</script> в index.html; frontend lib/env.js читает этот флаг первым. Веб-версия не меняется. Требует ПЕРЕСБОРКИ .exe. Frontend-тест 11/11 PASS.
+
+## Фича: тихая печать бланка (десктоп, июль 2025)
+GET /api/printers (список принтеров Windows, supported=false в вебе), POST /api/overlay/print-silent (генерит overlay-PDF и печатает через SumatraPDF -print-to ... -print-settings noscale -silent; fallback soffice --pt). В BlankOverlay.js — блок только для IS_DESKTOP: выбор принтера + кнопка "Печать на бланк (тихо, 100%)". SumatraPDF вшивается в установщик (workflow + installer.iss recursesubdirs). Backend-тест 7/7. Требует ПЕРЕСБОРКИ .exe.
