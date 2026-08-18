@@ -59,10 +59,26 @@ jobs:
         run: |
           # Download the official LibreOffice MSI and do an ADMIN extract (no install),
           # then copy the LibreOffice tree next to the app so soffice.exe ships inside.
-          $ver = "24.8.4"
-          $url = "https://download.documentfoundation.org/libreoffice/stable/$ver/win/x86_64/LibreOffice_${ver}_Win_x86-64.msi"
-          Write-Host "Downloading LibreOffice $ver ..."
-          Invoke-WebRequest -Uri $url -OutFile lo.msi
+          $ErrorActionPreference = "Stop"
+          $ver = "25.8.7"        # 3-part номер (зеркало stable)
+          $verArch = "25.8.7.2"  # 4-part номер (постоянный архив, резерв)
+          $urls = @(
+            "https://download.documentfoundation.org/libreoffice/stable/$ver/win/x86_64/LibreOffice_${ver}_Win_x86-64.msi",
+            "https://downloadarchive.documentfoundation.org/libreoffice/old/$verArch/win/x86_64/LibreOffice_${verArch}_Win_x86-64.msi"
+          )
+          $ok = $false
+          foreach ($u in $urls) {
+            for ($i = 1; $i -le 3; $i++) {
+              try {
+                Write-Host "Downloading LibreOffice from $u (attempt $i) ..."
+                Invoke-WebRequest -Uri $u -OutFile lo.msi -UseBasicParsing
+                if ((Test-Path lo.msi) -and ((Get-Item lo.msi).Length -gt 100MB)) { $ok = $true; break }
+              } catch { Write-Host "Failed: $($_.Exception.Message)" }
+              Start-Sleep -Seconds 5
+            }
+            if ($ok) { break }
+          }
+          if (-not $ok) { throw "Could not download LibreOffice MSI from any mirror" }
           New-Item -ItemType Directory -Force -Path lo_extract | Out-Null
           $target = (Resolve-Path lo_extract).Path
           Write-Host "Administrative extract ..."
