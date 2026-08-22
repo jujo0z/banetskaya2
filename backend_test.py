@@ -5,7 +5,7 @@ import requests
 import pymupdf  # PyMuPDF for PDF validation and text extraction
 
 # Backend URL from frontend/.env
-BACKEND_URL = "https://1a44cbd3-e499-4c2e-b9f8-dd81fc5e4c75.preview.emergentagent.com/api"
+BACKEND_URL = "https://blank-sheet-filler.preview.emergentagent.com/api"
 
 def test_overlay_generate_card_with_form():
     """Test 1: POST /api/overlay/generate with page_size=card, with_form=true"""
