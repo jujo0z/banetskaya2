@@ -8,6 +8,7 @@ import Generate from "@/pages/Generate";
 import History from "@/pages/History";
 import Settings from "@/pages/Settings";
 import BlankOverlay from "@/pages/BlankOverlay";
+import FullPrint from "@/pages/FullPrint";
 import Landing from "@/pages/Landing";
 import { IS_WEB } from "@/lib/env";
 
@@ -43,6 +44,7 @@ function App() {
           <Route path="generate" element={<Generate />} />
           <Route path="history" element={<History />} />
           <Route path="blank" element={<BlankOverlay />} />
+          <Route path="full-print" element={<FullPrint />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

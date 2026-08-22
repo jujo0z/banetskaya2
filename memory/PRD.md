@@ -129,3 +129,6 @@ Frontend (pages/BlankOverlay.js):
 
 ## Фича: тихая печать бланка (десктоп, июль 2025)
 GET /api/printers (список принтеров Windows, supported=false в вебе), POST /api/overlay/print-silent (генерит overlay-PDF и печатает через SumatraPDF -print-to ... -print-settings noscale -silent; fallback soffice --pt). В BlankOverlay.js — блок только для IS_DESKTOP: выбор принтера + кнопка "Печать на бланк (тихо, 100%)". SumatraPDF вшивается в установщик (workflow + installer.iss recursesubdirs). Backend-тест 7/7. Требует ПЕРЕСБОРКИ .exe.
+
+## Фича: страница «Полная печать» (июль 2025)
+Новый раздел в сайдбаре /full-print (pages/FullPrint.js), и в вебе, и в десктопе. Печатает ВЕСЬ документ на белом листе: бланк по скану (with_background=true) + данные, размер 147x103. Переиспользует сохранённую overlay-раскладку и поля. Веб: Предпросмотр/Открыть-Печать PDF/Скачать. Десктоп: выбор принтера + тихая печать (with_background). Backend: print-silent теперь уважает with_background; overlay/generate с фоном отдаёт валидный PDF (~1.1МБ). Overlay-печать (только данные) сохранена. Требует пересборки .exe для десктопа.

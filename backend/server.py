@@ -878,7 +878,7 @@ async def overlay_print_silent(req: OverlayPrintRequest):
             page_size=req.page_size,
             dx_mm=req.dx_mm,
             dy_mm=req.dy_mm,
-            with_background=False,
+            with_background=req.with_background,
         )
         docsvc.print_pdf_silent(data, req.printer_name)
     except HTTPException:

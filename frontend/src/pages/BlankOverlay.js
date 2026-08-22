@@ -62,7 +62,7 @@ const RAND = {
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const pad2 = (n) => String(n).padStart(2, "0");
 
-function randomRecord() {
+export function randomRecord() {
   const d = 1 + Math.floor(Math.random() * 28);
   const m = pick(RAND.months);
   const y = 24 + Math.floor(Math.random() * 3);

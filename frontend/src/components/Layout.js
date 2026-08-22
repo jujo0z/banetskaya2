@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp } from "lucide-react";
+import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp, FileText } from "lucide-react";
 
 const NAV = [
   { to: "/", end: true, label: "Дашборд", icon: LayoutDashboard, testid: "nav-dashboard" },
   { to: "/generate", label: "Генерация", icon: FilePlus2, testid: "nav-generate" },
   { to: "/history", label: "История", icon: History, testid: "nav-history" },
   { to: "/blank", label: "Печать на бланке", icon: Stamp, testid: "nav-blank" },
+  { to: "/full-print", label: "Полная печать", icon: FileText, testid: "nav-full-print" },
   { to: "/settings", label: "Настройки", icon: Settings, testid: "nav-settings" },
 ];
 

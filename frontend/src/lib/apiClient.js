@@ -229,20 +229,20 @@ export async function overlayPdfUrl(records, { layout, dx_mm = 0, dy_mm = 0, wit
 // Open the overlay PDF in a NEW TAB so the user prints from the PDF viewer
 // (reliable + lets them pick "Actual size / 100%"). Auto window.print() on a
 // blob PDF often prints a blank page on some printers, so we avoid it.
-export async function openOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card" } = {}) {
+export async function openOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", withBackground = false } = {}) {
   const res = await api.post(
     "/overlay/generate",
-    { records, layout, dx_mm, dy_mm, with_background: false, page_size: pageSize },
+    { records, layout, dx_mm, dy_mm, with_background: withBackground, page_size: pageSize },
     { responseType: "blob" }
   );
   const url = window.URL.createObjectURL(res.data);
   window.open(url, "_blank");
 }
 
-export async function downloadOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card" } = {}) {
+export async function downloadOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", withBackground = false } = {}) {
   const res = await api.post(
     "/overlay/generate",
-    { records, layout, dx_mm, dy_mm, with_background: false, page_size: pageSize },
+    { records, layout, dx_mm, dy_mm, with_background: withBackground, page_size: pageSize },
     { responseType: "blob" }
   );
   downloadBlob(res.data, "soobshenie_overlay.pdf");
@@ -260,7 +260,7 @@ export async function getPrinters() {
   return data; // { supported: bool, printers: [{name, default}] }
 }
 
-export async function printOverlaySilent(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", printerName = "" } = {}) {
+export async function printOverlaySilent(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", printerName = "", withBackground = false } = {}) {
   const { data } = await api.post("/overlay/print-silent", {
     records,
     layout,
@@ -268,6 +268,7 @@ export async function printOverlaySilent(records, { layout, dx_mm = 0, dy_mm = 0
     dy_mm,
     page_size: pageSize,
     printer_name: printerName,
+    with_background: withBackground,
   });
   return data; // { printed, printer, pages }
 }
