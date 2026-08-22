@@ -1,17 +1,37 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp, FileText } from "lucide-react";
 
-const NAV = [
-  { to: "/", end: true, label: "Дашборд", icon: LayoutDashboard, testid: "nav-dashboard" },
-  { to: "/generate", label: "Генерация", icon: FilePlus2, testid: "nav-generate" },
-  { to: "/history", label: "История", icon: History, testid: "nav-history" },
-  { to: "/blank", label: "Печать на бланке", icon: Stamp, testid: "nav-blank" },
-  { to: "/full-print", label: "Полная печать", icon: FileText, testid: "nav-full-print" },
-  { to: "/settings", label: "Настройки", icon: Settings, testid: "nav-settings" },
+const NAV_GROUPS = [
+  {
+    title: "Обзор",
+    items: [
+      { to: "/", end: true, label: "Дашборд", icon: LayoutDashboard, testid: "nav-dashboard" },
+    ],
+  },
+  {
+    title: "Договоры найма",
+    items: [
+      { to: "/generate", label: "Генерация из Excel", icon: FilePlus2, testid: "nav-generate" },
+      { to: "/history", label: "История договоров", icon: History, testid: "nav-history" },
+    ],
+  },
+  {
+    title: "Бланк «СООБЩЕНИЕ»",
+    items: [
+      { to: "/blank", label: "Печать на бланке", icon: Stamp, testid: "nav-blank" },
+      { to: "/full-print", label: "Полная печать", icon: FileText, testid: "nav-full-print" },
+    ],
+  },
+  {
+    title: "Система",
+    items: [
+      { to: "/settings", label: "Настройки", icon: Settings, testid: "nav-settings" },
+    ],
+  },
 ];
 
 const itemClass = ({ isActive }) =>
-  `group flex items-center gap-3 px-5 py-3 text-sm font-medium border-l-2 transition-colors duration-200 ${
+  `group flex items-center gap-3 px-5 py-2.5 text-sm font-medium border-l-2 transition-colors duration-200 ${
     isActive
       ? "border-[#E11D48] text-white bg-white/5"
       : "border-transparent text-muted-foreground hover:text-white hover:bg-white/5"
@@ -34,12 +54,19 @@ export default function Layout() {
             </div>
           </div>
         </div>
-        <nav className="flex flex-col py-4" data-testid="sidebar-nav">
-          {NAV.map(({ to, end, label, icon: Icon, testid }) => (
-            <NavLink key={to} to={to} end={end} className={itemClass} data-testid={testid}>
-              <Icon className="h-4 w-4" strokeWidth={2} />
-              {label}
-            </NavLink>
+        <nav className="flex flex-col py-4 overflow-y-auto" data-testid="sidebar-nav">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title} className="mb-2">
+              <div className="px-5 pt-3 pb-1.5 text-[10px] font-mono uppercase tracking-[0.2em] text-white/35">
+                {group.title}
+              </div>
+              {group.items.map(({ to, end, label, icon: Icon, testid }) => (
+                <NavLink key={to} to={to} end={end} className={itemClass} data-testid={testid}>
+                  <Icon className="h-4 w-4" strokeWidth={2} />
+                  {label}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="mt-auto px-5 py-5 border-t border-white/10">

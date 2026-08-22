@@ -108,6 +108,23 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Тихая печать бланка ровно 147×103 мм (page_size=card) + деградация на Linux"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py, frontend BlankOverlay.js/FullPrint.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Пользователь просил убедиться что тихая печать бланков идёт в формате 147x103. Фронтенд теперь форсирует page_size='card' в тихой печати (BlankOverlay doPrintSilent; FullPrint уже card). Backend build_overlay(page_size='card') делает страницу PDF ровно 147x103 мм (416.69x291.97 pt). Проверить на Linux (реальная печать невозможна — это ожидаемо): (1) POST /api/overlay/generate {records:[{fio:'Тест'}], page_size:'card', with_form:false} -> 200 application/pdf, размер страницы PDF = 147x103 мм (ширина ~416.69pt, высота ~291.97pt, допуск ±1pt); (2) POST /api/overlay/generate с with_form:true, page_size='card' -> 200, страница тоже 147x103 мм; (3) POST /api/overlay/generate page_size='a4' -> 200, страница A4 (~595x842pt); (4) POST /api/overlay/print-silent {records:[{fio:'Тест'}], page_size:'card'} -> 400 с сообщением про Windows-приложение (деградация на Linux); (5) GET /api/printers -> 200 {supported:false, printers:[]}. Для проверки размеров используй pymupdf/PyPDF2: открой PDF и прочитай mediabox первой страницы."
+        - working: true
+          agent: "testing"
+          comment: "✅ 8/8 (100%). page_size='card' даёт страницу PDF РОВНО 416.69×291.97 pt = 147×103 мм (нулевое отклонение), и с with_form=false, и с true. page_size='a4' -> 595.28×841.89 pt (A4), не card. print-silent -> 400 «Тихая печать доступна только в установленном Windows-приложении.» (деградация на Linux). GET /api/printers -> {supported:false, printers:[]}. Регрессия (form-background, layout, stats) без ошибок."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 8 тестов прошли успешно (100% success rate). РАЗМЕР СТРАНИЦЫ ПОДТВЕРЖДЁН ТОЧНО: (1) POST /api/overlay/generate {records:[{fio:'Тест Тестович'}], page_size:'card', with_form:false} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер страницы РОВНО 416.69 × 291.97 pt (147×103 мм, проверено через pymupdf doc[0].rect, допуск ±1.5 pt выполнен); (2) POST /api/overlay/generate {records:[{fio:'Тест'}], page_size:'card', with_form:true} → 200, валидный PDF, размер страницы РОВНО 416.69 × 291.97 pt (147×103 мм); (3) POST /api/overlay/generate {records:[{fio:'Тест'}], page_size:'a4', with_form:true} → 200, валидный PDF, размер страницы 595.28 × 841.89 pt (A4), НЕ 147×103 мм — корректно; (4) POST /api/overlay/print-silent {records:[{fio:'Тест'}], page_size:'card'} → 400 (Bad Request), Content-Type application/json, detail='Тихая печать доступна только в установленном Windows-приложении.' — грейсфул деградация на Linux работает корректно; (5) GET /api/printers → 200 JSON {supported:false, printers:[]} — корректное поведение на Linux. РЕГРЕССИЯ (3/3 теста): ✅ GET /api/overlay/form-background → 200, Content-Type image/png, валидный PNG начинается с \x89PNG, размер 56860 байт; ✅ GET /api/overlay/layout → 200 JSON с ключами layout (23 поля), dx_mm, dy_mm, page_mm=[147.0, 103.0]; ✅ GET /api/stats → 200 JSON с ключами total, drafts, this_month, datasets, recent. Все backend API полностью функциональны. Тихая печать бланков идёт в формате РОВНО 147×103 мм (416.69×291.97 pt) для page_size='card', деградация на Linux работает корректно."
   - task: "Чистый векторный фон бланка: GET /api/overlay/form-background (для «Полной печати»)"
     implemented: true
     working: true

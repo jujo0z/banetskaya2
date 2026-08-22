@@ -1,466 +1,362 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for Banetskaya.by Contract Generator
-Tests the new GET /api/overlay/form-background endpoint and regression tests
+Backend testing for overlay printing with exact page size verification.
+Tests the 147×103 mm (card) page size and Linux degradation for silent printing.
 """
-
-import os
+import io
 import sys
 import requests
-import json
-from io import BytesIO
+
+# Use pymupdf as specified in the review request
+import pymupdf
 
 # Backend URL from environment
-BACKEND_URL = "https://1a44cbd3-e499-4c2e-b9f8-dd81fc5e4c75.preview.emergentagent.com"
-API_BASE = f"{BACKEND_URL}/api"
+BACKEND_URL = "https://1a44cbd3-e499-4c2e-b9f8-dd81fc5e4c75.preview.emergentagent.com/api"
 
-# Test results tracking
-test_results = {
-    "passed": 0,
-    "failed": 0,
-    "tests": []
-}
+# Page size constants (in points)
+# 147 mm = 416.69 pt, 103 mm = 291.97 pt
+CARD_WIDTH_PT = 416.69
+CARD_HEIGHT_PT = 291.97
+TOLERANCE_PT = 1.5
 
-def log_test(name, passed, details=""):
-    """Log test result"""
-    status = "✅ PASS" if passed else "❌ FAIL"
-    print(f"{status}: {name}")
-    if details:
-        print(f"  Details: {details}")
-    
-    test_results["tests"].append({
-        "name": name,
-        "passed": passed,
-        "details": details
-    })
-    
-    if passed:
-        test_results["passed"] += 1
-    else:
-        test_results["failed"] += 1
+# A4 size in points
+A4_WIDTH_PT = 595.0
+A4_HEIGHT_PT = 842.0
 
-def test_new_form_background_endpoint():
-    """
-    TEST 1: GET /api/overlay/form-background
-    Should return 200, Content-Type: image/png, body starts with PNG signature, size > 1000 bytes
-    """
-    print("\n" + "="*80)
-    print("TEST 1: GET /api/overlay/form-background (NEW ENDPOINT)")
-    print("="*80)
+def test_overlay_generate_card_without_form():
+    """Test 1: POST /api/overlay/generate with page_size='card', with_form=false
+    Should return 200, Content-Type application/pdf, valid PDF, page size ~416.69 × 291.97 pt"""
+    print("\n=== TEST 1: POST /api/overlay/generate (page_size='card', with_form=false) ===")
     
-    try:
-        response = requests.get(f"{API_BASE}/overlay/form-background", timeout=30)
-        
-        # Check status code
-        if response.status_code != 200:
-            log_test(
-                "GET /api/overlay/form-background - Status Code",
-                False,
-                f"Expected 200, got {response.status_code}"
-            )
-            return
-        
-        log_test("GET /api/overlay/form-background - Status Code", True, "200 OK")
-        
-        # Check Content-Type
-        content_type = response.headers.get('Content-Type', '')
-        if 'image/png' not in content_type:
-            log_test(
-                "GET /api/overlay/form-background - Content-Type",
-                False,
-                f"Expected 'image/png', got '{content_type}'"
-            )
-        else:
-            log_test("GET /api/overlay/form-background - Content-Type", True, "image/png")
-        
-        # Check PNG signature (first 4 bytes should be \x89PNG)
-        body = response.content
-        if len(body) < 4:
-            log_test(
-                "GET /api/overlay/form-background - Body Size",
-                False,
-                f"Body too small: {len(body)} bytes"
-            )
-            return
-        
-        png_signature = body[:4]
-        expected_signature = b'\x89PNG'
-        if png_signature != expected_signature:
-            log_test(
-                "GET /api/overlay/form-background - PNG Signature",
-                False,
-                f"Expected {expected_signature.hex()}, got {png_signature.hex()}"
-            )
-        else:
-            log_test("GET /api/overlay/form-background - PNG Signature", True, "Valid PNG (\\x89PNG)")
-        
-        # Check size > 1000 bytes
-        body_size = len(body)
-        if body_size <= 1000:
-            log_test(
-                "GET /api/overlay/form-background - Size > 1000 bytes",
-                False,
-                f"Expected > 1000 bytes, got {body_size} bytes"
-            )
-        else:
-            log_test(
-                "GET /api/overlay/form-background - Size > 1000 bytes",
-                True,
-                f"{body_size} bytes"
-            )
-        
-    except Exception as e:
-        log_test("GET /api/overlay/form-background", False, f"Exception: {str(e)}")
+    payload = {
+        "records": [{"fio": "Тест Тестович"}],
+        "page_size": "card",
+        "with_form": False
+    }
+    
+    response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/pdf" in response.headers.get('Content-Type', ''), "Expected Content-Type application/pdf"
+    
+    # Check PDF validity
+    pdf_bytes = response.content
+    assert pdf_bytes.startswith(b'%PDF'), "PDF should start with %PDF signature"
+    print(f"✓ Valid PDF signature: {pdf_bytes[:8]}")
+    
+    # Check page size using pymupdf
+    doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
+    page = doc[0]
+    rect = page.rect
+    width_pt = rect.width
+    height_pt = rect.height
+    doc.close()
+    
+    print(f"Page size: {width_pt:.2f} × {height_pt:.2f} pt")
+    print(f"Expected: {CARD_WIDTH_PT:.2f} × {CARD_HEIGHT_PT:.2f} pt (tolerance ±{TOLERANCE_PT} pt)")
+    
+    width_diff = abs(width_pt - CARD_WIDTH_PT)
+    height_diff = abs(height_pt - CARD_HEIGHT_PT)
+    
+    assert width_diff <= TOLERANCE_PT, f"Width {width_pt:.2f} pt differs from expected {CARD_WIDTH_PT:.2f} pt by {width_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
+    assert height_diff <= TOLERANCE_PT, f"Height {height_pt:.2f} pt differs from expected {CARD_HEIGHT_PT:.2f} pt by {height_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
+    
+    print(f"✓ Page size is correct: {width_pt:.2f} × {height_pt:.2f} pt (147×103 mm)")
+    print("✅ TEST 1 PASSED\n")
+    return True
 
-def test_regression_overlay_generate_card():
-    """
-    TEST 2: POST /api/overlay/generate with page_size=card, with_form=true
-    Should return 200, Content-Type: application/pdf, valid PDF
-    """
-    print("\n" + "="*80)
-    print("TEST 2: POST /api/overlay/generate (page_size=card, with_form=true) - REGRESSION")
-    print("="*80)
-    
-    try:
-        payload = {
-            "records": [
-                {
-                    "fio": "Иванов Иван Иванович",
-                    "passport_series": "МР",
-                    "passport_number": "1234567",
-                    "date_day": "5",
-                    "date_year": "25"
-                }
-            ],
-            "page_size": "card",
-            "with_form": True
-        }
-        
-        response = requests.post(
-            f"{API_BASE}/overlay/generate",
-            json=payload,
-            timeout=30
-        )
-        
-        # Check status code
-        if response.status_code != 200:
-            log_test(
-                "POST /api/overlay/generate (card, with_form=true) - Status Code",
-                False,
-                f"Expected 200, got {response.status_code}. Response: {response.text[:200]}"
-            )
-            return
-        
-        log_test("POST /api/overlay/generate (card, with_form=true) - Status Code", True, "200 OK")
-        
-        # Check Content-Type
-        content_type = response.headers.get('Content-Type', '')
-        if 'application/pdf' not in content_type:
-            log_test(
-                "POST /api/overlay/generate (card, with_form=true) - Content-Type",
-                False,
-                f"Expected 'application/pdf', got '{content_type}'"
-            )
-        else:
-            log_test("POST /api/overlay/generate (card, with_form=true) - Content-Type", True, "application/pdf")
-        
-        # Check PDF signature (should start with %PDF)
-        body = response.content
-        if not body.startswith(b'%PDF'):
-            log_test(
-                "POST /api/overlay/generate (card, with_form=true) - PDF Signature",
-                False,
-                f"Expected '%PDF', got '{body[:10]}'"
-            )
-        else:
-            log_test(
-                "POST /api/overlay/generate (card, with_form=true) - PDF Signature",
-                True,
-                f"Valid PDF (%PDF), size: {len(body)} bytes"
-            )
-        
-    except Exception as e:
-        log_test("POST /api/overlay/generate (card, with_form=true)", False, f"Exception: {str(e)}")
 
-def test_regression_overlay_generate_a4():
-    """
-    TEST 3: POST /api/overlay/generate with page_size=a4, with_form=true
-    Should return 200, valid PDF
-    """
-    print("\n" + "="*80)
-    print("TEST 3: POST /api/overlay/generate (page_size=a4, with_form=true) - REGRESSION")
-    print("="*80)
+def test_overlay_generate_card_with_form():
+    """Test 2: POST /api/overlay/generate with page_size='card', with_form=true
+    Should return 200, page size ~416.69 × 291.97 pt (147×103 mm)"""
+    print("\n=== TEST 2: POST /api/overlay/generate (page_size='card', with_form=true) ===")
     
-    try:
-        payload = {
-            "records": [
-                {
-                    "fio": "Петров Петр Петрович",
-                    "passport_series": "АВ",
-                    "passport_number": "7654321",
-                    "date_day": "10",
-                    "date_year": "26"
-                }
-            ],
-            "page_size": "a4",
-            "with_form": True
-        }
-        
-        response = requests.post(
-            f"{API_BASE}/overlay/generate",
-            json=payload,
-            timeout=30
-        )
-        
-        # Check status code
-        if response.status_code != 200:
-            log_test(
-                "POST /api/overlay/generate (a4, with_form=true) - Status Code",
-                False,
-                f"Expected 200, got {response.status_code}. Response: {response.text[:200]}"
-            )
-            return
-        
-        log_test("POST /api/overlay/generate (a4, with_form=true) - Status Code", True, "200 OK")
-        
-        # Check PDF signature
-        body = response.content
-        if not body.startswith(b'%PDF'):
-            log_test(
-                "POST /api/overlay/generate (a4, with_form=true) - PDF Signature",
-                False,
-                f"Expected '%PDF', got '{body[:10]}'"
-            )
-        else:
-            log_test(
-                "POST /api/overlay/generate (a4, with_form=true) - PDF Signature",
-                True,
-                f"Valid PDF (%PDF), size: {len(body)} bytes"
-            )
-        
-    except Exception as e:
-        log_test("POST /api/overlay/generate (a4, with_form=true)", False, f"Exception: {str(e)}")
+    payload = {
+        "records": [{"fio": "Тест"}],
+        "page_size": "card",
+        "with_form": True
+    }
+    
+    response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/pdf" in response.headers.get('Content-Type', ''), "Expected Content-Type application/pdf"
+    
+    # Check PDF validity
+    pdf_bytes = response.content
+    assert pdf_bytes.startswith(b'%PDF'), "PDF should start with %PDF signature"
+    print(f"✓ Valid PDF signature: {pdf_bytes[:8]}")
+    
+    # Check page size using pymupdf
+    doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
+    page = doc[0]
+    rect = page.rect
+    width_pt = rect.width
+    height_pt = rect.height
+    doc.close()
+    
+    print(f"Page size: {width_pt:.2f} × {height_pt:.2f} pt")
+    print(f"Expected: {CARD_WIDTH_PT:.2f} × {CARD_HEIGHT_PT:.2f} pt (tolerance ±{TOLERANCE_PT} pt)")
+    
+    width_diff = abs(width_pt - CARD_WIDTH_PT)
+    height_diff = abs(height_pt - CARD_HEIGHT_PT)
+    
+    assert width_diff <= TOLERANCE_PT, f"Width {width_pt:.2f} pt differs from expected {CARD_WIDTH_PT:.2f} pt by {width_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
+    assert height_diff <= TOLERANCE_PT, f"Height {height_pt:.2f} pt differs from expected {CARD_HEIGHT_PT:.2f} pt by {height_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
+    
+    print(f"✓ Page size is correct: {width_pt:.2f} × {height_pt:.2f} pt (147×103 mm)")
+    print("✅ TEST 2 PASSED\n")
+    return True
 
-def test_regression_overlay_background():
-    """
-    TEST 4: GET /api/overlay/background (scanned blank image)
-    Should return 200, Content-Type: image/png
-    """
-    print("\n" + "="*80)
-    print("TEST 4: GET /api/overlay/background (scanned blank) - REGRESSION")
-    print("="*80)
+
+def test_overlay_generate_a4():
+    """Test 3: POST /api/overlay/generate with page_size='a4', with_form=true
+    Should return 200, page size ~595 × 842 pt (A4), NOT 147×103"""
+    print("\n=== TEST 3: POST /api/overlay/generate (page_size='a4') ===")
     
-    try:
-        response = requests.get(f"{API_BASE}/overlay/background", timeout=30)
-        
-        # Check status code
-        if response.status_code != 200:
-            log_test(
-                "GET /api/overlay/background - Status Code",
-                False,
-                f"Expected 200, got {response.status_code}"
-            )
-            return
-        
-        log_test("GET /api/overlay/background - Status Code", True, "200 OK")
-        
-        # Check Content-Type
-        content_type = response.headers.get('Content-Type', '')
-        if 'image/png' not in content_type:
-            log_test(
-                "GET /api/overlay/background - Content-Type",
-                False,
-                f"Expected 'image/png', got '{content_type}'"
-            )
-        else:
-            log_test("GET /api/overlay/background - Content-Type", True, "image/png")
-        
-        # Check PNG signature
-        body = response.content
-        if not body.startswith(b'\x89PNG'):
-            log_test(
-                "GET /api/overlay/background - PNG Signature",
-                False,
-                f"Expected PNG signature, got '{body[:10]}'"
-            )
-        else:
-            log_test(
-                "GET /api/overlay/background - PNG Signature",
-                True,
-                f"Valid PNG, size: {len(body)} bytes"
-            )
-        
-    except Exception as e:
-        log_test("GET /api/overlay/background", False, f"Exception: {str(e)}")
+    payload = {
+        "records": [{"fio": "Тест"}],
+        "page_size": "a4",
+        "with_form": True
+    }
+    
+    response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/pdf" in response.headers.get('Content-Type', ''), "Expected Content-Type application/pdf"
+    
+    # Check PDF validity
+    pdf_bytes = response.content
+    assert pdf_bytes.startswith(b'%PDF'), "PDF should start with %PDF signature"
+    print(f"✓ Valid PDF signature: {pdf_bytes[:8]}")
+    
+    # Check page size using pymupdf
+    doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
+    page = doc[0]
+    rect = page.rect
+    width_pt = rect.width
+    height_pt = rect.height
+    doc.close()
+    
+    print(f"Page size: {width_pt:.2f} × {height_pt:.2f} pt")
+    print(f"Expected: ~{A4_WIDTH_PT:.2f} × {A4_HEIGHT_PT:.2f} pt (A4)")
+    
+    # A4 should be significantly different from card size
+    assert abs(width_pt - A4_WIDTH_PT) < 5, f"Width should be ~{A4_WIDTH_PT} pt (A4), got {width_pt:.2f} pt"
+    assert abs(height_pt - A4_HEIGHT_PT) < 5, f"Height should be ~{A4_HEIGHT_PT} pt (A4), got {height_pt:.2f} pt"
+    
+    # Verify it's NOT card size
+    assert abs(width_pt - CARD_WIDTH_PT) > 100, f"Page should NOT be card size (147×103 mm)"
+    
+    print(f"✓ Page size is A4: {width_pt:.2f} × {height_pt:.2f} pt, NOT 147×103 mm")
+    print("✅ TEST 3 PASSED\n")
+    return True
+
+
+def test_overlay_print_silent_degradation():
+    """Test 4: POST /api/overlay/print-silent with page_size='card'
+    Should return 400 (Bad Request) on Linux with message about Windows app"""
+    print("\n=== TEST 4: POST /api/overlay/print-silent (Linux degradation) ===")
+    
+    payload = {
+        "records": [{"fio": "Тест"}],
+        "page_size": "card"
+    }
+    
+    response = requests.post(f"{BACKEND_URL}/overlay/print-silent", json=payload)
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 400, f"Expected 400 (Bad Request) on Linux, got {response.status_code}"
+    
+    # Check response is JSON
+    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
+    
+    # Check error message mentions Windows
+    response_json = response.json()
+    print(f"Response: {response_json}")
+    
+    detail = response_json.get('detail', '')
+    assert 'Windows' in detail or 'установленном' in detail, f"Error message should mention Windows app: {detail}"
+    
+    print(f"✓ Correct error message: {detail}")
+    print("✅ TEST 4 PASSED (graceful degradation on Linux)\n")
+    return True
+
+
+def test_printers_endpoint():
+    """Test 5: GET /api/printers
+    Should return 200 JSON {"supported": false, "printers": []} on Linux"""
+    print("\n=== TEST 5: GET /api/printers (Linux) ===")
+    
+    response = requests.get(f"{BACKEND_URL}/printers")
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
+    
+    data = response.json()
+    print(f"Response: {data}")
+    
+    assert "supported" in data, "Response should contain 'supported' key"
+    assert "printers" in data, "Response should contain 'printers' key"
+    
+    assert data["supported"] == False, f"On Linux, supported should be false, got {data['supported']}"
+    assert isinstance(data["printers"], list), "printers should be a list"
+    assert len(data["printers"]) == 0, f"On Linux, printers list should be empty, got {len(data['printers'])} items"
+    
+    print("✓ Correct response: supported=false, printers=[]")
+    print("✅ TEST 5 PASSED\n")
+    return True
+
+
+def test_regression_form_background():
+    """Test 6 (REGRESSION): GET /api/overlay/form-background
+    Should return 200 image/png (valid PNG \\x89PNG)"""
+    print("\n=== TEST 6 (REGRESSION): GET /api/overlay/form-background ===")
+    
+    response = requests.get(f"{BACKEND_URL}/overlay/form-background")
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "image/png" in response.headers.get('Content-Type', ''), "Expected Content-Type image/png"
+    
+    # Check PNG signature
+    png_bytes = response.content
+    assert png_bytes.startswith(b'\x89PNG'), "PNG should start with \\x89PNG signature"
+    
+    print(f"✓ Valid PNG signature: {png_bytes[:8]}")
+    print(f"✓ PNG size: {len(png_bytes)} bytes")
+    print("✅ TEST 6 PASSED\n")
+    return True
+
 
 def test_regression_overlay_layout():
-    """
-    TEST 5: GET /api/overlay/layout
-    Should return 200, JSON with keys: layout, dx_mm, dy_mm, page_mm
-    """
-    print("\n" + "="*80)
-    print("TEST 5: GET /api/overlay/layout - REGRESSION")
-    print("="*80)
+    """Test 7 (REGRESSION): GET /api/overlay/layout
+    Should return 200 JSON"""
+    print("\n=== TEST 7 (REGRESSION): GET /api/overlay/layout ===")
     
-    try:
-        response = requests.get(f"{API_BASE}/overlay/layout", timeout=30)
-        
-        # Check status code
-        if response.status_code != 200:
-            log_test(
-                "GET /api/overlay/layout - Status Code",
-                False,
-                f"Expected 200, got {response.status_code}"
-            )
-            return
-        
-        log_test("GET /api/overlay/layout - Status Code", True, "200 OK")
-        
-        # Parse JSON
-        try:
-            data = response.json()
-        except Exception as e:
-            log_test(
-                "GET /api/overlay/layout - JSON Parse",
-                False,
-                f"Failed to parse JSON: {str(e)}"
-            )
-            return
-        
-        # Check required keys
-        required_keys = ['layout', 'dx_mm', 'dy_mm', 'page_mm']
-        missing_keys = [k for k in required_keys if k not in data]
-        
-        if missing_keys:
-            log_test(
-                "GET /api/overlay/layout - Required Keys",
-                False,
-                f"Missing keys: {missing_keys}"
-            )
-        else:
-            log_test(
-                "GET /api/overlay/layout - Required Keys",
-                True,
-                f"All keys present: {required_keys}"
-            )
-        
-        # Check layout is a list
-        if not isinstance(data.get('layout'), list):
-            log_test(
-                "GET /api/overlay/layout - Layout Type",
-                False,
-                f"Expected list, got {type(data.get('layout'))}"
-            )
-        else:
-            log_test(
-                "GET /api/overlay/layout - Layout Type",
-                True,
-                f"Layout is list with {len(data['layout'])} fields"
-            )
-        
-    except Exception as e:
-        log_test("GET /api/overlay/layout", False, f"Exception: {str(e)}")
+    response = requests.get(f"{BACKEND_URL}/overlay/layout")
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
+    
+    data = response.json()
+    print(f"Response keys: {list(data.keys())}")
+    
+    assert "layout" in data, "Response should contain 'layout' key"
+    assert "dx_mm" in data, "Response should contain 'dx_mm' key"
+    assert "dy_mm" in data, "Response should contain 'dy_mm' key"
+    assert "page_mm" in data, "Response should contain 'page_mm' key"
+    
+    print(f"✓ Layout contains {len(data['layout'])} fields")
+    print(f"✓ page_mm: {data['page_mm']}")
+    print("✅ TEST 7 PASSED\n")
+    return True
+
 
 def test_regression_stats():
-    """
-    TEST 6: GET /api/stats
-    Should return 200, JSON
-    """
-    print("\n" + "="*80)
-    print("TEST 6: GET /api/stats - REGRESSION")
-    print("="*80)
+    """Test 8 (REGRESSION): GET /api/stats
+    Should return 200 JSON"""
+    print("\n=== TEST 8 (REGRESSION): GET /api/stats ===")
     
-    try:
-        response = requests.get(f"{API_BASE}/stats", timeout=30)
-        
-        # Check status code
-        if response.status_code != 200:
-            log_test(
-                "GET /api/stats - Status Code",
-                False,
-                f"Expected 200, got {response.status_code}"
-            )
-            return
-        
-        log_test("GET /api/stats - Status Code", True, "200 OK")
-        
-        # Parse JSON
-        try:
-            data = response.json()
-        except Exception as e:
-            log_test(
-                "GET /api/stats - JSON Parse",
-                False,
-                f"Failed to parse JSON: {str(e)}"
-            )
-            return
-        
-        # Check for expected keys
-        expected_keys = ['total', 'drafts', 'this_month', 'datasets', 'recent']
-        missing_keys = [k for k in expected_keys if k not in data]
-        
-        if missing_keys:
-            log_test(
-                "GET /api/stats - Expected Keys",
-                False,
-                f"Missing keys: {missing_keys}"
-            )
-        else:
-            log_test(
-                "GET /api/stats - Expected Keys",
-                True,
-                f"All keys present: {expected_keys}"
-            )
-        
-    except Exception as e:
-        log_test("GET /api/stats", False, f"Exception: {str(e)}")
+    response = requests.get(f"{BACKEND_URL}/stats")
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
+    
+    data = response.json()
+    print(f"Response keys: {list(data.keys())}")
+    
+    assert "total" in data, "Response should contain 'total' key"
+    assert "drafts" in data, "Response should contain 'drafts' key"
+    assert "this_month" in data, "Response should contain 'this_month' key"
+    assert "datasets" in data, "Response should contain 'datasets' key"
+    assert "recent" in data, "Response should contain 'recent' key"
+    
+    print(f"✓ Stats: total={data['total']}, drafts={data['drafts']}, this_month={data['this_month']}")
+    print("✅ TEST 8 PASSED\n")
+    return True
 
-def print_summary():
-    """Print test summary"""
-    print("\n" + "="*80)
-    print("TEST SUMMARY")
-    print("="*80)
-    print(f"Total Tests: {test_results['passed'] + test_results['failed']}")
-    print(f"✅ Passed: {test_results['passed']}")
-    print(f"❌ Failed: {test_results['failed']}")
-    print(f"Success Rate: {test_results['passed'] / (test_results['passed'] + test_results['failed']) * 100:.1f}%")
-    
-    if test_results['failed'] > 0:
-        print("\n" + "="*80)
-        print("FAILED TESTS:")
-        print("="*80)
-        for test in test_results['tests']:
-            if not test['passed']:
-                print(f"❌ {test['name']}")
-                if test['details']:
-                    print(f"   {test['details']}")
 
 def main():
     """Run all tests"""
-    print("="*80)
-    print("BACKEND API TESTING - Banetskaya.by")
-    print("Testing NEW endpoint: GET /api/overlay/form-background")
-    print("Testing REGRESSION endpoints")
-    print("="*80)
-    print(f"Backend URL: {BACKEND_URL}")
-    print(f"API Base: {API_BASE}")
-    print("="*80)
+    print("=" * 80)
+    print("BACKEND TESTING: Overlay Printing with Exact Page Size Verification")
+    print("Testing 147×103 mm (card) page size and Linux degradation")
+    print("=" * 80)
     
-    # Test new endpoint
-    test_new_form_background_endpoint()
+    tests = [
+        ("Test 1: overlay/generate card without form", test_overlay_generate_card_without_form),
+        ("Test 2: overlay/generate card with form", test_overlay_generate_card_with_form),
+        ("Test 3: overlay/generate A4", test_overlay_generate_a4),
+        ("Test 4: overlay/print-silent degradation", test_overlay_print_silent_degradation),
+        ("Test 5: printers endpoint", test_printers_endpoint),
+        ("Test 6 (REGRESSION): form-background", test_regression_form_background),
+        ("Test 7 (REGRESSION): overlay/layout", test_regression_overlay_layout),
+        ("Test 8 (REGRESSION): stats", test_regression_stats),
+    ]
     
-    # Test regression endpoints
-    test_regression_overlay_generate_card()
-    test_regression_overlay_generate_a4()
-    test_regression_overlay_background()
-    test_regression_overlay_layout()
-    test_regression_stats()
+    passed = 0
+    failed = 0
+    errors = []
     
-    # Print summary
-    print_summary()
+    for test_name, test_func in tests:
+        try:
+            test_func()
+            passed += 1
+        except AssertionError as e:
+            failed += 1
+            error_msg = f"❌ {test_name} FAILED: {str(e)}"
+            print(error_msg)
+            errors.append(error_msg)
+        except Exception as e:
+            failed += 1
+            error_msg = f"❌ {test_name} ERROR: {str(e)}"
+            print(error_msg)
+            errors.append(error_msg)
     
-    # Exit with appropriate code
-    sys.exit(0 if test_results['failed'] == 0 else 1)
+    print("\n" + "=" * 80)
+    print("TEST SUMMARY")
+    print("=" * 80)
+    print(f"Total tests: {len(tests)}")
+    print(f"✅ Passed: {passed}")
+    print(f"❌ Failed: {failed}")
+    
+    if errors:
+        print("\nFAILURES:")
+        for error in errors:
+            print(f"  {error}")
+    
+    print("=" * 80)
+    
+    if failed == 0:
+        print("🎉 ALL TESTS PASSED!")
+        return 0
+    else:
+        print(f"⚠️  {failed} TEST(S) FAILED")
+        return 1
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

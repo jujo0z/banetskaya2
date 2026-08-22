@@ -226,10 +226,12 @@ export default function BlankOverlay() {
   const doPrintSilent = async () => {
     setPrinting(true);
     try {
+      // Silent printing goes straight to the printer with the physical 147×103 blank
+      // pre-inserted — always print at the real card size so the data lands exactly.
       const res = await printOverlaySilent([values], {
-        layout, dx_mm: dx, dy_mm: dy, pageSize, printerName: selectedPrinter,
+        layout, dx_mm: dx, dy_mm: dy, pageSize: "card", printerName: selectedPrinter,
       });
-      toast.success(`Отправлено на печать: ${res.printer}`);
+      toast.success(`Отправлено на печать (147×103 мм): ${res.printer}`);
     } catch (e) {
       const msg = e?.response?.data?.detail || "Ошибка печати";
       toast.error(msg);
