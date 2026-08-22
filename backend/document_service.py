@@ -712,8 +712,62 @@ def _draw_soobshenie_form(c, zone_w, zone_h, zone_top):
     c.setFillColorRGB(0.05, 0.05, 0.12)
 
 
+def _rot_page_dims(rotate, w, h):
+    """Page dimensions after rotating a card: 90/270 swap width and height."""
+    return (h, w) if (int(rotate) % 360) in (90, 270) else (w, h)
+
+
+def _apply_card_rotation(c, rotate, zone_w, zone_h):
+    """Set up a transform so drawing in the natural card space
+    (origin bottom-left, card spans zone_w x zone_h) lands rotated on the page.
+    Used when the pre-printed blank is fed into the printer in a rotated
+    orientation (e.g. short edge / 103 mm first -> rotate 90)."""
+    r = int(rotate) % 360
+    if r == 90:
+        c.translate(zone_h, 0)
+        c.rotate(90)
+    elif r == 180:
+        c.translate(zone_w, zone_h)
+        c.rotate(180)
+    elif r == 270:
+        c.translate(0, zone_w)
+        c.rotate(270)
+
+
+def _draw_card_content(c, zone_w, zone_h, layout, rec, ddx=0.0, ddy=0.0,
+                       with_form=False, bg=None):
+    """Draw one СООБЩЕНИЕ card in the CURRENT coordinate system, assuming the
+    card occupies (0,0)..(zone_w, zone_h) with the origin at the bottom-left."""
+    if bg is not None:
+        try:
+            c.drawImage(bg, 0, 0, width=zone_w, height=zone_h,
+                        preserveAspectRatio=False, mask=None)
+        except Exception:
+            pass
+    if with_form:
+        _draw_soobshenie_form(c, zone_w, zone_h, zone_h)
+    c.setFillColorRGB(0.05, 0.05, 0.12)
+    for f in (layout or []):
+        key = f.get("key")
+        val = rec.get(key, "")
+        if val is None:
+            val = ""
+        val = str(val).strip()
+        if not val:
+            continue
+        font_pt = float(f.get("font_pt", 9) or 9)
+        x = float(f.get("x_pct", 0)) / 100.0 * zone_w + ddx
+        y = zone_h - (float(f.get("y_pct", 0)) / 100.0 * zone_h) - ddy
+        c.setFont(_font(False), font_pt)
+        c.drawString(x, y, val)
+
+
+_A4_POSITIONS = {"top-left", "top-center", "top-right", "center"}
+
+
 def build_overlay(records, layout=None, blank_mm=SOOBSHENIE_PAGE_MM, page_size="card",
-                  dx_mm=0.0, dy_mm=0.0, with_background=False, with_form=False):
+                  dx_mm=0.0, dy_mm=0.0, with_background=False, with_form=False,
+                  rotate=0, a4_position="top-left"):
     """Generate a multi-page PDF where only the field VALUES are drawn at exact
     positions, sized to the physical blank. Printed on top of a pre-printed form.
 
@@ -721,24 +775,23 @@ def build_overlay(records, layout=None, blank_mm=SOOBSHENIE_PAGE_MM, page_size="
     layout:  list of {key, x_pct, y_pct, font_pt}
     blank_mm: physical size of the pre-printed form (the "zone"), default 147x103
     page_size: "card" -> page equals the blank; "a4" -> A4 sheet with the blank
-               anchored at the TOP-LEFT corner (universal-printer friendly)
-    dx_mm/dy_mm: global calibration shift (right/down positive)
+               anchored in a chosen corner (universal-printer friendly)
+    dx_mm/dy_mm: global calibration shift (right/down positive), in card space
     with_background: draw the scanned blank behind (preview / plain-paper test)
+    rotate: 0/90/180/270 — rotate the whole card to match how the blank is fed
+            into the printer (card mode only; ignored for A4 carrier).
+    a4_position: where the card sits on the A4 carrier (A4 mode only).
     """
     from reportlab.pdfgen import canvas
     from reportlab.lib.utils import ImageReader
 
     _ensure_fonts()
     layout = layout or SOOBSHENIE_LAYOUT
+    rotate = int(rotate or 0) % 360
     zone_w = blank_mm[0] * MM
     zone_h = blank_mm[1] * MM
-    if str(page_size).lower() == "a4":
-        pw, ph = 210 * MM, 297 * MM
-    else:
-        pw, ph = zone_w, zone_h
     ddx = dx_mm * MM
     ddy = dy_mm * MM
-    zone_top = ph  # blank top edge is aligned with the top of the page
 
     bg = None
     if with_background:
@@ -752,61 +805,140 @@ def build_overlay(records, layout=None, blank_mm=SOOBSHENIE_PAGE_MM, page_size="
     if not records:
         records = [{}]
 
+    is_a4 = str(page_size).lower() == "a4"
+    if is_a4:
+        pw, ph = 210 * MM, 297 * MM
+    else:
+        pw, ph = _rot_page_dims(rotate, zone_w, zone_h)
+
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(pw, ph))
     for rec in records:
-        if bg is not None:
-            c.drawImage(bg, 0, zone_top - zone_h, width=zone_w, height=zone_h,
-                        preserveAspectRatio=False, mask=None)
-        if with_form:
-            _draw_soobshenie_form(c, zone_w, zone_h, zone_top)
-        # On A4 draw a faint placement guide so the pre-printed card can be
-        # positioned in the top-left corner (harmless when testing on plain A4).
-        if str(page_size).lower() == "a4" and bg is None:
-            c.setStrokeColorRGB(0.75, 0.75, 0.8)
-            c.setLineWidth(0.4)
-            c.rect(0.3 * MM, zone_top - zone_h, zone_w, zone_h - 0.3 * MM, stroke=1, fill=0)
-        c.setFillColorRGB(0.05, 0.05, 0.12)
-        for f in layout:
-            key = f.get("key")
-            val = rec.get(key, "")
-            if val is None:
-                val = ""
-            val = str(val).strip()
-            if not val:
-                continue
-            font_pt = float(f.get("font_pt", 9) or 9)
-            x = float(f.get("x_pct", 0)) / 100.0 * zone_w + ddx
-            y = zone_top - (float(f.get("y_pct", 0)) / 100.0 * zone_h) - ddy
-            c.setFont(_font(False), font_pt)
-            c.drawString(x, y, val)
+        c.saveState()
+        if is_a4:
+            pos = a4_position if a4_position in _A4_POSITIONS else "top-left"
+            if pos == "top-left":
+                ox, oy = 0.0, ph - zone_h
+            elif pos == "top-center":
+                ox, oy = (pw - zone_w) / 2.0, ph - zone_h
+            elif pos == "top-right":
+                ox, oy = pw - zone_w, ph - zone_h
+            else:  # center
+                ox, oy = (pw - zone_w) / 2.0, (ph - zone_h) / 2.0
+            c.translate(ox + ddx, oy - ddy)
+            if bg is None and not with_form:
+                # faint placement guide for positioning the pre-printed card
+                c.setStrokeColorRGB(0.75, 0.75, 0.8)
+                c.setLineWidth(0.4)
+                c.rect(0.3 * MM, 0.3 * MM, zone_w - 0.6 * MM, zone_h - 0.6 * MM,
+                       stroke=1, fill=0)
+            _draw_card_content(c, zone_w, zone_h, layout, rec, 0, 0, with_form, bg)
+        else:
+            _apply_card_rotation(c, rotate, zone_w, zone_h)
+            _draw_card_content(c, zone_w, zone_h, layout, rec, ddx, ddy, with_form, bg)
+        c.restoreState()
         c.showPage()
     c.save()
     buf.seek(0)
     return buf.getvalue()
 
 
-def build_overlay_test_sheet(blank_mm=SOOBSHENIE_PAGE_MM, page_size="card", dx_mm=0.0, dy_mm=0.0):
+def build_full_sheets(records, layout=None, orientation="portrait", per_sheet=0,
+                      draw_guides=True):
+    """Full-document print: draw complete СООБЩЕНИЕ forms (typed form + data)
+    laid out as a GRID on real A4 pages, so a normal printer prints reliably.
+
+    orientation: "portrait"  -> A4 210x297, 1 col x 2 rows  (max 2 per sheet)
+                 "landscape" -> A4 297x210, 2 cols x 2 rows (max 4 per sheet)
+    per_sheet:   how many cards per sheet (1..max); 0 = max for the orientation.
+    """
+    from reportlab.pdfgen import canvas
+
+    _ensure_fonts()
+    layout = layout or SOOBSHENIE_LAYOUT
+    card_w = SOOBSHENIE_PAGE_MM[0] * MM
+    card_h = SOOBSHENIE_PAGE_MM[1] * MM
+    orientation = (orientation or "portrait").lower()
+    if orientation == "landscape":
+        pw, ph = 297 * MM, 210 * MM
+        cols, rows = 2, 2
+    else:
+        pw, ph = 210 * MM, 297 * MM
+        cols, rows = 1, 2
+    max_per = cols * rows
+    if per_sheet and int(per_sheet) > 0:
+        per_sheet = min(int(per_sheet), max_per)
+    else:
+        per_sheet = max_per
+
+    gap_x = 6 * MM
+    gap_y = 8 * MM
+
+    if not records:
+        records = [{}]
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(pw, ph))
+    for start in range(0, len(records), per_sheet):
+        chunk = records[start:start + per_sheet]
+        rows_used = (len(chunk) + cols - 1) // cols
+        block_w = cols * card_w + (cols - 1) * gap_x
+        block_h = rows_used * card_h + (rows_used - 1) * gap_y
+        left = (pw - block_w) / 2.0
+        top = (ph + block_h) / 2.0  # top edge of the grid block
+        for i, rec in enumerate(chunk):
+            col = i % cols
+            row = i // cols
+            x0 = left + col * (card_w + gap_x)
+            y_top = top - row * (card_h + gap_y)
+            y0 = y_top - card_h
+            c.saveState()
+            c.translate(x0, y0)
+            if draw_guides:
+                c.setStrokeColorRGB(0.8, 0.8, 0.85)
+                c.setLineWidth(0.3)
+                c.setDash(2, 2)
+                c.rect(0, 0, card_w, card_h, stroke=1, fill=0)
+                c.setDash()
+            _draw_card_content(c, card_w, card_h, layout, rec, 0, 0,
+                               with_form=True, bg=None)
+            c.restoreState()
+        c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def build_overlay_test_sheet(blank_mm=SOOBSHENIE_PAGE_MM, page_size="card",
+                             dx_mm=0.0, dy_mm=0.0, rotate=0):
     """Alignment test sheet: frame, corner crosses, 1 cm ruler and centre cross,
-    drawn within the blank zone. page_size 'a4' puts the zone in the top-left of A4."""
+    drawn within the blank zone. page_size 'a4' puts the zone in the top-left of A4.
+    rotate 0/90/180/270 matches how the blank is fed into the printer."""
     from reportlab.pdfgen import canvas
 
     _ensure_fonts()
     zw = blank_mm[0] * MM
     zh = blank_mm[1] * MM
-    if str(page_size).lower() == "a4":
-        pw, ph = 210 * MM, 297 * MM
-    else:
-        pw, ph = zw, zh
+    rotate = int(rotate or 0) % 360
     ddx = dx_mm * MM
     ddy = dy_mm * MM
+    is_a4 = str(page_size).lower() == "a4"
+    if is_a4:
+        pw, ph = 210 * MM, 297 * MM
+    else:
+        pw, ph = _rot_page_dims(rotate, zw, zh)
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(pw, ph))
 
-    # move origin so the zone sits in the TOP-LEFT of the page, then apply calibration
+    # Establish a coordinate system where the card occupies (0,0)..(zw,zh) with
+    # the origin at the bottom-left, then apply calibration + rotation.
     c.saveState()
-    c.translate(ddx, (ph - zh) - ddy)  # zone bottom-left -> (0,0) local + shift
+    if is_a4:
+        c.translate(ddx, (ph - zh) - ddy)
+    else:
+        _apply_card_rotation(c, rotate, zw, zh)
+        c.translate(ddx, -ddy)
 
     # outer frame of the zone
     c.setStrokeColorRGB(0.7, 0.1, 0.25)
@@ -842,17 +974,18 @@ def build_overlay_test_sheet(blank_mm=SOOBSHENIE_PAGE_MM, page_size="card", dx_m
         c.line(inset, y, inset + 3 * MM, y)
         c.drawString(inset + 3 * MM + 1, y - 2, str(i))
 
-    c.restoreState()
-
-    # title inside the zone top edge (accounts for A4 offset), not calibration-shifted
-    top_y = ph - 4 * MM
+    # title + calibration note, drawn INSIDE the card so it rotates with it
     c.setFillColorRGB(0.7, 0.1, 0.25)
     c.setFont(_font(True), 9)
-    c.drawCentredString(zw / 2, top_y, "ПРОБНЫЙ ЛИСТ — %.0f×%.0f мм" % (blank_mm[0], blank_mm[1]))
+    c.drawCentredString(zw / 2, zh - 6 * MM,
+                        "ПРОБНЫЙ ЛИСТ — %.0f×%.0f мм" % (blank_mm[0], blank_mm[1]))
     c.setFillColorRGB(0.3, 0.3, 0.4)
-    c.setFont(_font(False), 7)
-    c.drawCentredString(zw / 2, ph - zh + 2.2 * MM,
-                        "Сдвиг X=%.1f мм  Y=%.1f мм. Печать: масштаб 100%% (Фактический размер)." % (dx_mm, dy_mm))
+    c.setFont(_font(False), 6.5)
+    c.drawCentredString(zw / 2, 3 * MM,
+                        "Сдвиг X=%.1f Y=%.1f мм · Поворот %d° · Масштаб 100%%"
+                        % (dx_mm, dy_mm, rotate))
+
+    c.restoreState()
 
     c.showPage()
     c.save()
@@ -863,6 +996,18 @@ def build_overlay_test_sheet(blank_mm=SOOBSHENIE_PAGE_MM, page_size="card", dx_m
 
 # --- Clean vector form background (no data) for the "Полная печать" preview ---
 _FORM_BG_CACHE = None
+
+
+def render_pdf_first_page_png(pdf_bytes: bytes, scale: float = 2.0) -> bytes:
+    """Render the FIRST page of a PDF to PNG (used for on-screen previews that
+    must display reliably everywhere, even where inline PDF is blocked)."""
+    import pymupdf
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[0]
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+    png = pix.tobytes("png")
+    doc.close()
+    return png
 
 
 def render_form_background_png(scale: float = 3.0) -> bytes:

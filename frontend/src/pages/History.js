@@ -228,6 +228,16 @@ export default function History() {
     }
   }
 
+  // Send selected contracts to «Полная печать» (multiple messages per A4 sheet).
+  function sendSelectedToFullPrint() {
+    if (selected.size === 0) return;
+    const prefillList = contracts
+      .filter((c) => selected.has(c.id))
+      .map((c) => contractToOverlay(c));
+    if (prefillList.length === 0) return;
+    navigate("/full-print", { state: { prefillList } });
+  }
+
   function fmtDate(iso) {
     try {
       return new Date(iso).toLocaleString("ru-RU", {
@@ -347,6 +357,17 @@ export default function History() {
           >
             {blankPrinting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Stamp className="h-4 w-4" />}
             Печать бланков 147×103 ({selected.size})
+          </Button>
+          <Button
+            variant="outline"
+            className="rounded-none border-white/15"
+            onClick={sendSelectedToFullPrint}
+            disabled={selected.size === 0}
+            title="Собрать выбранные договоры на листах A4 (несколько сообщений на лист)"
+            data-testid="history-fullprint-btn"
+          >
+            <FileText className="h-4 w-4" />
+            На листы A4 ({selected.size})
           </Button>
         </div>
 

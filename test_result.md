@@ -108,7 +108,21 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
-  - task: "Фикс шрифта AppSans + фоны бланка + устойчивый soffice (DOCX→PDF)"
+  - task: "Печать поверх бланка: поворот (rotate) + позиция на A4 + мультибланки на A4 (mode=full) + preview-png"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВЫЙ ФУНКЦИОНАЛ по запросу пользователя (печать на маленьких бланках 147×103 + печать нескольких бланков на A4). Изменения: (A) build_overlay теперь принимает rotate (0/90/180/270) — контент карточки поворачивается под то, как бланк подаётся в принтер (пользователь кладёт вертикально, узкой 103мм стороной вперёд → нужен поворот 90/270); размер страницы для 90/270 = 103×147 мм (портрет), для 0/180 = 147×103. Также a4_position (top-left/top-center/top-right/center) для A4-носителя. (B) НОВАЯ функция build_full_sheets(records, orientation, per_sheet): рисует ЦЕЛЫЕ формы (with_form) сеткой на настоящих A4: portrait=210×297 (1×2, макс 2/лист), landscape=297×210 (2×2, макс 4/лист); пагинация по листам. (C) OverlayGenerateRequest расширен полями rotate, a4_position, mode('overlay'|'full'), orientation, per_sheet. generate_overlay и print-silent роутятся через _build_overlay_pdf. (D) НОВЫЙ эндпоинт POST /api/overlay/preview-png — рендер первого листа в PNG (надёжный предпросмотр). (E) test-sheet и layout сохраняют/принимают rotate. ПРОВЕРИТЬ: (1) POST /api/overlay/generate {records:[{fio:'Тест'}], page_size:'card', rotate:90} → 200 PDF, размер страницы РОВНО 291.97×416.69 pt (103×147 мм, портрет — swap); rotate:0 → 416.69×291.97; rotate:270 → 291.97×416.69. (2) POST /api/overlay/generate {records:[{fio:'A'},{fio:'B'},{fio:'C'}], mode:'full', orientation:'landscape'} → 200 PDF, страница A4 landscape 841.89×595.28 pt, число листов = ceil(3/4)=1. (3) mode:'full', orientation:'portrait', 3 записи → 2 листа (ceil(3/2)). (4) mode:'full', per_sheet:2, orientation:'landscape', 5 записей → ceil(5/2)=3 листа. (5) POST /api/overlay/preview-png {records:[{fio:'A'},{fio:'B'}], mode:'full', orientation:'landscape'} → 200 image/png (\\x89PNG). (6) GET /api/overlay/test-sheet?rotate=90 → 200 PDF, страница 291.97×416.69. (7) POST /api/overlay/layout {layout:[...], dx_mm:1, dy_mm:2, rotate:90} → 200 {saved:true, rotate:90}; затем GET /api/overlay/layout → rotate:90. (8) РЕГРЕССИЯ: overlay/generate page_size='card' без rotate → 416.69×291.97; print-silent на Linux → 400. Числа страниц/размеры проверяй через pymupdf (len(doc), doc[i].rect)."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 12 тестов прошли успешно (100% success rate). НОВЫЙ ФУНКЦИОНАЛ РАБОТАЕТ ПОЛНОСТЬЮ: (1) ROTATE: POST /api/overlay/generate с rotate=90 → 200 PDF, размер страницы РОВНО 291.97×416.69 pt (103×147 мм портрет, swap); rotate=0 → 416.69×291.97 pt (147×103 мм ландшафт); rotate=270 → 291.97×416.69 pt; rotate=180 → 416.69×291.97 pt. Все размеры точные (допуск ±1.5 pt выполнен). (2) MODE=FULL LANDSCAPE: POST /api/overlay/generate {records:[3 записи], mode:'full', orientation:'landscape'} → 200 PDF, страница A4 landscape РОВНО 841.89×595.28 pt, число листов = 1 (ceil(3/4)=1). (3) MODE=FULL PORTRAIT: POST /api/overlay/generate {records:[3 записи], mode:'full', orientation:'portrait'} → 200 PDF, страница A4 portrait РОВНО 595.28×841.89 pt, число листов = 2 (ceil(3/2)=2). (4) MODE=FULL PER_SHEET: POST /api/overlay/generate {records:[5 записей], mode:'full', orientation:'landscape', per_sheet:2} → 200 PDF, число листов = 3 (ceil(5/2)=3). (5) PREVIEW-PNG: POST /api/overlay/preview-png {records:[2 записи], mode:'full', orientation:'landscape'} → 200, Content-Type image/png, тело начинается с \\x89PNG, размер 74396 байт (> 1000 байт). (6) TEST-SHEET ROTATE: GET /api/overlay/test-sheet?rotate=90 → 200 PDF, размер страницы РОВНО 291.97×416.69 pt. (7) LAYOUT ROTATE SAVE: POST /api/overlay/layout {layout:[...], dx_mm:1, dy_mm:2, rotate:90} → 200 {saved:true, rotate:90}; затем GET /api/overlay/layout → rotate:90 (персистентность в MongoDB подтверждена). (8) РЕГРЕССИЯ: POST /api/overlay/generate {records:[{fio:'Тест Регрессия'}], page_size:'card'} (без rotate) → 200 PDF, размер страницы РОВНО 416.69×291.97 pt (обратная совместимость сохранена); POST /api/overlay/print-silent {records:[{fio:'Тест'}], page_size:'card'} → 400 (грейсфул деградация на Linux работает корректно). Все backend API полностью функциональны. Новая фича готова к использованию."
+
     implemented: true
     working: true
     file: "document_service.py"
@@ -345,12 +359,50 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Печать поверх бланка: поворот (rotate) + позиция на A4 + мультибланки на A4 (mode=full) + preview-png"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend, ТОЛЬКО новую задачу «Печать поверх бланка: поворот (rotate) +
+        позиция на A4 + мультибланки на A4 (mode=full) + preview-png». Детали и точные проверки —
+        в status_history этой задачи (8 пунктов). Ключевое: (1) rotate=90/270 → страница PDF
+        291.97×416.69 pt (swap, портрет 103×147), rotate=0/180 → 416.69×291.97; (2) mode='full'
+        landscape → страница A4 landscape 841.89×595.28, число листов = ceil(n/4); portrait →
+        595.28×841.89, ceil(n/2); per_sheet ограничивает плотность; (3) POST /api/overlay/preview-png →
+        image/png; (4) test-sheet?rotate=90 → 291.97×416.69; (5) layout сохраняет/возвращает rotate.
+        Размеры/число страниц проверяй через pymupdf. Регрессию базовой генерации (card без rotate,
+        print-silent 400 на Linux) не сломать. НЕ трогай договоры/историю.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 12 тестов прошли (100% success rate).
+        
+        НОВЫЙ ФУНКЦИОНАЛ РАБОТАЕТ ПОЛНОСТЬЮ:
+        
+        1. ROTATE (4/4 теста): POST /api/overlay/generate с rotate=90 → 200 PDF, размер страницы РОВНО 291.97×416.69 pt (103×147 мм портрет, swap); rotate=0 → 416.69×291.97 pt (147×103 мм ландшафт); rotate=270 → 291.97×416.69 pt; rotate=180 → 416.69×291.97 pt. Все размеры точные (допуск ±1.5 pt выполнен).
+        
+        2. MODE=FULL LANDSCAPE (1/1 тест): POST /api/overlay/generate {records:[3 записи], mode:'full', orientation:'landscape'} → 200 PDF, страница A4 landscape РОВНО 841.89×595.28 pt, число листов = 1 (ceil(3/4)=1).
+        
+        3. MODE=FULL PORTRAIT (1/1 тест): POST /api/overlay/generate {records:[3 записи], mode:'full', orientation:'portrait'} → 200 PDF, страница A4 portrait РОВНО 595.28×841.89 pt, число листов = 2 (ceil(3/2)=2).
+        
+        4. MODE=FULL PER_SHEET (1/1 тест): POST /api/overlay/generate {records:[5 записей], mode:'full', orientation:'landscape', per_sheet:2} → 200 PDF, число листов = 3 (ceil(5/2)=3).
+        
+        5. PREVIEW-PNG (1/1 тест): POST /api/overlay/preview-png {records:[2 записи], mode:'full', orientation:'landscape'} → 200, Content-Type image/png, тело начинается с \x89PNG, размер 74396 байт (> 1000 байт).
+        
+        6. TEST-SHEET ROTATE (1/1 тест): GET /api/overlay/test-sheet?rotate=90 → 200 PDF, размер страницы РОВНО 291.97×416.69 pt.
+        
+        7. LAYOUT ROTATE SAVE (1/1 тест): POST /api/overlay/layout {layout:[...], dx_mm:1, dy_mm:2, rotate:90} → 200 {saved:true, rotate:90}; затем GET /api/overlay/layout → rotate:90 (персистентность в MongoDB подтверждена).
+        
+        8. РЕГРЕССИЯ (2/2 теста): ✅ POST /api/overlay/generate {records:[{fio:'Тест Регрессия'}], page_size:'card'} (без rotate) → 200 PDF, размер страницы РОВНО 416.69×291.97 pt (обратная совместимость сохранена); ✅ POST /api/overlay/print-silent {records:[{fio:'Тест'}], page_size:'card'} → 400 (грейсфул деградация на Linux работает корректно).
+        
+        Все backend API полностью функциональны. Новая фича готова к использованию.
+
+
+
     - agent: "main"
       message: >
         Протестируй ТОЛЬКО backend. Ключевое: PDF-конвертация через LibreOffice (был не установлен —

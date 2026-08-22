@@ -1,357 +1,403 @@
 #!/usr/bin/env python3
-"""Backend API tests for Banetskaya.by - Focus on PDF generation and font fix"""
+"""Backend API testing for overlay printing with rotate, mode=full, and preview-png."""
 import sys
 import requests
-import pymupdf  # PyMuPDF for PDF validation and text extraction
+import pymupdf  # fitz
+from io import BytesIO
 
-# Backend URL from frontend/.env
-BACKEND_URL = "https://blank-sheet-filler.preview.emergentagent.com/api"
+# Base URL from frontend/.env
+BASE_URL = "https://df5d1aab-d151-43c7-81f6-15cafa62422e.preview.emergentagent.com/api"
 
-def test_overlay_generate_card_with_form():
-    """Test 1: POST /api/overlay/generate with page_size=card, with_form=true"""
-    print("\n=== Test 1: POST /api/overlay/generate (card, with_form=true) ===")
+# Tolerance for page size checks (±1.5 pt)
+TOLERANCE = 1.5
+
+def check_page_size(pdf_bytes, expected_width, expected_height, page_index=0):
+    """Check if a PDF page has the expected dimensions within tolerance."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    if len(doc) <= page_index:
+        doc.close()
+        return False, f"PDF has only {len(doc)} pages, cannot check page {page_index}"
     
+    page = doc[page_index]
+    rect = page.rect
+    actual_w = rect.width
+    actual_h = rect.height
+    doc.close()
+    
+    w_ok = abs(actual_w - expected_width) <= TOLERANCE
+    h_ok = abs(actual_h - expected_height) <= TOLERANCE
+    
+    if w_ok and h_ok:
+        return True, f"Page size OK: {actual_w:.2f}×{actual_h:.2f} pt (expected {expected_width}×{expected_height})"
+    else:
+        return False, f"Page size MISMATCH: {actual_w:.2f}×{actual_h:.2f} pt (expected {expected_width}×{expected_height}, tolerance ±{TOLERANCE})"
+
+def count_pages(pdf_bytes):
+    """Count the number of pages in a PDF."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    count = len(doc)
+    doc.close()
+    return count
+
+def test_rotate_90():
+    """Test 1: POST /api/overlay/generate with rotate=90 -> page size 291.97×416.69 pt (103×147 mm portrait)."""
+    print("\n=== Test 1: rotate=90 (103×147 mm portrait) ===")
     payload = {
-        "records": [{
-            "fio": "Иванов Иван Иванович",
-            "address": "г. Минск",
-            "from_day": "1",
-            "from_month": "июля",
-            "from_year": "25",
-            "to_day": "1",
-            "to_month": "июля",
-            "to_year": "26"
-        }],
+        "records": [{"fio": "Тест Поворот 90"}],
         "page_size": "card",
-        "with_form": True
+        "rotate": 90
     }
+    resp = requests.post(f"{BASE_URL}/overlay/generate", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"   Response: {resp.text[:200]}")
+        return False
     
-    try:
-        resp = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload, timeout=30)
-        print(f"Status: {resp.status_code}")
-        print(f"Content-Type: {resp.headers.get('Content-Type')}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            print(f"Response: {resp.text[:500]}")
-            return False
-        
-        if "application/pdf" not in resp.headers.get('Content-Type', ''):
-            print(f"❌ FAILED: Expected application/pdf, got {resp.headers.get('Content-Type')}")
-            return False
-        
-        pdf_data = resp.content
-        
-        # Check PDF signature
-        if not pdf_data.startswith(b'%PDF'):
-            print(f"❌ FAILED: PDF does not start with %PDF")
-            return False
-        
-        print(f"✅ Valid PDF signature (%PDF)")
-        
-        # Open with pymupdf and check page size
-        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-        page = doc[0]
-        width = page.rect.width
-        height = page.rect.height
-        
-        print(f"Page size: {width:.2f} x {height:.2f} pt")
-        
-        # Expected: ~416.69 x 291.97 pt (147x103 mm)
-        expected_w = 416.69
-        expected_h = 291.97
-        tolerance = 2.0
-        
-        if abs(width - expected_w) > tolerance or abs(height - expected_h) > tolerance:
-            print(f"❌ FAILED: Page size mismatch. Expected ~{expected_w}x{expected_h} pt")
-            doc.close()
-            return False
-        
-        print(f"✅ Page size correct: ~147x103 mm")
-        
-        # Extract text from first page to verify Cyrillic (font AppSans working)
-        text = page.get_text()
-        print(f"Extracted text (first 200 chars): {text[:200]}")
-        
-        # Check for Cyrillic characters
-        has_cyrillic = any(char in text for char in ["Иванов", "Минск", "июля"])
-        
-        if has_cyrillic:
-            print(f"✅ Cyrillic text found in PDF (font AppSans working)")
-        else:
-            print(f"⚠️  WARNING: No expected Cyrillic text found. Text: {text[:300]}")
-        
-        doc.close()
-        print("✅ Test 1 PASSED")
+    if resp.headers.get("Content-Type") != "application/pdf":
+        print(f"❌ FAIL: Expected application/pdf, got {resp.headers.get('Content-Type')}")
+        return False
+    
+    pdf_bytes = resp.content
+    if not pdf_bytes.startswith(b"%PDF"):
+        print(f"❌ FAIL: Response does not start with %PDF")
+        return False
+    
+    # rotate=90 should swap dimensions: 103×147 mm = 291.97×416.69 pt
+    ok, msg = check_page_size(pdf_bytes, 291.97, 416.69)
+    if ok:
+        print(f"✅ PASS: {msg}")
         return True
-        
-    except Exception as e:
-        print(f"❌ FAILED: {e}")
-        import traceback
-        traceback.print_exc()
+    else:
+        print(f"❌ FAIL: {msg}")
         return False
 
-
-def test_overlay_generate_a4_with_form():
-    """Test 2: POST /api/overlay/generate with page_size=a4, with_form=true"""
-    print("\n=== Test 2: POST /api/overlay/generate (a4, with_form=true) ===")
-    
+def test_rotate_0():
+    """Test 1b: rotate=0 -> 416.69×291.97 pt (147×103 mm landscape)."""
+    print("\n=== Test 1b: rotate=0 (147×103 mm landscape) ===")
     payload = {
-        "records": [{
-            "fio": "Петров Петр Петрович",
-            "address": "г. Гомель",
-            "from_day": "5",
-            "from_month": "августа",
-            "from_year": "25",
-            "to_day": "5",
-            "to_month": "августа",
-            "to_year": "26"
-        }],
-        "page_size": "a4",
-        "with_form": True
+        "records": [{"fio": "Тест Поворот 0"}],
+        "page_size": "card",
+        "rotate": 0
     }
+    resp = requests.post(f"{BASE_URL}/overlay/generate", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
     
-    try:
-        resp = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload, timeout=30)
-        print(f"Status: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            return False
-        
-        pdf_data = resp.content
-        
-        if not pdf_data.startswith(b'%PDF'):
-            print(f"❌ FAILED: PDF does not start with %PDF")
-            return False
-        
-        # Check page size (should be A4: ~595x842 pt)
-        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-        page = doc[0]
-        width = page.rect.width
-        height = page.rect.height
-        
-        print(f"Page size: {width:.2f} x {height:.2f} pt")
-        
-        # Expected A4: ~595 x 842 pt
-        expected_w = 595
-        expected_h = 842
-        tolerance = 5.0
-        
-        if abs(width - expected_w) > tolerance or abs(height - expected_h) > tolerance:
-            print(f"❌ FAILED: Page size mismatch. Expected ~{expected_w}x{expected_h} pt (A4)")
-            doc.close()
-            return False
-        
-        print(f"✅ Page size correct: A4 (~595x842 pt)")
-        doc.close()
-        print("✅ Test 2 PASSED")
+    pdf_bytes = resp.content
+    ok, msg = check_page_size(pdf_bytes, 416.69, 291.97)
+    if ok:
+        print(f"✅ PASS: {msg}")
         return True
-        
-    except Exception as e:
-        print(f"❌ FAILED: {e}")
+    else:
+        print(f"❌ FAIL: {msg}")
         return False
 
-
-def test_overlay_form_background():
-    """Test 3: GET /api/overlay/form-background"""
-    print("\n=== Test 3: GET /api/overlay/form-background ===")
+def test_rotate_270():
+    """Test 1c: rotate=270 -> 291.97×416.69 pt (103×147 mm portrait)."""
+    print("\n=== Test 1c: rotate=270 (103×147 mm portrait) ===")
+    payload = {
+        "records": [{"fio": "Тест Поворот 270"}],
+        "page_size": "card",
+        "rotate": 270
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/generate", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
     
-    try:
-        resp = requests.get(f"{BACKEND_URL}/overlay/form-background", timeout=30)
-        print(f"Status: {resp.status_code}")
-        print(f"Content-Type: {resp.headers.get('Content-Type')}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            return False
-        
-        if "image/png" not in resp.headers.get('Content-Type', ''):
-            print(f"❌ FAILED: Expected image/png, got {resp.headers.get('Content-Type')}")
-            return False
-        
-        png_data = resp.content
-        
-        # Check PNG signature
-        if not png_data.startswith(b'\x89PNG'):
-            print(f"❌ FAILED: PNG does not start with \\x89PNG")
-            return False
-        
-        print(f"✅ Valid PNG signature (\\x89PNG)")
-        print(f"PNG size: {len(png_data)} bytes")
-        
-        if len(png_data) < 1000:
-            print(f"❌ FAILED: PNG too small ({len(png_data)} bytes)")
-            return False
-        
-        print(f"✅ PNG size > 1000 bytes")
-        print("✅ Test 3 PASSED")
+    pdf_bytes = resp.content
+    ok, msg = check_page_size(pdf_bytes, 291.97, 416.69)
+    if ok:
+        print(f"✅ PASS: {msg}")
         return True
-        
-    except Exception as e:
-        print(f"❌ FAILED: {e}")
+    else:
+        print(f"❌ FAIL: {msg}")
         return False
 
-
-def test_overlay_background():
-    """Test 4: GET /api/overlay/background"""
-    print("\n=== Test 4: GET /api/overlay/background ===")
+def test_rotate_180():
+    """Test 1d: rotate=180 -> 416.69×291.97 pt (147×103 mm landscape)."""
+    print("\n=== Test 1d: rotate=180 (147×103 mm landscape) ===")
+    payload = {
+        "records": [{"fio": "Тест Поворот 180"}],
+        "page_size": "card",
+        "rotate": 180
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/generate", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
     
-    try:
-        resp = requests.get(f"{BACKEND_URL}/overlay/background", timeout=30)
-        print(f"Status: {resp.status_code}")
-        print(f"Content-Type: {resp.headers.get('Content-Type')}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            return False
-        
-        if "image/png" not in resp.headers.get('Content-Type', ''):
-            print(f"❌ FAILED: Expected image/png, got {resp.headers.get('Content-Type')}")
-            return False
-        
-        png_data = resp.content
-        
-        # Check PNG signature
-        if not png_data.startswith(b'\x89PNG'):
-            print(f"❌ FAILED: PNG does not start with \\x89PNG")
-            return False
-        
-        print(f"✅ Valid PNG signature (\\x89PNG)")
-        print(f"PNG size: {len(png_data)} bytes")
-        print("✅ Test 4 PASSED")
+    pdf_bytes = resp.content
+    ok, msg = check_page_size(pdf_bytes, 416.69, 291.97)
+    if ok:
+        print(f"✅ PASS: {msg}")
         return True
-        
-    except Exception as e:
-        print(f"❌ FAILED: {e}")
+    else:
+        print(f"❌ FAIL: {msg}")
         return False
 
-
-def test_contract_docx_to_pdf():
-    """Test 5: Contract DOCX→PDF conversion via LibreOffice"""
-    print("\n=== Test 5: Contract DOCX→PDF conversion (LibreOffice) ===")
-    
-    # First, get available fields
-    try:
-        resp = requests.get(f"{BACKEND_URL}/fields", timeout=10)
-        print(f"GET /api/fields: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Could not get fields")
-            return False
-        
-        fields_data = resp.json()
-        print(f"✅ Fields endpoint working, {len(fields_data.get('fields', []))} fields available")
-        
-    except Exception as e:
-        print(f"❌ FAILED getting fields: {e}")
+def test_mode_full_landscape():
+    """Test 2: mode='full', orientation='landscape' -> A4 landscape 841.89×595.28 pt, ceil(3/4)=1 sheet."""
+    print("\n=== Test 2: mode='full', orientation='landscape' (3 records) ===")
+    payload = {
+        "records": [
+            {"fio": "Запись A"},
+            {"fio": "Запись B"},
+            {"fio": "Запись C"}
+        ],
+        "mode": "full",
+        "orientation": "landscape"
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/generate", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"   Response: {resp.text[:200]}")
         return False
     
-    # Now generate a contract PDF via preview endpoint
-    try:
-        payload = {
-            "fields": {
-                "contract_number": "TEST-001",
-                "full_name": "Тестов Тест Тестович",
-                "citizenship": "Республики Беларусь",
-                "birth_date": "01.01.2000",
-                "room_number": "101",
-                "registration_address": "г. Минск, ул. Тестовая, д. 1",
-                "passport_number": "AB1234567",
-                "phone": "+375291234567"
-            }
-        }
-        
-        resp = requests.post(f"{BACKEND_URL}/contracts/preview?format=pdf", json=payload, timeout=60)
-        print(f"POST /api/contracts/preview?format=pdf: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            print(f"Response: {resp.text[:500]}")
-            return False
-        
-        pdf_data = resp.content
-        
-        # Check PDF signature
-        if not pdf_data.startswith(b'%PDF'):
-            print(f"❌ FAILED: PDF does not start with %PDF")
-            return False
-        
-        print(f"✅ Valid PDF signature (%PDF)")
-        
-        # Open with pymupdf and extract text to verify Cyrillic
-        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-        print(f"PDF has {len(doc)} pages")
-        
-        # Extract text from first page
-        if len(doc) > 0:
-            page = doc[0]
-            text = page.get_text()
-            print(f"Extracted text (first 300 chars): {text[:300]}")
-            
-            # Check for Cyrillic
-            has_cyrillic = any(char in text for char in ["Тестов", "Минск", "Беларусь"])
-            
-            if has_cyrillic:
-                print(f"✅ Cyrillic text found in contract PDF (LibreOffice + font working)")
-            else:
-                print(f"⚠️  WARNING: No expected Cyrillic text found in contract PDF")
-        
-        doc.close()
-        print("✅ Test 5 PASSED - DOCX→PDF conversion working")
+    if resp.headers.get("Content-Type") != "application/pdf":
+        print(f"❌ FAIL: Expected application/pdf, got {resp.headers.get('Content-Type')}")
+        return False
+    
+    pdf_bytes = resp.content
+    
+    # Check page size: A4 landscape = 841.89×595.28 pt
+    ok, msg = check_page_size(pdf_bytes, 841.89, 595.28)
+    if not ok:
+        print(f"❌ FAIL: {msg}")
+        return False
+    
+    # Check page count: 3 records, landscape = 4 per sheet, so ceil(3/4) = 1 sheet
+    page_count = count_pages(pdf_bytes)
+    if page_count != 1:
+        print(f"❌ FAIL: Expected 1 sheet, got {page_count}")
+        return False
+    
+    print(f"✅ PASS: A4 landscape, 1 sheet for 3 records")
+    return True
+
+def test_mode_full_portrait():
+    """Test 3: mode='full', orientation='portrait' -> A4 portrait 595.28×841.89 pt, ceil(3/2)=2 sheets."""
+    print("\n=== Test 3: mode='full', orientation='portrait' (3 records) ===")
+    payload = {
+        "records": [
+            {"fio": "Запись A"},
+            {"fio": "Запись B"},
+            {"fio": "Запись C"}
+        ],
+        "mode": "full",
+        "orientation": "portrait"
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/generate", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    pdf_bytes = resp.content
+    
+    # Check page size: A4 portrait = 595.28×841.89 pt
+    ok, msg = check_page_size(pdf_bytes, 595.28, 841.89)
+    if not ok:
+        print(f"❌ FAIL: {msg}")
+        return False
+    
+    # Check page count: 3 records, portrait = 2 per sheet, so ceil(3/2) = 2 sheets
+    page_count = count_pages(pdf_bytes)
+    if page_count != 2:
+        print(f"❌ FAIL: Expected 2 sheets, got {page_count}")
+        return False
+    
+    print(f"✅ PASS: A4 portrait, 2 sheets for 3 records")
+    return True
+
+def test_mode_full_per_sheet():
+    """Test 4: mode='full', per_sheet=2, orientation='landscape', 5 records -> ceil(5/2)=3 sheets."""
+    print("\n=== Test 4: mode='full', per_sheet=2, orientation='landscape' (5 records) ===")
+    payload = {
+        "records": [
+            {"fio": "Запись 1"},
+            {"fio": "Запись 2"},
+            {"fio": "Запись 3"},
+            {"fio": "Запись 4"},
+            {"fio": "Запись 5"}
+        ],
+        "mode": "full",
+        "orientation": "landscape",
+        "per_sheet": 2
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/generate", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    pdf_bytes = resp.content
+    
+    # Check page count: 5 records, per_sheet=2, so ceil(5/2) = 3 sheets
+    page_count = count_pages(pdf_bytes)
+    if page_count != 3:
+        print(f"❌ FAIL: Expected 3 sheets, got {page_count}")
+        return False
+    
+    print(f"✅ PASS: 3 sheets for 5 records with per_sheet=2")
+    return True
+
+def test_preview_png():
+    """Test 5: POST /api/overlay/preview-png -> 200, image/png, starts with \\x89PNG."""
+    print("\n=== Test 5: POST /api/overlay/preview-png ===")
+    payload = {
+        "records": [
+            {"fio": "Запись A"},
+            {"fio": "Запись B"}
+        ],
+        "mode": "full",
+        "orientation": "landscape"
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/preview-png", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"   Response: {resp.text[:200]}")
+        return False
+    
+    if resp.headers.get("Content-Type") != "image/png":
+        print(f"❌ FAIL: Expected image/png, got {resp.headers.get('Content-Type')}")
+        return False
+    
+    png_bytes = resp.content
+    if not png_bytes.startswith(b"\x89PNG"):
+        print(f"❌ FAIL: Response does not start with \\x89PNG")
+        return False
+    
+    if len(png_bytes) < 1000:
+        print(f"❌ FAIL: PNG size too small: {len(png_bytes)} bytes")
+        return False
+    
+    print(f"✅ PASS: Valid PNG, size {len(png_bytes)} bytes")
+    return True
+
+def test_test_sheet_rotate():
+    """Test 6: GET /api/overlay/test-sheet?rotate=90 -> 200, page size 291.97×416.69 pt."""
+    print("\n=== Test 6: GET /api/overlay/test-sheet?rotate=90 ===")
+    resp = requests.get(f"{BASE_URL}/overlay/test-sheet?rotate=90", timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    if resp.headers.get("Content-Type") != "application/pdf":
+        print(f"❌ FAIL: Expected application/pdf, got {resp.headers.get('Content-Type')}")
+        return False
+    
+    pdf_bytes = resp.content
+    ok, msg = check_page_size(pdf_bytes, 291.97, 416.69)
+    if ok:
+        print(f"✅ PASS: {msg}")
         return True
-        
-    except Exception as e:
-        print(f"❌ FAILED: {e}")
-        import traceback
-        traceback.print_exc()
+    else:
+        print(f"❌ FAIL: {msg}")
         return False
 
-
-def test_stats():
-    """Test 6: GET /api/stats"""
-    print("\n=== Test 6: GET /api/stats ===")
+def test_layout_rotate_save():
+    """Test 7: POST /api/overlay/layout with rotate=90, then GET to verify it's saved."""
+    print("\n=== Test 7: POST /api/overlay/layout with rotate=90 ===")
     
-    try:
-        resp = requests.get(f"{BACKEND_URL}/stats", timeout=10)
-        print(f"Status: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            return False
-        
-        data = resp.json()
-        print(f"Stats data: {data}")
-        
-        # Check required fields
-        required_fields = ["total", "drafts", "this_month", "datasets", "recent"]
-        for field in required_fields:
-            if field not in data:
-                print(f"❌ FAILED: Missing field '{field}' in stats")
-                return False
-        
-        print(f"✅ All required fields present")
-        print("✅ Test 6 PASSED")
+    # First, get the current layout to use as a base
+    resp = requests.get(f"{BASE_URL}/overlay/layout", timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Could not get current layout: {resp.status_code}")
+        return False
+    
+    current = resp.json()
+    layout = current.get("layout", [])
+    
+    # Save with rotate=90
+    payload = {
+        "layout": layout,
+        "dx_mm": 1.0,
+        "dy_mm": 2.0,
+        "rotate": 90
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/layout", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: POST failed with {resp.status_code}")
+        print(f"   Response: {resp.text[:200]}")
+        return False
+    
+    data = resp.json()
+    if not data.get("saved"):
+        print(f"❌ FAIL: Response does not indicate saved=true")
+        return False
+    
+    if data.get("rotate") != 90:
+        print(f"❌ FAIL: Response rotate={data.get('rotate')}, expected 90")
+        return False
+    
+    # Now GET to verify persistence
+    resp = requests.get(f"{BASE_URL}/overlay/layout", timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: GET after POST failed with {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    if data.get("rotate") != 90:
+        print(f"❌ FAIL: GET returned rotate={data.get('rotate')}, expected 90")
+        return False
+    
+    print(f"✅ PASS: rotate=90 saved and retrieved correctly")
+    return True
+
+def test_regression_card_no_rotate():
+    """Test 8a: Regression - POST /api/overlay/generate page_size='card' without rotate -> 416.69×291.97 pt."""
+    print("\n=== Test 8a: Regression - card without rotate ===")
+    payload = {
+        "records": [{"fio": "Тест Регрессия"}],
+        "page_size": "card"
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/generate", json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    pdf_bytes = resp.content
+    ok, msg = check_page_size(pdf_bytes, 416.69, 291.97)
+    if ok:
+        print(f"✅ PASS: {msg}")
         return True
-        
-    except Exception as e:
-        print(f"❌ FAILED: {e}")
+    else:
+        print(f"❌ FAIL: {msg}")
         return False
 
+def test_regression_print_silent():
+    """Test 8b: Regression - POST /api/overlay/print-silent on Linux -> 400."""
+    print("\n=== Test 8b: Regression - print-silent on Linux ===")
+    payload = {
+        "records": [{"fio": "Тест"}],
+        "page_size": "card"
+    }
+    resp = requests.post(f"{BASE_URL}/overlay/print-silent", json=payload, timeout=30)
+    if resp.status_code != 400:
+        print(f"❌ FAIL: Expected 400 (graceful degradation on Linux), got {resp.status_code}")
+        return False
+    
+    print(f"✅ PASS: print-silent returns 400 on Linux (expected)")
+    return True
 
 def main():
-    print("=" * 80)
-    print("BACKEND API TESTS - PDF Generation & Font Fix Verification")
-    print("=" * 80)
-    print(f"Backend URL: {BACKEND_URL}")
+    print("=" * 70)
+    print("BACKEND TESTING: Overlay Printing with Rotate, Mode=Full, Preview-PNG")
+    print("=" * 70)
     
     tests = [
-        ("Overlay Generate (card, with_form)", test_overlay_generate_card_with_form),
-        ("Overlay Generate (a4, with_form)", test_overlay_generate_a4_with_form),
-        ("Overlay Form Background", test_overlay_form_background),
-        ("Overlay Background", test_overlay_background),
-        ("Contract DOCX→PDF (LibreOffice)", test_contract_docx_to_pdf),
-        ("Stats", test_stats),
+        ("Test 1: rotate=90", test_rotate_90),
+        ("Test 1b: rotate=0", test_rotate_0),
+        ("Test 1c: rotate=270", test_rotate_270),
+        ("Test 1d: rotate=180", test_rotate_180),
+        ("Test 2: mode=full landscape", test_mode_full_landscape),
+        ("Test 3: mode=full portrait", test_mode_full_portrait),
+        ("Test 4: mode=full per_sheet", test_mode_full_per_sheet),
+        ("Test 5: preview-png", test_preview_png),
+        ("Test 6: test-sheet rotate", test_test_sheet_rotate),
+        ("Test 7: layout rotate save", test_layout_rotate_save),
+        ("Test 8a: regression card", test_regression_card_no_rotate),
+        ("Test 8b: regression print-silent", test_regression_print_silent),
     ]
     
     results = []
@@ -360,15 +406,14 @@ def main():
             result = test_func()
             results.append((name, result))
         except Exception as e:
-            print(f"\n❌ Test '{name}' crashed: {e}")
+            print(f"❌ EXCEPTION in {name}: {e}")
             import traceback
             traceback.print_exc()
             results.append((name, False))
     
-    print("\n" + "=" * 80)
-    print("TEST SUMMARY")
-    print("=" * 80)
-    
+    print("\n" + "=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
     passed = sum(1 for _, r in results if r)
     total = len(results)
     
@@ -376,7 +421,7 @@ def main():
         status = "✅ PASS" if result else "❌ FAIL"
         print(f"{status}: {name}")
     
-    print(f"\nTotal: {passed}/{total} tests passed ({passed*100//total}%)")
+    print(f"\nTotal: {passed}/{total} tests passed ({100*passed//total}%)")
     
     if passed == total:
         print("\n🎉 ALL TESTS PASSED!")
@@ -384,7 +429,6 @@ def main():
     else:
         print(f"\n⚠️  {total - passed} test(s) failed")
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

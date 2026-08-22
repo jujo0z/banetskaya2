@@ -789,12 +789,41 @@ class OverlayGenerateRequest(BaseModel):
     with_background: bool = False
     with_form: bool = False
     page_size: str = "card"  # "card" (147x103) | "a4"
+    rotate: int = 0          # 0/90/180/270 — how the blank is fed into the printer
+    a4_position: str = "top-left"  # A4 carrier placement (page_size="a4")
+    # Full-document print (grid of complete forms on real A4 pages):
+    mode: str = "overlay"        # "overlay" | "full"
+    orientation: str = "portrait"  # full mode: "portrait" (2/sheet) | "landscape" (4/sheet)
+    per_sheet: int = 0            # full mode: cards per sheet (0 = max)
+
+
+def _build_overlay_pdf(req: "OverlayGenerateRequest") -> bytes:
+    """Route an overlay request to the right builder (overlay-on-blank or full)."""
+    if str(getattr(req, "mode", "overlay")).lower() == "full":
+        return docsvc.build_full_sheets(
+            records=req.records,
+            layout=req.layout,
+            orientation=req.orientation,
+            per_sheet=req.per_sheet,
+        )
+    return docsvc.build_overlay(
+        records=req.records,
+        layout=req.layout,
+        page_size=req.page_size,
+        dx_mm=req.dx_mm,
+        dy_mm=req.dy_mm,
+        with_background=req.with_background,
+        with_form=req.with_form,
+        rotate=req.rotate,
+        a4_position=req.a4_position,
+    )
 
 
 class OverlayLayoutSave(BaseModel):
     layout: List[Dict[str, Any]]
     dx_mm: float = 0.0
     dy_mm: float = 0.0
+    rotate: int = 0
 
 
 @api_router.get("/overlay/layout")
@@ -807,19 +836,21 @@ async def get_overlay_layout():
             "layout": v.get("layout", docsvc.SOOBSHENIE_LAYOUT),
             "dx_mm": v.get("dx_mm", 0.0),
             "dy_mm": v.get("dy_mm", 0.0),
+            "rotate": v.get("rotate", 0),
             "page_mm": list(docsvc.SOOBSHENIE_PAGE_MM),
         }
     return {
         "layout": docsvc.SOOBSHENIE_LAYOUT,
         "dx_mm": 0.0,
         "dy_mm": 0.0,
+        "rotate": 0,
         "page_mm": list(docsvc.SOOBSHENIE_PAGE_MM),
     }
 
 
 @api_router.post("/overlay/layout")
 async def save_overlay_layout(req: OverlayLayoutSave):
-    value = {"layout": req.layout, "dx_mm": req.dx_mm, "dy_mm": req.dy_mm}
+    value = {"layout": req.layout, "dx_mm": req.dx_mm, "dy_mm": req.dy_mm, "rotate": req.rotate}
     await db.app_settings.update_one(
         {"key": "overlay_layout"},
         {"$set": {"key": "overlay_layout", "value": value,
@@ -831,17 +862,10 @@ async def save_overlay_layout(req: OverlayLayoutSave):
 
 @api_router.post("/overlay/generate")
 async def generate_overlay(req: OverlayGenerateRequest):
-    """PDF with only the field values, sized to the physical blank (147×103 mm)."""
+    """PDF of the СООБЩЕНИЕ. mode="overlay" -> data sized to the physical blank
+    (147×103, optional rotation); mode="full" -> complete forms as an A4 grid."""
     try:
-        data = docsvc.build_overlay(
-            records=req.records,
-            layout=req.layout,
-            page_size=req.page_size,
-            dx_mm=req.dx_mm,
-            dy_mm=req.dy_mm,
-            with_background=req.with_background,
-            with_form=req.with_form,
-        )
+        data = _build_overlay_pdf(req)
     except Exception as e:
         logger.exception("overlay generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -850,6 +874,20 @@ async def generate_overlay(req: OverlayGenerateRequest):
         media_type="application/pdf",
         headers={"Content-Disposition": "inline; filename=soobshenie_overlay.pdf"},
     )
+
+
+@api_router.post("/overlay/preview-png")
+async def overlay_preview_png(req: OverlayGenerateRequest):
+    """Render the first sheet of the overlay/full-print output as a PNG image,
+    so the on-screen preview shows reliably even where inline PDF is blocked."""
+    try:
+        pdf = _build_overlay_pdf(req)
+        png = docsvc.render_pdf_first_page_png(pdf, scale=2.0)
+    except Exception as e:
+        logger.exception("overlay preview failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка предпросмотра: {e}")
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
 
 
 class OverlayPrintRequest(OverlayGenerateRequest):
@@ -874,15 +912,7 @@ async def overlay_print_silent(req: OverlayPrintRequest):
     if not req.records:
         raise HTTPException(status_code=400, detail="Нет данных для печати")
     try:
-        data = docsvc.build_overlay(
-            records=req.records,
-            layout=req.layout,
-            page_size=req.page_size,
-            dx_mm=req.dx_mm,
-            dy_mm=req.dy_mm,
-            with_background=req.with_background,
-            with_form=req.with_form,
-        )
+        data = _build_overlay_pdf(req)
         docsvc.print_pdf_silent(data, req.printer_name)
     except HTTPException:
         raise
@@ -893,8 +923,8 @@ async def overlay_print_silent(req: OverlayPrintRequest):
 
 
 @api_router.get("/overlay/test-sheet")
-async def overlay_test_sheet(dx: float = 0.0, dy: float = 0.0, page_size: str = "card"):
-    data = docsvc.build_overlay_test_sheet(page_size=page_size, dx_mm=dx, dy_mm=dy)
+async def overlay_test_sheet(dx: float = 0.0, dy: float = 0.0, page_size: str = "card", rotate: int = 0):
+    data = docsvc.build_overlay_test_sheet(page_size=page_size, dx_mm=dx, dy_mm=dy, rotate=rotate)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/pdf",

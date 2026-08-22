@@ -20,6 +20,7 @@ import {
   Plus,
   Minus,
   RotateCcw,
+  RotateCw,
   Download,
   Info,
 } from "lucide-react";
@@ -106,7 +107,8 @@ export default function BlankOverlay() {
   const [values, setValues] = useState({});
   const [dx, setDx] = useState(0);
   const [dy, setDy] = useState(0);
-  const [pageSize, setPageSize] = useState("a4");
+  const [rotate, setRotate] = useState(0);
+  const [pageSize, setPageSize] = useState("card");
   const [selected, setSelected] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -151,6 +153,7 @@ export default function BlankOverlay() {
         setLayout(data.layout || []);
         setDx(data.dx_mm || 0);
         setDy(data.dy_mm || 0);
+        setRotate(data.rotate || 0);
       } catch (e) {
         toast.error("Не удалось загрузить раскладку");
       } finally {
@@ -272,7 +275,7 @@ export default function BlankOverlay() {
   const doPrint = async () => {
     if (!checkRequired()) return;
     try {
-      await openOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize });
+      await openOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize, rotate });
       toast("PDF открыт в новой вкладке — печатайте с масштабом «Фактический размер» (100%)");
     } catch (e) {
       toast.error("Ошибка печати");
@@ -285,7 +288,7 @@ export default function BlankOverlay() {
       // Silent printing goes straight to the printer with the physical 147×103 blank
       // pre-inserted — always print at the real card size so the data lands exactly.
       const res = await printOverlaySilent([values], {
-        layout, dx_mm: dx, dy_mm: dy, pageSize: "card", printerName: selectedPrinter,
+        layout, dx_mm: dx, dy_mm: dy, pageSize: "card", rotate, printerName: selectedPrinter,
       });
       toast.success(`Отправлено на печать (147×103 мм): ${res.printer}`);
     } catch (e) {
@@ -297,14 +300,14 @@ export default function BlankOverlay() {
   };
   const doDownload = async () => {
     try {
-      await downloadOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize });
+      await downloadOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize, rotate });
     } catch (e) {
       toast.error("Ошибка скачивания");
     }
   };
   const doSave = async () => {
     try {
-      await saveOverlayLayout(layout, dx, dy);
+      await saveOverlayLayout(layout, dx, dy, rotate);
       toast.success("Раскладка и калибровка сохранены");
     } catch (e) {
       toast.error("Не удалось сохранить");
@@ -312,7 +315,7 @@ export default function BlankOverlay() {
   };
   const doTestSheet = async () => {
     try {
-      await openOverlayTestSheet(dx, dy, pageSize);
+      await openOverlayTestSheet(dx, dy, pageSize, rotate);
       toast("Пробный лист открыт — печатайте с масштабом 100%");
     } catch (e) {
       toast.error("Ошибка пробного листа");
@@ -436,17 +439,6 @@ export default function BlankOverlay() {
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => setPageSize("a4")}
-                className={`rounded-md border px-3 py-2 text-sm text-left transition ${
-                  pageSize === "a4" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
-                }`}
-                data-testid="paper-a4"
-              >
-                <div className="font-semibold">Лист A4</div>
-                <div className="text-[11px] text-muted-foreground">рекомендуется · бланк в углу</div>
-              </button>
-              <button
-                type="button"
                 onClick={() => setPageSize("card")}
                 className={`rounded-md border px-3 py-2 text-sm text-left transition ${
                   pageSize === "card" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
@@ -454,18 +446,87 @@ export default function BlankOverlay() {
                 data-testid="paper-card"
               >
                 <div className="font-semibold">147×103 мм</div>
-                <div className="text-[11px] text-muted-foreground">точно по размеру бланка</div>
+                <div className="text-[11px] text-muted-foreground">рекомендуется · точно по бланку</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPageSize("a4")}
+                className={`rounded-md border px-3 py-2 text-sm text-left transition ${
+                  pageSize === "a4" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
+                }`}
+                data-testid="paper-a4"
+              >
+                <div className="font-semibold">Лист A4</div>
+                <div className="text-[11px] text-muted-foreground">запасной вариант · бланк в углу</div>
               </button>
             </div>
             <div className="mt-3 flex gap-2 text-[11px] text-muted-foreground bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
               <Info className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <span>
-                Если принтер «выплёвывает» пустой лист — выберите <b>A4</b> и в окне печати
-                поставьте масштаб <b>«Фактический размер» (100%)</b>, а не «По размеру страницы».
-                Для A4: положите бланк в <b>левый верхний угол</b> листа (по рамке-подсказке).
+                Вставляете готовый бланк в принтер? Выбирайте <b>147×103&nbsp;мм</b> и в драйвере
+                задайте такой же нестандартный размер (или A6). Печать через <b>обходной/ручной лоток</b>,
+                масштаб <b>«Фактический размер» (100%)</b>.
               </span>
             </div>
           </div>
+
+          {/* Rotation (feed orientation) */}
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+            <div className="text-sm font-semibold mb-1 flex items-center gap-2">
+              <RotateCw className="h-4 w-4 text-[#E11D48]" /> Поворот под подачу бланка
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-3">
+              Как принтер «затягивает» бланк? Если данные уезжают вбок — меняйте поворот
+              и проверяйте пробным листом. Вы кладёте бланк вертикально (узкой стороной вперёд) —
+              обычно нужно <b>90°</b> или <b>270°</b>.
+            </p>
+            <div className="grid grid-cols-4 gap-2">
+              {[0, 90, 180, 270].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setRotate(r)}
+                  className={`rounded-md border px-2 py-2 text-sm transition ${
+                    rotate === r ? "border-[#E11D48] bg-[#E11D48]/10 font-semibold" : "border-white/10 hover:border-white/30"
+                  }`}
+                  data-testid={`rotate-${r}`}
+                >
+                  {r}°
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Printer setup instructions */}
+          <details className="rounded-lg border border-white/10 bg-white/5 p-4 group" data-testid="printer-howto">
+            <summary className="text-sm font-semibold flex items-center gap-2 cursor-pointer list-none">
+              <Info className="h-4 w-4 text-[#E11D48]" /> Как настроить принтер (Kyocera / Canon MF)
+              <span className="ml-auto text-[11px] text-muted-foreground group-open:hidden">развернуть</span>
+            </summary>
+            <ol className="mt-3 space-y-2 text-[11px] text-muted-foreground list-decimal pl-4 leading-relaxed">
+              <li>
+                Положите готовый бланк в <b>обходной (ручной) лоток</b> — узкая щель спереди/сбоку.
+                Кладите <b>вертикально</b>: узкой стороной (103&nbsp;мм) вперёд, лицом вверх.
+              </li>
+              <li>
+                В окне печати выберите свой принтер → <b>Свойства/Настройки</b> → размер бумаги
+                задайте <b>A6 (105×148&nbsp;мм)</b> или создайте нестандартный <b>147×103&nbsp;мм</b>.
+                Источник бумаги — <b>Обходной лоток</b>.
+              </li>
+              <li>
+                Масштаб — <b>«Фактический размер» / 100%</b> (НЕ «по размеру страницы»).
+              </li>
+              <li>
+                Нажмите <b>«Пробный лист выравнивания»</b> ниже и напечатайте его на одном бланке.
+                Кресты и линейка должны совпасть с рамкой бланка.
+              </li>
+              <li>
+                Если весь оттиск повёрнут — меняйте <b>Поворот</b> (90/180/270°).
+                Если сдвинут — правьте <b>Сдвиг X/Y</b>. Повторяйте, пока не сядет ровно, затем <b>«Сохранить»</b>.
+              </li>
+            </ol>
+          </details>
+
 
           {/* Calibration */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">

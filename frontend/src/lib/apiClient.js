@@ -212,15 +212,25 @@ export async function saveAppConfig(windows_download_url) {
   return data;
 }
 
-export async function saveOverlayLayout(layout, dx_mm, dy_mm) {
-  const { data } = await api.post("/overlay/layout", { layout, dx_mm, dy_mm });
+export async function saveOverlayLayout(layout, dx_mm, dy_mm, rotate = 0) {
+  const { data } = await api.post("/overlay/layout", { layout, dx_mm, dy_mm, rotate });
   return data;
 }
 
-export async function overlayPdfUrl(records, { layout, dx_mm = 0, dy_mm = 0, withBackground = false, withForm = false, pageSize = "card" } = {}) {
+export async function overlayPdfUrl(records, { layout, dx_mm = 0, dy_mm = 0, withBackground = false, withForm = false, pageSize = "card", rotate = 0, a4Position = "top-left", mode = "overlay", orientation = "portrait", perSheet = 0 } = {}) {
   const res = await api.post(
     "/overlay/generate",
-    { records, layout, dx_mm, dy_mm, with_background: withBackground, with_form: withForm, page_size: pageSize },
+    { records, layout, dx_mm, dy_mm, with_background: withBackground, with_form: withForm, page_size: pageSize, rotate, a4_position: a4Position, mode, orientation, per_sheet: perSheet },
+    { responseType: "blob" }
+  );
+  return window.URL.createObjectURL(res.data);
+}
+
+// Render the first sheet as a PNG image for a reliable on-screen preview.
+export async function overlayPreviewPngUrl(records, { layout, dx_mm = 0, dy_mm = 0, withForm = false, pageSize = "card", rotate = 0, a4Position = "top-left", mode = "overlay", orientation = "portrait", perSheet = 0 } = {}) {
+  const res = await api.post(
+    "/overlay/preview-png",
+    { records, layout, dx_mm, dy_mm, with_form: withForm, page_size: pageSize, rotate, a4_position: a4Position, mode, orientation, per_sheet: perSheet },
     { responseType: "blob" }
   );
   return window.URL.createObjectURL(res.data);
@@ -229,27 +239,27 @@ export async function overlayPdfUrl(records, { layout, dx_mm = 0, dy_mm = 0, wit
 // Open the overlay PDF in a NEW TAB so the user prints from the PDF viewer
 // (reliable + lets them pick "Actual size / 100%"). Auto window.print() on a
 // blob PDF often prints a blank page on some printers, so we avoid it.
-export async function openOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", withBackground = false, withForm = false } = {}) {
+export async function openOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", withBackground = false, withForm = false, rotate = 0, a4Position = "top-left", mode = "overlay", orientation = "portrait", perSheet = 0 } = {}) {
   const res = await api.post(
     "/overlay/generate",
-    { records, layout, dx_mm, dy_mm, with_background: withBackground, with_form: withForm, page_size: pageSize },
+    { records, layout, dx_mm, dy_mm, with_background: withBackground, with_form: withForm, page_size: pageSize, rotate, a4_position: a4Position, mode, orientation, per_sheet: perSheet },
     { responseType: "blob" }
   );
   const url = window.URL.createObjectURL(res.data);
   window.open(url, "_blank");
 }
 
-export async function downloadOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", withBackground = false, withForm = false } = {}) {
+export async function downloadOverlayPdf(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", withBackground = false, withForm = false, rotate = 0, a4Position = "top-left", mode = "overlay", orientation = "portrait", perSheet = 0 } = {}) {
   const res = await api.post(
     "/overlay/generate",
-    { records, layout, dx_mm, dy_mm, with_background: withBackground, with_form: withForm, page_size: pageSize },
+    { records, layout, dx_mm, dy_mm, with_background: withBackground, with_form: withForm, page_size: pageSize, rotate, a4_position: a4Position, mode, orientation, per_sheet: perSheet },
     { responseType: "blob" }
   );
   downloadBlob(res.data, "soobshenie_overlay.pdf");
 }
 
-export async function openOverlayTestSheet(dx = 0, dy = 0, pageSize = "card") {
-  const res = await api.get("/overlay/test-sheet", { params: { dx, dy, page_size: pageSize }, responseType: "blob" });
+export async function openOverlayTestSheet(dx = 0, dy = 0, pageSize = "card", rotate = 0) {
+  const res = await api.get("/overlay/test-sheet", { params: { dx, dy, page_size: pageSize, rotate }, responseType: "blob" });
   const url = window.URL.createObjectURL(res.data);
   window.open(url, "_blank");
 }
@@ -260,7 +270,7 @@ export async function getPrinters() {
   return data; // { supported: bool, printers: [{name, default}] }
 }
 
-export async function printOverlaySilent(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", printerName = "", withBackground = false, withForm = false } = {}) {
+export async function printOverlaySilent(records, { layout, dx_mm = 0, dy_mm = 0, pageSize = "card", printerName = "", withBackground = false, withForm = false, rotate = 0, a4Position = "top-left", mode = "overlay", orientation = "portrait", perSheet = 0 } = {}) {
   const { data } = await api.post("/overlay/print-silent", {
     records,
     layout,
@@ -270,6 +280,11 @@ export async function printOverlaySilent(records, { layout, dx_mm = 0, dy_mm = 0
     printer_name: printerName,
     with_background: withBackground,
     with_form: withForm,
+    rotate,
+    a4_position: a4Position,
+    mode,
+    orientation,
+    per_sheet: perSheet,
   });
   return data; // { printed, printer, pages }
 }
