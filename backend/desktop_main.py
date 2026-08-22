@@ -226,69 +226,60 @@ def _run():
         stop_mongo()
         return
 
-    # Native desktop window (Edge WebView2). No browser, no console tab.
-    # Native desktop window (Edge WebView2). If the WebView2 runtime is missing
-    # or the backend fails to initialise, fall back to the default browser so the
-    # app always opens instead of hanging as an invisible background process.
+    # App window via Microsoft Edge / Chrome in "--app" mode: a clean separate
+    # window (no tabs, no address bar) that looks like a native program. This is
+    # far more reliable than bundling pywebview/pythonnet/WebView2.
     _open_ui()
 
 
-def _ensure_webview2():
-    """Best-effort: if WebView2 runtime seems absent, run the bundled bootstrapper."""
-    try:
-        boot = app_root() / "MicrosoftEdgeWebview2Setup.exe"
-        if boot.exists():
-            print("[info] ensuring WebView2 runtime ...")
-            subprocess.run([str(boot), "/silent", "/install"], timeout=180,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except Exception as e:
-        print("[warn] WebView2 bootstrapper failed:", e)
+def _find_chromium() -> str:
+    import shutil
+    cands = [
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for c in cands:
+        if c and Path(c).exists():
+            return c
+    return shutil.which("msedge") or shutil.which("chrome") or ""
 
 
 def _open_ui():
-    try:
-        import webview
-        window = webview.create_window(
-            "Banetskaya.by",
-            f"http://{HOST}:{PORT}",
-            width=1360,
-            height=900,
-            min_size=(1024, 680),
-            confirm_close=False,
-        )
-        window.events.closed += _on_window_closed
-        webview.start()  # blocks until the window is closed
-        stop_mongo()
+    url = f"http://{HOST}:{PORT}"
+    browser = _find_chromium()
+    profile = str(app_data() / "browser")
+    if browser:
+        print("[info] opening app window via", browser)
+        try:
+            proc = subprocess.Popen([
+                browser,
+                f"--app={url}",
+                f"--user-data-dir={profile}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--window-size=1360,900",
+            ])
+            proc.wait()  # returns when the app window is closed
+        finally:
+            stop_mongo()
         return
-    except Exception as e:
-        print("[warn] native window failed, trying WebView2 install then browser:", e)
 
-    # Try to install the WebView2 runtime, then retry the native window once.
-    _ensure_webview2()
-    try:
-        import importlib, webview
-        importlib.reload(webview)
-        window = webview.create_window("Banetskaya.by", f"http://{HOST}:{PORT}",
-                                       width=1360, height=900, min_size=(1024, 680))
-        window.events.closed += _on_window_closed
-        webview.start()
-        stop_mongo()
-        return
-    except Exception as e:
-        print("[warn] native window still unavailable, falling back to browser:", e)
-
-    # Last resort: open the default browser and keep the local server running.
+    # Fallback: no Chromium browser found — open the default browser (a tab) and
+    # keep the local server alive so the app is usable regardless.
+    print("[warn] no Edge/Chrome found — opening default browser")
     try:
         import webbrowser
-        webbrowser.open(f"http://{HOST}:{PORT}")
+        webbrowser.open(url)
         try:
             import ctypes
             ctypes.windll.user32.MessageBoxW(
                 0,
-                "Приложение открыто в браузере.\n\nЧтобы работало отдельное окно, установите\n"
-                "Microsoft Edge WebView2 Runtime (можно из папки приложения — файл\n"
-                "MicrosoftEdgeWebview2Setup.exe) и запустите программу снова.\n\n"
-                f"Адрес приложения: http://{HOST}:{PORT}",
+                "Приложение открыто в браузере.\n\n"
+                f"Адрес приложения: {url}\n\n"
+                "Для окна как у программы установите Microsoft Edge и запустите снова.",
                 "Banetskaya.by", 0x40,
             )
         except Exception:

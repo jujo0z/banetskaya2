@@ -15,6 +15,4 @@ python-multipart==0.0.32
 lxml==6.1.1
 reportlab==5.0.0
 requests==2.34.2
-# Нативное окно приложения (Edge WebView2 на Windows) + его зависимости
-pywebview==5.3.2
-pythonnet==3.0.4
+pymupdf==1.28.2

@@ -41,7 +41,7 @@ Name: "{group}\Banetskaya.by"; Filename: "{app}\Banetskaya.exe"; IconFilename: "
 Name: "{commondesktop}\Banetskaya.by"; Filename: "{app}\Banetskaya.exe"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Run]
-; Установить компонент Microsoft Edge WebView2 (нужен для нативного окна приложения).
-; Bootstrapper скачивает рантайм онлайн; если уже установлен — быстро завершится.
-Filename: "{app}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Установка компонента WebView2..."; Flags: waituntilterminated
+; Microsoft Edge WebView2 не обязателен (окно открывается через установленный Edge в режиме --app),
+; но если bootstrapper есть — тихо доустановим рантайм, не блокируя установку.
+Filename: "{app}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Проверка компонента WebView2..."; Flags: nowait skipifdoesntexist
 Filename: "{app}\Banetskaya.exe"; Description: "Запустить Banetskaya.by"; Flags: nowait postinstall skipifsilent

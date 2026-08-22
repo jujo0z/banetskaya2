@@ -27,23 +27,10 @@ hiddenimports = [
     "uvicorn.lifespan", "uvicorn.lifespan.on",
     "docxtpl", "docx", "openpyxl", "jinja2", "pypdf",
     "lxml", "lxml._elementpath", "email_validator",
-    "requests",
-    # pywebview (native window) — Edge WebView2 backend on Windows
-    "webview", "webview.platforms.edgechromium", "webview.platforms.winforms",
-    "clr_loader", "pythonnet", "proxy_tools",
+    "requests", "pymupdf",
 ]
 
 binaries = []
-
-# Collect pywebview package data (bundled WebView2 .NET wrapper DLLs etc.)
-for _pkg in ("webview", "clr_loader", "pythonnet"):
-    try:
-        _d, _b, _h = collect_all(_pkg)
-        datas += _d
-        binaries += _b
-        hiddenimports += _h
-    except Exception:
-        pass
 
 block_cipher = None
 
