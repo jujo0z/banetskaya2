@@ -226,6 +226,13 @@ def _run():
         stop_mongo()
         return
 
+    # Keep the local server alive only while the app window is open: the UI pings
+    # /api/_ping; when pings stop (window closed) the watchdog exits the process.
+    try:
+        server.start_idle_watchdog(30)
+    except Exception as e:
+        print("[warn] watchdog not started:", e)
+
     # App window via Microsoft Edge / Chrome in "--app" mode: a clean separate
     # window (no tabs, no address bar) that looks like a native program. This is
     # far more reliable than bundling pywebview/pythonnet/WebView2.
@@ -253,8 +260,11 @@ def _open_ui():
     profile = str(app_data() / "browser")
     if browser:
         print("[info] opening app window via", browser)
+        # Fire-and-forget: Edge/Chrome may fork and the launcher process exits
+        # immediately, so we do NOT wait on it. The idle watchdog handles exit
+        # when the window is closed (pings stop).
         try:
-            proc = subprocess.Popen([
+            subprocess.Popen([
                 browser,
                 f"--app={url}",
                 f"--user-data-dir={profile}",
@@ -262,17 +272,15 @@ def _open_ui():
                 "--no-default-browser-check",
                 "--window-size=1360,900",
             ])
-            proc.wait()  # returns when the app window is closed
-        finally:
-            stop_mongo()
-        return
-
-    # Fallback: no Chromium browser found — open the default browser (a tab) and
-    # keep the local server alive so the app is usable regardless.
-    print("[warn] no Edge/Chrome found — opening default browser")
-    try:
-        import webbrowser
-        webbrowser.open(url)
+        except Exception as e:
+            print("[warn] failed to launch browser window:", e)
+    else:
+        print("[warn] no Edge/Chrome found — opening default browser")
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
         try:
             import ctypes
             ctypes.windll.user32.MessageBoxW(
@@ -284,8 +292,12 @@ def _open_ui():
             )
         except Exception:
             pass
+
+    # Keep the process (and the local server) alive. The watchdog will os._exit
+    # once the window is closed and keep-alive pings stop.
+    try:
         while True:
-            time.sleep(3600)
+            time.sleep(1)
     finally:
         stop_mongo()
 

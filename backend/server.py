@@ -998,6 +998,40 @@ except Exception:  # pragma: no cover
 # the process cleanly, letting the installer replace the files.
 _SHUTDOWN_HOOK = None
 
+# Keep-alive: the desktop UI (Edge --app window) pings periodically; when it
+# stops (window closed) the idle watchdog shuts the local server down. This is
+# ONLY armed by the desktop entrypoint — the web/VPS server never auto-exits.
+import time as _time
+_LAST_PING = _time.time()
+
+
+@api_router.get("/_ping")
+async def keepalive_ping():
+    global _LAST_PING
+    _LAST_PING = _time.time()
+    return {"ok": True}
+
+
+def start_idle_watchdog(timeout: float = 30.0):
+    """Desktop-only: exit the process if no keep-alive ping arrives within
+    `timeout` seconds (i.e. the app window was closed)."""
+    global _LAST_PING
+    _LAST_PING = _time.time()
+    import threading
+
+    def _loop():
+        while True:
+            _time.sleep(5)
+            if _time.time() - _LAST_PING > timeout:
+                try:
+                    if _SHUTDOWN_HOOK:
+                        _SHUTDOWN_HOOK()
+                except Exception:
+                    pass
+                os._exit(0)
+
+    threading.Thread(target=_loop, daemon=True).start()
+
 
 def set_shutdown_hook(fn):
     global _SHUTDOWN_HOOK

@@ -10,7 +10,21 @@ import Settings from "@/pages/Settings";
 import BlankOverlay from "@/pages/BlankOverlay";
 import FullPrint from "@/pages/FullPrint";
 import Landing from "@/pages/Landing";
-import { IS_WEB } from "@/lib/env";
+import { IS_WEB, IS_DESKTOP } from "@/lib/env";
+
+// Desktop build only: ping the local backend so it stays alive while the app
+// window is open. When the window closes, pings stop and the bundled server
+// shuts itself down (see start_idle_watchdog in the backend).
+function useDesktopKeepAlive() {
+  useEffect(() => {
+    if (!IS_DESKTOP) return;
+    const base = process.env.REACT_APP_BACKEND_URL || "";
+    const ping = () => fetch(`${base}/api/_ping`).catch(() => {});
+    ping();
+    const id = setInterval(ping, 5000);
+    return () => clearInterval(id);
+  }, []);
+}
 
 // In the WEB version, first-time visitors at "/" are sent to the "/welcome"
 // start page (installer on top, "start working" below). The desktop build
@@ -34,6 +48,7 @@ function EntryGate() {
 }
 
 function App() {
+  useDesktopKeepAlive();
   return (
     <BrowserRouter>
       <EntryGate />
