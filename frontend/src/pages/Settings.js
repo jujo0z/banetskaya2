@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check, MonitorDown, Save, Building2 } from "lucide-react";
+import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check, MonitorDown, Save, Building2, RefreshCw, DownloadCloud } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS } from "@/lib/fields";
 import {
   downloadSampleTemplate, seedDemo, clearDemo, getPresets, deletePreset,
   listTemplates, uploadTemplate, activateTemplate, deleteTemplateById,
   getAppConfig, saveAppConfig, getRegProfile, saveRegProfile,
+  getAppVersion, checkUpdates, applyUpdate,
 } from "@/lib/apiClient";
+import { IS_DESKTOP } from "@/lib/env";
 
 export default function Settings() {
   const [downloading, setDownloading] = useState(false);
@@ -21,6 +23,10 @@ export default function Settings() {
   const [savingWin, setSavingWin] = useState(false);
   const [profile, setProfile] = useState({ reg_organ: "", chief: "", city: "" });
   const [savingProfile, setSavingProfile] = useState(false);
+  const [appVer, setAppVer] = useState(null);
+  const [updInfo, setUpdInfo] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     getPresets().then(setPresets).catch(() => {});
@@ -29,7 +35,36 @@ export default function Settings() {
     getRegProfile().then((p) => setProfile({
       reg_organ: p?.reg_organ || "", chief: p?.chief || "", city: p?.city || "",
     })).catch(() => {});
+    if (IS_DESKTOP) {
+      getAppVersion().then(setAppVer).catch(() => {});
+    }
   }, []);
+
+  async function handleCheckUpdates() {
+    setChecking(true);
+    try {
+      const info = await checkUpdates();
+      setUpdInfo(info);
+      if (info?.error) toast.error(info.error);
+      else if (info?.update_available) toast.success(`Доступно обновление: ${info.latest_version || ""}`);
+      else toast.success("У вас установлена последняя версия");
+    } catch {
+      toast.error("Не удалось проверить обновления");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function handleApplyUpdate() {
+    setApplying(true);
+    try {
+      await applyUpdate(updInfo?.download_url || "");
+      toast.success("Загружаю обновление и запускаю установщик — приложение закроется");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось обновить приложение");
+      setApplying(false);
+    }
+  }
 
   async function handleSaveProfile() {
     setSavingProfile(true);
@@ -152,6 +187,62 @@ export default function Settings() {
           Шаблон договора, поля автозаполнения и образец Excel.
         </p>
       </div>
+
+      {/* App updates (desktop app only) */}
+      {IS_DESKTOP && (
+        <div className="bg-card border border-border p-6" data-testid="settings-updates-card">
+          <div className="flex items-start gap-4">
+            <div className="h-10 w-10 bg-[#38bdf8]/10 flex items-center justify-center shrink-0 rounded-md">
+              <DownloadCloud className="h-5 w-5 text-[#38bdf8]" strokeWidth={2} />
+            </div>
+            <div className="flex-1">
+              <h2 className="font-heading text-xl font-bold tracking-tight">Обновления приложения</h2>
+              <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+                Текущая версия: <b>{appVer?.version || "—"}</b>
+                {appVer?.git_sha ? <span className="text-muted-foreground"> · {appVer.git_sha}</span> : null}.
+                Проверьте наличие новой версии в GitHub Releases и обновитесь в один клик — приложение
+                скачает установщик и перезапустится.
+              </p>
+
+              {updInfo?.update_available && (
+                <div className="mt-3 rounded-md border border-[#38bdf8]/40 bg-[#38bdf8]/5 p-3 text-sm">
+                  Доступна версия <b>{updInfo.latest_version}</b>
+                  {updInfo.published_at ? ` от ${new Date(updInfo.published_at).toLocaleString("ru-RU")}` : ""}.
+                  {updInfo.notes ? (
+                    <div className="mt-1 text-xs text-muted-foreground whitespace-pre-wrap max-h-28 overflow-auto">
+                      {updInfo.notes}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+              {updInfo && !updInfo.update_available && !updInfo.error && (
+                <div className="mt-3 text-sm text-emerald-400">Установлена последняя версия.</div>
+              )}
+
+              <div className="flex flex-wrap gap-2 mt-4">
+                <Button
+                  onClick={handleCheckUpdates}
+                  disabled={checking || applying}
+                  variant="outline"
+                  data-testid="btn-check-updates"
+                >
+                  {checking ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                  Проверить обновления
+                </Button>
+                <Button
+                  onClick={handleApplyUpdate}
+                  disabled={applying || !updInfo?.update_available}
+                  className="bg-[#38bdf8] hover:bg-[#0ea5e9] text-black"
+                  data-testid="btn-apply-update"
+                >
+                  {applying ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <DownloadCloud className="h-4 w-4 mr-2" />}
+                  Обновить приложение
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reg-authority profile */}
       <div className="bg-card border border-border p-6" data-testid="settings-regprofile-card">

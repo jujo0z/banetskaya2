@@ -293,6 +293,22 @@ export async function saveRegProfile(profile) {
   return data;
 }
 
+// ---------- Desktop version & auto-update ----------
+export async function getAppVersion() {
+  const { data } = await api.get("/app-version");
+  return data; // { version, build_time, git_sha, repo, is_desktop }
+}
+
+export async function checkUpdates() {
+  const { data } = await api.get("/updates/check");
+  return data; // { supported, current_version, update_available, latest_version, download_url, notes, ... }
+}
+
+export async function applyUpdate(downloadUrl = "") {
+  const { data } = await api.post("/updates/apply", { download_url: downloadUrl });
+  return data; // { started, installer }
+}
+
 // Map a saved contract (договор найма) to the СООБЩЕНИЕ overlay field keys.
 // Only the reliably-overlapping text fields are mapped; split date fields
 // (day/month/year) are left for the operator to fill.

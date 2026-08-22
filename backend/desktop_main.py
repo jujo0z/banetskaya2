@@ -1,8 +1,10 @@
 """Desktop entrypoint for the packaged Windows build (PyInstaller).
 
 Starts a bundled portable MongoDB, auto-detects LibreOffice, sets local env,
-launches the FastAPI app (which also serves the built React frontend) and opens
-the browser. NOT used in the cloud dev environment.
+launches the FastAPI app (which also serves the built React frontend) in a
+background thread, then opens a NATIVE desktop window (pywebview / Edge WebView2)
+pointing at the local server. NO external browser is opened. NOT used in the
+cloud dev environment.
 """
 import os
 import sys
@@ -10,17 +12,25 @@ import time
 import socket
 import threading
 import subprocess
-import webbrowser
 from pathlib import Path
 
 HOST = "127.0.0.1"
 PORT = 8001
 MONGO_PORT = 27017
 
+_MONGO_PROC = None
+
 
 def base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    return Path(__file__).parent
+
+
+def app_root() -> Path:
+    """Folder that actually contains the installed app (next to the .exe)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
     return Path(__file__).parent
 
 
@@ -43,8 +53,11 @@ def wait_port(host: str, port: int, timeout: float = 40.0) -> bool:
 
 
 def start_mongo(base: Path, data_dir: Path, log_dir: Path):
-    mongod = base / "mongodb" / "mongod.exe"
-    if not mongod.exists():
+    global _MONGO_PROC
+    # mongod may be bundled either inside the onefile temp (base) or next to the exe.
+    candidates = [base / "mongodb" / "mongod.exe", app_root() / "mongodb" / "mongod.exe"]
+    mongod = next((c for c in candidates if c.exists()), None)
+    if not mongod:
         print("[warn] mongod.exe not bundled — expecting an external MongoDB on 27017")
         return None
     logfile = log_dir / "mongod.log"
@@ -59,6 +72,7 @@ def start_mongo(base: Path, data_dir: Path, log_dir: Path):
         ],
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    _MONGO_PROC = proc
     if not wait_port("127.0.0.1", MONGO_PORT, 40):
         print("[error] MongoDB did not start in time — see", logfile)
     else:
@@ -66,7 +80,25 @@ def start_mongo(base: Path, data_dir: Path, log_dir: Path):
     return proc
 
 
+def stop_mongo():
+    global _MONGO_PROC
+    if _MONGO_PROC is not None:
+        try:
+            _MONGO_PROC.terminate()
+            try:
+                _MONGO_PROC.wait(timeout=8)
+            except Exception:
+                _MONGO_PROC.kill()
+        except Exception:
+            pass
+        _MONGO_PROC = None
+
+
 def detect_soffice() -> str:
+    # Prefer the LibreOffice tree bundled next to the app.
+    bundled = app_root() / "libreoffice" / "program" / "soffice.exe"
+    if bundled.exists():
+        return str(bundled)
     for c in (
         r"C:\Program Files\LibreOffice\program\soffice.exe",
         r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
@@ -76,12 +108,17 @@ def detect_soffice() -> str:
     return os.environ.get("SOFFICE_BIN", "soffice")
 
 
-def open_browser_when_ready():
-    if wait_port(HOST, PORT, 40):
-        try:
-            webbrowser.open(f"http://{HOST}:{PORT}")
-        except Exception:
-            pass
+def detect_sumatra() -> str:
+    bundled = app_root() / "sumatra" / "SumatraPDF.exe"
+    if bundled.exists():
+        return str(bundled)
+    return os.environ.get("SUMATRA_BIN", "SumatraPDF.exe")
+
+
+def _on_window_closed():
+    """User closed the native window -> stop everything."""
+    stop_mongo()
+    os._exit(0)
 
 
 def main():
@@ -92,23 +129,41 @@ def main():
     os.environ.setdefault("DB_NAME", "banetskaya_db")
     os.environ.setdefault("CORS_ORIGINS", "*")
     os.environ["SOFFICE_BIN"] = detect_soffice()
+    os.environ["SUMATRA_BIN"] = detect_sumatra()
 
-    mongo_proc = start_mongo(base, data / "data", data / "logs")
+    start_mongo(base, data / "data", data / "logs")
 
     import uvicorn
     import server  # reads env configured above at import time
 
-    threading.Thread(target=open_browser_when_ready, daemon=True).start()
+    # Let the in-app updater stop MongoDB and quit cleanly before the installer runs.
+    server.set_shutdown_hook(lambda: (stop_mongo()))
 
-    print(f"[info] Banetskaya.by running at http://{HOST}:{PORT}  (закройте это окно чтобы остановить)")
+    def run_server():
+        uvicorn.run(server.app, host=HOST, port=PORT, log_level="warning")
+
+    threading.Thread(target=run_server, daemon=True).start()
+
+    if not wait_port(HOST, PORT, 60):
+        print("[error] backend did not start in time")
+        stop_mongo()
+        return
+
+    # Native desktop window (Edge WebView2). No browser, no console tab.
+    import webview
+    window = webview.create_window(
+        "Banetskaya.by",
+        f"http://{HOST}:{PORT}",
+        width=1360,
+        height=900,
+        min_size=(1024, 680),
+        confirm_close=False,
+    )
+    window.events.closed += _on_window_closed
     try:
-        uvicorn.run(server.app, host=HOST, port=PORT, log_level="info")
+        webview.start()  # blocks until the window is closed
     finally:
-        if mongo_proc is not None:
-            try:
-                mongo_proc.terminate()
-            except Exception:
-                pass
+        stop_mongo()
 
 
 if __name__ == "__main__":

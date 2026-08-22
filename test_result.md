@@ -108,6 +108,23 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Десктоп: версия и автообновление GET /api/app-version, GET /api/updates/check, POST /api/updates/apply"
+    implemented: true
+    working: true
+    file: "server.py, _buildinfo.py, desktop_main.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Переход десктопа на нативное окно (pywebview) + онлайн-обновление. Backend в облаке (не frozen, REPO пуст) — проверить контракты/деградацию: (1) GET /api/app-version -> 200 JSON с ключами version, build_time, git_sha, repo, is_desktop (в облаке is_desktop=false, version='dev'); (2) GET /api/updates/check -> 200 JSON {supported:false, current_version:'dev', update_available:false, error присутствует про репозиторий}; (3) POST /api/updates/apply {} -> 400 (доступно только в установленном приложении). РЕГРЕССИЯ важного функционала: (4) POST /api/upload с .xlsx (если есть sample) или пропусти; (5) GET /api/contracts -> 200 список; (6) POST /api/overlay/generate {records:[{fio:'X'}],page_size:'card',with_form:true} -> 200 PDF 147x103; (7) GET /api/overlay/form-background -> 200 png; (8) GET/POST /api/reg-profile -> 200; (9) GET /api/stats -> 200."
+        - working: true
+          agent: "testing"
+          comment: "✅ 10/10 (100%). app-version -> JSON (is_desktop=false, version=dev, repo=''); updates/check -> supported=false + error про репозиторий; updates/apply -> 400. Регрессия: contracts, overlay/generate (147×103 ровно), form-background(png), reg-profile GET/POST, stats, sample-template — всё 200. Ничего не сломано."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 10 тестов прошли успешно (100% success rate). НОВЫЕ ЭНДПОИНТЫ (3/3 теста): (1) GET /api/app-version → 200 JSON с ВСЕМИ требуемыми ключами (version, build_time, git_sha, repo, is_desktop), в облаке is_desktop=false, version='dev', repo='' — корректно; (2) GET /api/updates/check → 200 JSON с supported=false, current_version='dev', update_available=false, поле error присутствует: 'Репозиторий обновлений не задан в сборке.' — корректно; (3) POST /api/updates/apply с телом {} → 400 (Bad Request), detail='Обновление доступно только в установленном приложении.' — корректно. РЕГРЕССИЯ (7/7 тестов): ✅ GET /api/contracts → 200, возвращает список (массив); ✅ POST /api/overlay/generate {records:[{fio:'Тестовый Гражданин'}], page_size:'card', with_form:true} → 200 application/pdf, валидный PDF начинается с %PDF, размер страницы РОВНО 416.69×291.97 pt (147×103 мм, проверено через pymupdf); ✅ GET /api/overlay/form-background → 200 image/png, валидный PNG начинается с \\x89PNG, размер 56860 байт; ✅ GET /api/reg-profile → 200 JSON; ✅ POST /api/reg-profile {reg_organ:'Тестовый Орган Регистрации', chief:'Тестов Т.Т.', city:'г. Тест'} → 200 {saved:true}; ✅ GET /api/stats → 200 JSON с всеми ожидаемыми ключами (total, drafts, this_month, datasets, recent); ✅ GET /api/sample-template → 200, Content-Type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (Excel файл). Все backend API полностью функциональны. Новые эндпоинты версии/обновления работают корректно в облачном окружении (не frozen, REPO пуст), регрессии не обнаружено."
   - task: "Профиль органа регистрации: GET/POST /api/reg-profile + пакетная генерация бланков (мультистраничный PDF 147×103)"
     implemented: true
     working: true
@@ -832,3 +849,47 @@ agent_communication:
         7. GET /api/stats (1/1 тест): → 200 JSON с ключами total, drafts, this_month, datasets, recent ✅
         
         ВАЖНО: Все backend API полностью функциональны. Профиль органа регистрации работает идемпотентно (сохранение → чтение → очистка). Пакетная генерация создаёт мультистраничный PDF с точными размерами страниц 147×103 мм для каждой записи. Регрессии не обнаружено. Готово к финализации.
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend (FastAPI, /api). Новые эндпоинты версии/обновления + регрессия ключевого функционала. В облаке приложение НЕ frozen и REPO пуст — это норм.
+        
+        НОВОЕ:
+        1. GET /api/app-version → 200 JSON с ключами version, build_time, git_sha, repo, is_desktop. В облаке is_desktop=false, version="dev", repo="".
+        2. GET /api/updates/check → 200 JSON: supported=false, current_version="dev", update_available=false, присутствует поле error (репозиторий не задан).
+        3. POST /api/updates/apply с телом {} → 400 (detail про «только в установленном приложении»).
+        
+        РЕГРЕССИЯ (важно — ничего не должно сломаться):
+        4. GET /api/contracts → 200, список (массив).
+        5. POST /api/overlay/generate {"records":[{"fio":"X"}],"page_size":"card","with_form":true} → 200 application/pdf, страница 147×103 мм (416.69×291.97 pt, проверь pymupdf).
+        6. GET /api/overlay/form-background → 200 image/png.
+        7. GET /api/reg-profile → 200 JSON; POST /api/reg-profile {"reg_organ":"A","chief":"B","city":"C"} → 200 {saved:true}.
+        8. GET /api/stats → 200 JSON.
+        9. GET /api/sample-template → 200 (xlsx образец) если эндпоинт есть.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 10 тестов прошли (100% success rate).
+        
+        НОВЫЕ ЭНДПОИНТЫ ВЕРСИИ/ОБНОВЛЕНИЯ (3/3 теста):
+        
+        1. GET /api/app-version (1/1 тест): → 200 JSON с ВСЕМИ требуемыми ключами (version, build_time, git_sha, repo, is_desktop) ✅. В облаке: is_desktop=false, version='dev', repo='' — корректно ✅
+        
+        2. GET /api/updates/check (1/1 тест): → 200 JSON с supported=false, current_version='dev', update_available=false ✅. Поле error присутствует: 'Репозиторий обновлений не задан в сборке.' — корректно (репозиторий не задан в облачной сборке) ✅
+        
+        3. POST /api/updates/apply (1/1 тест): с телом {} → 400 (Bad Request), Content-Type application/json, detail='Обновление доступно только в установленном приложении.' — корректная деградация на облачной версии ✅
+        
+        РЕГРЕССИЯ КЛЮЧЕВОГО ФУНКЦИОНАЛА (7/7 тестов):
+        
+        4. GET /api/contracts (1/1 тест): → 200, возвращает список (массив) ✅
+        
+        5. POST /api/overlay/generate (1/1 тест): с телом {records:[{fio:'Тестовый Гражданин'}], page_size:'card', with_form:true} → 200, Content-Type application/pdf ✅, валидный PDF начинается с %PDF ✅, размер страницы РОВНО 416.69×291.97 pt (147×103 мм, проверено через pymupdf doc[0].rect) ✅
+        
+        6. GET /api/overlay/form-background (1/1 тест): → 200, Content-Type image/png ✅, валидный PNG начинается с \x89PNG, размер 56860 байт ✅
+        
+        7. GET /api/reg-profile (1/1 тест): → 200 JSON ✅; POST /api/reg-profile (1/1 тест): с телом {reg_organ:'Тестовый Орган Регистрации', chief:'Тестов Т.Т.', city:'г. Тест'} → 200 {saved:true, reg_organ:'Тестовый Орган Регистрации', chief:'Тестов Т.Т.', city:'г. Тест'} ✅
+        
+        8. GET /api/stats (1/1 тест): → 200 JSON с всеми ожидаемыми ключами (total, drafts, this_month, datasets, recent) ✅
+        
+        9. GET /api/sample-template (1/1 тест): → 200, Content-Type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (Excel файл) ✅
+        
+        ВАЖНО: Все backend API полностью функциональны. Новые эндпоинты версии/обновления работают корректно в облачном окружении (не frozen, REPO пуст — это ожидаемое поведение). Регрессии не обнаружено. Готово к финализации.
+

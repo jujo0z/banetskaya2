@@ -2,6 +2,7 @@
 # PyInstaller spec for the Banetskaya.by desktop build.
 # Run from the repository root on Windows:  pyinstaller windows-package/installer/banetskaya.spec --noconfirm
 import os
+from PyInstaller.utils.hooks import collect_all
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 BACKEND = os.path.join(ROOT, "backend")
@@ -17,7 +18,7 @@ if os.path.isdir(_mongo):
     datas.append((_mongo, "mongodb"))
 
 hiddenimports = [
-    "server", "document_service",
+    "server", "document_service", "_buildinfo",
     "motor", "motor.motor_asyncio", "pymongo", "bson", "dns",
     "uvicorn", "uvicorn.logging",
     "uvicorn.loops", "uvicorn.loops.auto",
@@ -26,14 +27,30 @@ hiddenimports = [
     "uvicorn.lifespan", "uvicorn.lifespan.on",
     "docxtpl", "docx", "openpyxl", "jinja2", "pypdf",
     "lxml", "lxml._elementpath", "email_validator",
+    "requests",
+    # pywebview (native window) — Edge WebView2 backend on Windows
+    "webview", "webview.platforms.edgechromium", "webview.platforms.winforms",
+    "clr_loader", "pythonnet", "proxy_tools",
 ]
+
+binaries = []
+
+# Collect pywebview package data (bundled WebView2 .NET wrapper DLLs etc.)
+for _pkg in ("webview", "clr_loader", "pythonnet"):
+    try:
+        _d, _b, _h = collect_all(_pkg)
+        datas += _d
+        binaries += _b
+        hiddenimports += _h
+    except Exception:
+        pass
 
 block_cipher = None
 
 a = Analysis(
     [os.path.join(BACKEND, "desktop_main.py")],
     pathex=[BACKEND],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -55,7 +72,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=False,
     icon=ICON,
 )
 coll = COLLECT(

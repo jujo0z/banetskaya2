@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-Backend testing for reg-profile endpoints and batch blank generation.
+Backend testing for desktop version/updates endpoints + regression tests.
 Tests:
-1. POST /api/reg-profile - save registration organ profile
-2. GET /api/reg-profile - retrieve profile (idempotency)
-3. POST /api/reg-profile with empty body - clear profile
-4. POST /api/overlay/generate with multiple records - batch PDF generation (3 pages, each 147×103 mm)
-5-7. Regression tests (form-background, print-silent, stats)
+NEW ENDPOINTS:
+1. GET /api/app-version - version info (cloud: is_desktop=false, version="dev", repo="")
+2. GET /api/updates/check - update check (cloud: supported=false, error present)
+3. POST /api/updates/apply - apply update (cloud: 400 - only in installed app)
+
+REGRESSION (critical functionality):
+4. GET /api/contracts - list contracts
+5. POST /api/overlay/generate - batch blank generation (147×103 mm)
+6. GET /api/overlay/form-background - form background PNG
+7. GET/POST /api/reg-profile - registration organ profile
+8. GET /api/stats - statistics
+9. GET /api/sample-template - Excel sample (if exists)
 """
 import io
 import sys
@@ -24,488 +31,441 @@ CARD_WIDTH_PT = 416.69
 CARD_HEIGHT_PT = 291.97
 TOLERANCE_PT = 1.5
 
-# A4 size in points
-A4_WIDTH_PT = 595.0
-A4_HEIGHT_PT = 842.0
+# Test counters
+tests_passed = 0
+tests_failed = 0
+test_results = []
 
-def test_overlay_generate_card_without_form():
-    """Test 1: POST /api/overlay/generate with page_size='card', with_form=false
-    Should return 200, Content-Type application/pdf, valid PDF, page size ~416.69 × 291.97 pt"""
-    print("\n=== TEST 1: POST /api/overlay/generate (page_size='card', with_form=false) ===")
-    
-    payload = {
-        "records": [{"fio": "Тест Тестович"}],
-        "page_size": "card",
-        "with_form": False
-    }
-    
-    response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/pdf" in response.headers.get('Content-Type', ''), "Expected Content-Type application/pdf"
-    
-    # Check PDF validity
-    pdf_bytes = response.content
-    assert pdf_bytes.startswith(b'%PDF'), "PDF should start with %PDF signature"
-    print(f"✓ Valid PDF signature: {pdf_bytes[:8]}")
-    
-    # Check page size using pymupdf
-    doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
-    page = doc[0]
-    rect = page.rect
-    width_pt = rect.width
-    height_pt = rect.height
-    doc.close()
-    
-    print(f"Page size: {width_pt:.2f} × {height_pt:.2f} pt")
-    print(f"Expected: {CARD_WIDTH_PT:.2f} × {CARD_HEIGHT_PT:.2f} pt (tolerance ±{TOLERANCE_PT} pt)")
-    
-    width_diff = abs(width_pt - CARD_WIDTH_PT)
-    height_diff = abs(height_pt - CARD_HEIGHT_PT)
-    
-    assert width_diff <= TOLERANCE_PT, f"Width {width_pt:.2f} pt differs from expected {CARD_WIDTH_PT:.2f} pt by {width_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
-    assert height_diff <= TOLERANCE_PT, f"Height {height_pt:.2f} pt differs from expected {CARD_HEIGHT_PT:.2f} pt by {height_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
-    
-    print(f"✓ Page size is correct: {width_pt:.2f} × {height_pt:.2f} pt (147×103 mm)")
-    print("✅ TEST 1 PASSED\n")
-    return True
+def log_result(test_name, passed, message=""):
+    global tests_passed, tests_failed
+    if passed:
+        tests_passed += 1
+        status = "✅ PASS"
+    else:
+        tests_failed += 1
+        status = "❌ FAIL"
+    result = f"{status}: {test_name}"
+    if message:
+        result += f" - {message}"
+    print(result)
+    test_results.append(result)
 
+# ========== NEW ENDPOINTS ==========
 
-def test_overlay_generate_card_with_form():
-    """Test 2: POST /api/overlay/generate with page_size='card', with_form=true
-    Should return 200, page size ~416.69 × 291.97 pt (147×103 mm)"""
-    print("\n=== TEST 2: POST /api/overlay/generate (page_size='card', with_form=true) ===")
+def test_app_version():
+    """Test 1: GET /api/app-version
+    Expected in cloud: 200 JSON with keys version, build_time, git_sha, repo, is_desktop
+    is_desktop=false, version="dev", repo=""
+    """
+    print("\n=== TEST 1: GET /api/app-version ===")
     
-    payload = {
-        "records": [{"fio": "Тест"}],
-        "page_size": "card",
-        "with_form": True
-    }
-    
-    response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/pdf" in response.headers.get('Content-Type', ''), "Expected Content-Type application/pdf"
-    
-    # Check PDF validity
-    pdf_bytes = response.content
-    assert pdf_bytes.startswith(b'%PDF'), "PDF should start with %PDF signature"
-    print(f"✓ Valid PDF signature: {pdf_bytes[:8]}")
-    
-    # Check page size using pymupdf
-    doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
-    page = doc[0]
-    rect = page.rect
-    width_pt = rect.width
-    height_pt = rect.height
-    doc.close()
-    
-    print(f"Page size: {width_pt:.2f} × {height_pt:.2f} pt")
-    print(f"Expected: {CARD_WIDTH_PT:.2f} × {CARD_HEIGHT_PT:.2f} pt (tolerance ±{TOLERANCE_PT} pt)")
-    
-    width_diff = abs(width_pt - CARD_WIDTH_PT)
-    height_diff = abs(height_pt - CARD_HEIGHT_PT)
-    
-    assert width_diff <= TOLERANCE_PT, f"Width {width_pt:.2f} pt differs from expected {CARD_WIDTH_PT:.2f} pt by {width_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
-    assert height_diff <= TOLERANCE_PT, f"Height {height_pt:.2f} pt differs from expected {CARD_HEIGHT_PT:.2f} pt by {height_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
-    
-    print(f"✓ Page size is correct: {width_pt:.2f} × {height_pt:.2f} pt (147×103 mm)")
-    print("✅ TEST 2 PASSED\n")
-    return True
+    try:
+        response = requests.get(f"{BACKEND_URL}/app-version")
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 200:
+            log_result("GET /api/app-version", False, f"Expected 200, got {response.status_code}")
+            return
+        
+        data = response.json()
+        print(f"Response: {data}")
+        
+        # Check required keys
+        required_keys = ["version", "build_time", "git_sha", "repo", "is_desktop"]
+        missing_keys = [k for k in required_keys if k not in data]
+        if missing_keys:
+            log_result("GET /api/app-version", False, f"Missing keys: {missing_keys}")
+            return
+        
+        # Check cloud-specific values
+        if data.get("is_desktop") != False:
+            log_result("GET /api/app-version", False, f"Expected is_desktop=false, got {data.get('is_desktop')}")
+            return
+        
+        if data.get("version") != "dev":
+            log_result("GET /api/app-version", False, f"Expected version='dev', got {data.get('version')}")
+            return
+        
+        if data.get("repo") != "":
+            log_result("GET /api/app-version", False, f"Expected repo='', got {data.get('repo')}")
+            return
+        
+        log_result("GET /api/app-version", True, f"All keys present, is_desktop=false, version='dev', repo=''")
+        
+    except Exception as e:
+        log_result("GET /api/app-version", False, f"Exception: {e}")
 
+def test_updates_check():
+    """Test 2: GET /api/updates/check
+    Expected in cloud: 200 JSON with supported=false, current_version="dev", 
+    update_available=false, error field present (repo not set)
+    """
+    print("\n=== TEST 2: GET /api/updates/check ===")
+    
+    try:
+        response = requests.get(f"{BACKEND_URL}/updates/check")
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 200:
+            log_result("GET /api/updates/check", False, f"Expected 200, got {response.status_code}")
+            return
+        
+        data = response.json()
+        print(f"Response: {data}")
+        
+        # Check required fields
+        if data.get("supported") != False:
+            log_result("GET /api/updates/check", False, f"Expected supported=false, got {data.get('supported')}")
+            return
+        
+        if data.get("current_version") != "dev":
+            log_result("GET /api/updates/check", False, f"Expected current_version='dev', got {data.get('current_version')}")
+            return
+        
+        if data.get("update_available") != False:
+            log_result("GET /api/updates/check", False, f"Expected update_available=false, got {data.get('update_available')}")
+            return
+        
+        # Check error field is present (repo not set)
+        if "error" not in data:
+            log_result("GET /api/updates/check", False, "Expected 'error' field to be present (repo not set)")
+            return
+        
+        log_result("GET /api/updates/check", True, f"supported=false, current_version='dev', update_available=false, error present: '{data.get('error')}'")
+        
+    except Exception as e:
+        log_result("GET /api/updates/check", False, f"Exception: {e}")
 
-def test_overlay_generate_a4():
-    """Test 3: POST /api/overlay/generate with page_size='a4', with_form=true
-    Should return 200, page size ~595 × 842 pt (A4), NOT 147×103"""
-    print("\n=== TEST 3: POST /api/overlay/generate (page_size='a4') ===")
+def test_updates_apply():
+    """Test 3: POST /api/updates/apply
+    Expected in cloud: 400 (detail about "only in installed app")
+    """
+    print("\n=== TEST 3: POST /api/updates/apply ===")
     
-    payload = {
-        "records": [{"fio": "Тест"}],
-        "page_size": "a4",
-        "with_form": True
-    }
-    
-    response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/pdf" in response.headers.get('Content-Type', ''), "Expected Content-Type application/pdf"
-    
-    # Check PDF validity
-    pdf_bytes = response.content
-    assert pdf_bytes.startswith(b'%PDF'), "PDF should start with %PDF signature"
-    print(f"✓ Valid PDF signature: {pdf_bytes[:8]}")
-    
-    # Check page size using pymupdf
-    doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
-    page = doc[0]
-    rect = page.rect
-    width_pt = rect.width
-    height_pt = rect.height
-    doc.close()
-    
-    print(f"Page size: {width_pt:.2f} × {height_pt:.2f} pt")
-    print(f"Expected: ~{A4_WIDTH_PT:.2f} × {A4_HEIGHT_PT:.2f} pt (A4)")
-    
-    # A4 should be significantly different from card size
-    assert abs(width_pt - A4_WIDTH_PT) < 5, f"Width should be ~{A4_WIDTH_PT} pt (A4), got {width_pt:.2f} pt"
-    assert abs(height_pt - A4_HEIGHT_PT) < 5, f"Height should be ~{A4_HEIGHT_PT} pt (A4), got {height_pt:.2f} pt"
-    
-    # Verify it's NOT card size
-    assert abs(width_pt - CARD_WIDTH_PT) > 100, f"Page should NOT be card size (147×103 mm)"
-    
-    print(f"✓ Page size is A4: {width_pt:.2f} × {height_pt:.2f} pt, NOT 147×103 mm")
-    print("✅ TEST 3 PASSED\n")
-    return True
+    try:
+        response = requests.post(f"{BACKEND_URL}/updates/apply", json={})
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 400:
+            log_result("POST /api/updates/apply", False, f"Expected 400, got {response.status_code}")
+            return
+        
+        data = response.json()
+        print(f"Response: {data}")
+        
+        # Check detail message
+        detail = data.get("detail", "")
+        if "установленном" not in detail.lower() or "приложении" not in detail.lower():
+            log_result("POST /api/updates/apply", False, f"Expected detail about 'installed app', got: {detail}")
+            return
+        
+        log_result("POST /api/updates/apply", True, f"400 with correct detail: '{detail}'")
+        
+    except Exception as e:
+        log_result("POST /api/updates/apply", False, f"Exception: {e}")
 
+# ========== REGRESSION TESTS ==========
 
-def test_overlay_print_silent_degradation():
-    """Test 4: POST /api/overlay/print-silent with page_size='card'
-    Should return 400 (Bad Request) on Linux with message about Windows app"""
-    print("\n=== TEST 4: POST /api/overlay/print-silent (Linux degradation) ===")
+def test_contracts_list():
+    """Test 4: GET /api/contracts
+    Expected: 200, list (array)
+    """
+    print("\n=== TEST 4: GET /api/contracts (REGRESSION) ===")
     
-    payload = {
-        "records": [{"fio": "Тест"}],
-        "page_size": "card"
-    }
-    
-    response = requests.post(f"{BACKEND_URL}/overlay/print-silent", json=payload)
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 400, f"Expected 400 (Bad Request) on Linux, got {response.status_code}"
-    
-    # Check response is JSON
-    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
-    
-    # Check error message mentions Windows
-    response_json = response.json()
-    print(f"Response: {response_json}")
-    
-    detail = response_json.get('detail', '')
-    assert 'Windows' in detail or 'установленном' in detail, f"Error message should mention Windows app: {detail}"
-    
-    print(f"✓ Correct error message: {detail}")
-    print("✅ TEST 4 PASSED (graceful degradation on Linux)\n")
-    return True
+    try:
+        response = requests.get(f"{BACKEND_URL}/contracts")
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 200:
+            log_result("GET /api/contracts", False, f"Expected 200, got {response.status_code}")
+            return
+        
+        data = response.json()
+        
+        if not isinstance(data, list):
+            log_result("GET /api/contracts", False, f"Expected list/array, got {type(data)}")
+            return
+        
+        print(f"Response: list with {len(data)} items")
+        log_result("GET /api/contracts", True, f"Returns list with {len(data)} contracts")
+        
+    except Exception as e:
+        log_result("GET /api/contracts", False, f"Exception: {e}")
 
-
-def test_printers_endpoint():
-    """Test 5: GET /api/printers
-    Should return 200 JSON {"supported": false, "printers": []} on Linux"""
-    print("\n=== TEST 5: GET /api/printers (Linux) ===")
+def test_overlay_generate():
+    """Test 5: POST /api/overlay/generate
+    Expected: 200 application/pdf, page 147×103 mm (416.69×291.97 pt)
+    """
+    print("\n=== TEST 5: POST /api/overlay/generate (REGRESSION) ===")
     
-    response = requests.get(f"{BACKEND_URL}/printers")
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
-    
-    data = response.json()
-    print(f"Response: {data}")
-    
-    assert "supported" in data, "Response should contain 'supported' key"
-    assert "printers" in data, "Response should contain 'printers' key"
-    
-    assert data["supported"] == False, f"On Linux, supported should be false, got {data['supported']}"
-    assert isinstance(data["printers"], list), "printers should be a list"
-    assert len(data["printers"]) == 0, f"On Linux, printers list should be empty, got {len(data['printers'])} items"
-    
-    print("✓ Correct response: supported=false, printers=[]")
-    print("✅ TEST 5 PASSED\n")
-    return True
-
-
-def test_regression_form_background():
-    """Test 6 (REGRESSION): GET /api/overlay/form-background
-    Should return 200 image/png (valid PNG \\x89PNG)"""
-    print("\n=== TEST 6 (REGRESSION): GET /api/overlay/form-background ===")
-    
-    response = requests.get(f"{BACKEND_URL}/overlay/form-background")
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "image/png" in response.headers.get('Content-Type', ''), "Expected Content-Type image/png"
-    
-    # Check PNG signature
-    png_bytes = response.content
-    assert png_bytes.startswith(b'\x89PNG'), "PNG should start with \\x89PNG signature"
-    
-    print(f"✓ Valid PNG signature: {png_bytes[:8]}")
-    print(f"✓ PNG size: {len(png_bytes)} bytes")
-    print("✅ TEST 6 PASSED\n")
-    return True
-
-
-def test_regression_overlay_layout():
-    """Test 7 (REGRESSION): GET /api/overlay/layout
-    Should return 200 JSON"""
-    print("\n=== TEST 7 (REGRESSION): GET /api/overlay/layout ===")
-    
-    response = requests.get(f"{BACKEND_URL}/overlay/layout")
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
-    
-    data = response.json()
-    print(f"Response keys: {list(data.keys())}")
-    
-    assert "layout" in data, "Response should contain 'layout' key"
-    assert "dx_mm" in data, "Response should contain 'dx_mm' key"
-    assert "dy_mm" in data, "Response should contain 'dy_mm' key"
-    assert "page_mm" in data, "Response should contain 'page_mm' key"
-    
-    print(f"✓ Layout contains {len(data['layout'])} fields")
-    print(f"✓ page_mm: {data['page_mm']}")
-    print("✅ TEST 7 PASSED\n")
-    return True
-
-
-def test_regression_stats():
-    """Test 8 (REGRESSION): GET /api/stats
-    Should return 200 JSON"""
-    print("\n=== TEST 8 (REGRESSION): GET /api/stats ===")
-    
-    response = requests.get(f"{BACKEND_URL}/stats")
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
-    
-    data = response.json()
-    print(f"Response keys: {list(data.keys())}")
-    
-    assert "total" in data, "Response should contain 'total' key"
-    assert "drafts" in data, "Response should contain 'drafts' key"
-    assert "this_month" in data, "Response should contain 'this_month' key"
-    assert "datasets" in data, "Response should contain 'datasets' key"
-    assert "recent" in data, "Response should contain 'recent' key"
-    
-    print(f"✓ Stats: total={data['total']}, drafts={data['drafts']}, this_month={data['this_month']}")
-    print("✅ TEST 8 PASSED\n")
-    return True
-
-
-def test_reg_profile_post():
-    """Test 1: POST /api/reg-profile with data
-    Should return 200 JSON {"saved":true,"reg_organ":"ОГиМ Тестовый","chief":"Иванов И.И.","city":"г. Минск"}"""
-    print("\n=== TEST 1: POST /api/reg-profile (set profile) ===")
-    
-    payload = {
-        "reg_organ": "ОГиМ Тестовый",
-        "chief": "Иванов И.И.",
-        "city": "г. Минск"
-    }
-    
-    response = requests.post(f"{BACKEND_URL}/reg-profile", json=payload)
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
-    
-    data = response.json()
-    print(f"Response: {data}")
-    
-    assert data.get("saved") == True, f"Expected saved=true, got {data.get('saved')}"
-    assert data.get("reg_organ") == "ОГиМ Тестовый", f"Expected reg_organ='ОГиМ Тестовый', got {data.get('reg_organ')}"
-    assert data.get("chief") == "Иванов И.И.", f"Expected chief='Иванов И.И.', got {data.get('chief')}"
-    assert data.get("city") == "г. Минск", f"Expected city='г. Минск', got {data.get('city')}"
-    
-    print("✓ Profile saved successfully with correct values")
-    print("✅ TEST 1 PASSED\n")
-    return True
-
-
-def test_reg_profile_get():
-    """Test 2: GET /api/reg-profile
-    Should return 200 JSON with the same values saved in test 1 (idempotency)"""
-    print("\n=== TEST 2: GET /api/reg-profile (idempotency check) ===")
-    
-    response = requests.get(f"{BACKEND_URL}/reg-profile")
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
-    
-    data = response.json()
-    print(f"Response: {data}")
-    
-    assert data.get("reg_organ") == "ОГиМ Тестовый", f"Expected reg_organ='ОГиМ Тестовый', got {data.get('reg_organ')}"
-    assert data.get("chief") == "Иванов И.И.", f"Expected chief='Иванов И.И.', got {data.get('chief')}"
-    assert data.get("city") == "г. Минск", f"Expected city='г. Минск', got {data.get('city')}"
-    
-    print("✓ Profile retrieved successfully with correct values (idempotent)")
-    print("✅ TEST 2 PASSED\n")
-    return True
-
-
-def test_reg_profile_post_empty():
-    """Test 3: POST /api/reg-profile with empty body {}
-    Should return 200 JSON with empty string values"""
-    print("\n=== TEST 3: POST /api/reg-profile (empty body) ===")
-    
-    payload = {}
-    
-    response = requests.post(f"{BACKEND_URL}/reg-profile", json=payload)
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
-    
-    data = response.json()
-    print(f"Response: {data}")
-    
-    assert data.get("saved") == True, f"Expected saved=true, got {data.get('saved')}"
-    assert data.get("reg_organ") == "", f"Expected reg_organ='', got {data.get('reg_organ')}"
-    assert data.get("chief") == "", f"Expected chief='', got {data.get('chief')}"
-    assert data.get("city") == "", f"Expected city='', got {data.get('city')}"
-    
-    print("✓ Profile cleared successfully (empty strings)")
-    print("✅ TEST 3 PASSED\n")
-    return True
-
-
-def test_batch_generate_multipage():
-    """Test 4: POST /api/overlay/generate with 3 records (batch generation)
-    Should return 200, Content-Type application/pdf, EXACTLY 3 pages, each page ~416.69 × 291.97 pt (147×103 mm)"""
-    print("\n=== TEST 4: POST /api/overlay/generate (BATCH: 3 records, page_size='card', with_form=true) ===")
-    
-    payload = {
-        "records": [
-            {"fio": "Первый"},
-            {"fio": "Второй"},
-            {"fio": "Третий"}
-        ],
-        "page_size": "card",
-        "with_form": True
-    }
-    
-    response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
-    
-    print(f"Status Code: {response.status_code}")
-    print(f"Content-Type: {response.headers.get('Content-Type')}")
-    
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert "application/pdf" in response.headers.get('Content-Type', ''), "Expected Content-Type application/pdf"
-    
-    # Check PDF validity
-    pdf_bytes = response.content
-    assert pdf_bytes.startswith(b'%PDF'), "PDF should start with %PDF signature"
-    print(f"✓ Valid PDF signature: {pdf_bytes[:8]}")
-    
-    # Open PDF with pymupdf and check page count
-    doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
-    page_count = len(doc)
-    
-    print(f"Page count: {page_count}")
-    assert page_count == 3, f"Expected EXACTLY 3 pages, got {page_count}"
-    print(f"✓ PDF contains EXACTLY 3 pages")
-    
-    # Check each page size
-    for i in range(page_count):
-        page = doc[i]
+    try:
+        payload = {
+            "records": [{"fio": "Тестовый Гражданин"}],
+            "page_size": "card",
+            "with_form": True
+        }
+        
+        response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 200:
+            log_result("POST /api/overlay/generate", False, f"Expected 200, got {response.status_code}")
+            return
+        
+        if "application/pdf" not in response.headers.get('Content-Type', ''):
+            log_result("POST /api/overlay/generate", False, f"Expected Content-Type application/pdf")
+            return
+        
+        # Check PDF validity and page size
+        pdf_bytes = response.content
+        if not pdf_bytes.startswith(b'%PDF'):
+            log_result("POST /api/overlay/generate", False, "PDF does not start with %PDF")
+            return
+        
+        # Check page size with pymupdf
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        if len(doc) == 0:
+            log_result("POST /api/overlay/generate", False, "PDF has 0 pages")
+            doc.close()
+            return
+        
+        page = doc[0]
         rect = page.rect
         width_pt = rect.width
         height_pt = rect.height
         
-        print(f"  Page {i+1} size: {width_pt:.2f} × {height_pt:.2f} pt")
+        print(f"Page size: {width_pt:.2f} × {height_pt:.2f} pt")
         
-        width_diff = abs(width_pt - CARD_WIDTH_PT)
-        height_diff = abs(height_pt - CARD_HEIGHT_PT)
+        width_ok = abs(width_pt - CARD_WIDTH_PT) <= TOLERANCE_PT
+        height_ok = abs(height_pt - CARD_HEIGHT_PT) <= TOLERANCE_PT
         
-        assert width_diff <= TOLERANCE_PT, f"Page {i+1} width {width_pt:.2f} pt differs from expected {CARD_WIDTH_PT:.2f} pt by {width_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
-        assert height_diff <= TOLERANCE_PT, f"Page {i+1} height {height_pt:.2f} pt differs from expected {CARD_HEIGHT_PT:.2f} pt by {height_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
+        doc.close()
         
-        print(f"  ✓ Page {i+1} size is correct: {width_pt:.2f} × {height_pt:.2f} pt (147×103 mm)")
-    
-    doc.close()
-    
-    print(f"✓ All 3 pages have correct size: ~{CARD_WIDTH_PT:.2f} × {CARD_HEIGHT_PT:.2f} pt (147×103 mm, tolerance ±{TOLERANCE_PT} pt)")
-    print("✅ TEST 4 PASSED\n")
-    return True
+        if not (width_ok and height_ok):
+            log_result("POST /api/overlay/generate", False, 
+                      f"Page size {width_pt:.2f}×{height_pt:.2f} pt not within tolerance of {CARD_WIDTH_PT}×{CARD_HEIGHT_PT} pt")
+            return
+        
+        log_result("POST /api/overlay/generate", True, 
+                  f"Valid PDF, page size {width_pt:.2f}×{height_pt:.2f} pt (147×103 mm)")
+        
+    except Exception as e:
+        log_result("POST /api/overlay/generate", False, f"Exception: {e}")
 
+def test_overlay_form_background():
+    """Test 6: GET /api/overlay/form-background
+    Expected: 200 image/png
+    """
+    print("\n=== TEST 6: GET /api/overlay/form-background (REGRESSION) ===")
+    
+    try:
+        response = requests.get(f"{BACKEND_URL}/overlay/form-background")
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 200:
+            log_result("GET /api/overlay/form-background", False, f"Expected 200, got {response.status_code}")
+            return
+        
+        if "image/png" not in response.headers.get('Content-Type', ''):
+            log_result("GET /api/overlay/form-background", False, f"Expected Content-Type image/png")
+            return
+        
+        # Check PNG validity
+        png_bytes = response.content
+        if not png_bytes.startswith(b'\x89PNG'):
+            log_result("GET /api/overlay/form-background", False, "PNG does not start with \\x89PNG")
+            return
+        
+        print(f"PNG size: {len(png_bytes)} bytes")
+        log_result("GET /api/overlay/form-background", True, f"Valid PNG, {len(png_bytes)} bytes")
+        
+    except Exception as e:
+        log_result("GET /api/overlay/form-background", False, f"Exception: {e}")
+
+def test_reg_profile_get():
+    """Test 7a: GET /api/reg-profile
+    Expected: 200 JSON
+    """
+    print("\n=== TEST 7a: GET /api/reg-profile (REGRESSION) ===")
+    
+    try:
+        response = requests.get(f"{BACKEND_URL}/reg-profile")
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 200:
+            log_result("GET /api/reg-profile", False, f"Expected 200, got {response.status_code}")
+            return
+        
+        data = response.json()
+        print(f"Response: {data}")
+        
+        log_result("GET /api/reg-profile", True, f"Returns JSON: {data}")
+        
+    except Exception as e:
+        log_result("GET /api/reg-profile", False, f"Exception: {e}")
+
+def test_reg_profile_post():
+    """Test 7b: POST /api/reg-profile
+    Expected: 200 {saved:true}
+    """
+    print("\n=== TEST 7b: POST /api/reg-profile (REGRESSION) ===")
+    
+    try:
+        payload = {
+            "reg_organ": "Тестовый Орган Регистрации",
+            "chief": "Тестов Т.Т.",
+            "city": "г. Тест"
+        }
+        
+        response = requests.post(f"{BACKEND_URL}/reg-profile", json=payload)
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 200:
+            log_result("POST /api/reg-profile", False, f"Expected 200, got {response.status_code}")
+            return
+        
+        data = response.json()
+        print(f"Response: {data}")
+        
+        if data.get("saved") != True:
+            log_result("POST /api/reg-profile", False, f"Expected saved=true, got {data.get('saved')}")
+            return
+        
+        log_result("POST /api/reg-profile", True, f"saved=true, profile saved")
+        
+    except Exception as e:
+        log_result("POST /api/reg-profile", False, f"Exception: {e}")
+
+def test_stats():
+    """Test 8: GET /api/stats
+    Expected: 200 JSON
+    """
+    print("\n=== TEST 8: GET /api/stats (REGRESSION) ===")
+    
+    try:
+        response = requests.get(f"{BACKEND_URL}/stats")
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code != 200:
+            log_result("GET /api/stats", False, f"Expected 200, got {response.status_code}")
+            return
+        
+        data = response.json()
+        print(f"Response: {data}")
+        
+        # Check for expected keys
+        expected_keys = ["total", "drafts", "this_month", "datasets", "recent"]
+        missing_keys = [k for k in expected_keys if k not in data]
+        if missing_keys:
+            log_result("GET /api/stats", False, f"Missing keys: {missing_keys}")
+            return
+        
+        log_result("GET /api/stats", True, f"Returns JSON with all expected keys")
+        
+    except Exception as e:
+        log_result("GET /api/stats", False, f"Exception: {e}")
+
+def test_sample_template():
+    """Test 9: GET /api/sample-template
+    Expected: 200 (xlsx) if endpoint exists, or 404 if not
+    """
+    print("\n=== TEST 9: GET /api/sample-template (REGRESSION) ===")
+    
+    try:
+        response = requests.get(f"{BACKEND_URL}/sample-template")
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Content-Type: {response.headers.get('Content-Type')}")
+        
+        if response.status_code == 404:
+            log_result("GET /api/sample-template", True, "Endpoint not found (404) - acceptable")
+            return
+        
+        if response.status_code != 200:
+            log_result("GET /api/sample-template", False, f"Expected 200 or 404, got {response.status_code}")
+            return
+        
+        # Check if it's an Excel file
+        content_type = response.headers.get('Content-Type', '')
+        if "spreadsheet" in content_type or "excel" in content_type:
+            log_result("GET /api/sample-template", True, f"Returns Excel file, Content-Type: {content_type}")
+        else:
+            # Check if content starts with PK (ZIP signature for xlsx)
+            if response.content.startswith(b'PK'):
+                log_result("GET /api/sample-template", True, "Returns valid Excel file (starts with PK)")
+            else:
+                log_result("GET /api/sample-template", False, f"Unexpected Content-Type: {content_type}")
+        
+    except Exception as e:
+        log_result("GET /api/sample-template", False, f"Exception: {e}")
+
+# ========== MAIN ==========
 
 def main():
-    """Run all tests"""
     print("=" * 80)
-    print("BACKEND TESTING: Reg-Profile + Batch Blank Generation")
-    print("Testing new reg-profile endpoints and multi-page PDF generation")
+    print("BACKEND TESTING: Desktop Version/Updates + Regression")
     print("=" * 80)
     
-    tests = [
-        ("Test 1: POST /api/reg-profile (set profile)", test_reg_profile_post),
-        ("Test 2: GET /api/reg-profile (idempotency)", test_reg_profile_get),
-        ("Test 3: POST /api/reg-profile (empty body)", test_reg_profile_post_empty),
-        ("Test 4: BATCH overlay/generate (3 records, 3 pages)", test_batch_generate_multipage),
-        ("Test 5 (REGRESSION): form-background", test_regression_form_background),
-        ("Test 6 (REGRESSION): overlay/print-silent degradation", test_overlay_print_silent_degradation),
-        ("Test 7 (REGRESSION): stats", test_regression_stats),
-    ]
+    # NEW ENDPOINTS
+    print("\n" + "=" * 80)
+    print("NEW ENDPOINTS (Desktop Version & Auto-Update)")
+    print("=" * 80)
+    test_app_version()
+    test_updates_check()
+    test_updates_apply()
     
-    passed = 0
-    failed = 0
-    errors = []
+    # REGRESSION TESTS
+    print("\n" + "=" * 80)
+    print("REGRESSION TESTS (Critical Functionality)")
+    print("=" * 80)
+    test_contracts_list()
+    test_overlay_generate()
+    test_overlay_form_background()
+    test_reg_profile_get()
+    test_reg_profile_post()
+    test_stats()
+    test_sample_template()
     
-    for test_name, test_func in tests:
-        try:
-            test_func()
-            passed += 1
-        except AssertionError as e:
-            failed += 1
-            error_msg = f"❌ {test_name} FAILED: {str(e)}"
-            print(error_msg)
-            errors.append(error_msg)
-        except Exception as e:
-            failed += 1
-            error_msg = f"❌ {test_name} ERROR: {str(e)}"
-            print(error_msg)
-            errors.append(error_msg)
-    
+    # SUMMARY
     print("\n" + "=" * 80)
     print("TEST SUMMARY")
     print("=" * 80)
-    print(f"Total tests: {len(tests)}")
-    print(f"✅ Passed: {passed}")
-    print(f"❌ Failed: {failed}")
+    total_tests = tests_passed + tests_failed
+    print(f"Total Tests: {total_tests}")
+    print(f"Passed: {tests_passed}")
+    print(f"Failed: {tests_failed}")
+    print(f"Success Rate: {(tests_passed/total_tests*100):.1f}%")
     
-    if errors:
-        print("\nFAILURES:")
-        for error in errors:
-            print(f"  {error}")
-    
+    print("\n" + "=" * 80)
+    print("DETAILED RESULTS")
     print("=" * 80)
+    for result in test_results:
+        print(result)
     
-    if failed == 0:
-        print("🎉 ALL TESTS PASSED!")
-        return 0
+    if tests_failed > 0:
+        print("\n❌ SOME TESTS FAILED")
+        sys.exit(1)
     else:
-        print(f"⚠️  {failed} TEST(S) FAILED")
-        return 1
-
+        print("\n✅ ALL TESTS PASSED")
+        sys.exit(0)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
