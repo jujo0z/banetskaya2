@@ -23,10 +23,15 @@ import {
   RotateCw,
   Download,
   Info,
+  Lock,
+  Unlock,
+  Trash2,
+  Copy,
+  Pencil,
+  FolderPlus,
 } from "lucide-react";
 import {
   getOverlayLayout,
-  saveOverlayLayout,
   overlayPdfUrl,
   openOverlayPdf,
   downloadOverlayPdf,
@@ -34,6 +39,11 @@ import {
   getPrinters,
   printOverlaySilent,
   getRegProfile,
+  listOverlayProfiles,
+  createOverlayProfile,
+  updateOverlayProfile,
+  deleteOverlayProfile,
+  setActiveOverlayProfile,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
 
@@ -103,8 +113,11 @@ export function randomRecord() {
 }
 
 export default function BlankOverlay() {
+  const [profiles, setProfiles] = useState([]);
+  const [activeId, setActiveId] = useState(null);
   const [layout, setLayout] = useState([]);
   const [values, setValues] = useState({});
+  const [locked, setLocked] = useState(new Set()); // ключи «постоянных» (замок) полей
   const [dx, setDx] = useState(0);
   const [dy, setDy] = useState(0);
   const [rotate, setRotate] = useState(0);
@@ -121,45 +134,52 @@ export default function BlankOverlay() {
   const [missing, setMissing] = useState(new Set());
 
   const location = useLocation();
-
   const canvasRef = useRef(null);
   const dragRef = useRef(null);
 
-  // ---- prefill from reg-profile + contract passed via history ----
-  useEffect(() => {
-    const prefill = location.state?.prefill || null;
-    getRegProfile()
-      .then((p) => {
-        setValues((s) => {
-          const next = { ...s };
-          if (p?.reg_organ && !next.reg_organ) next.reg_organ = p.reg_organ;
-          if (p?.chief && !next.chief) next.chief = p.chief;
-          if (prefill) Object.assign(next, prefill);
-          return next;
-        });
-      })
-      .catch(() => {
-        if (prefill) setValues((s) => ({ ...s, ...prefill }));
-      });
-    if (prefill) toast.success("Данные договора подставлены в бланк");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const activeProfile = profiles.find((p) => p.id === activeId) || null;
 
-  // ---- load layout ----
+  // ---- initial load: profiles + reg-profile + history prefill ----
   useEffect(() => {
     (async () => {
+      const prefill = location.state?.prefill || null;
+      let data;
       try {
-        const data = await getOverlayLayout();
-        setLayout(data.layout || []);
-        setDx(data.dx_mm || 0);
-        setDy(data.dy_mm || 0);
-        setRotate(data.rotate || 0);
+        data = await listOverlayProfiles();
       } catch (e) {
-        toast.error("Не удалось загрузить раскладку");
-      } finally {
+        toast.error("Не удалось загрузить профили");
         setLoading(false);
+        return;
       }
+      const list = data.profiles || [];
+      const act = list.find((p) => p.id === data.active_id) || list[0] || null;
+      const consts = (act && act.constants) || {};
+      const base = {};
+      const lockedSet = new Set();
+      Object.entries(consts).forEach(([k, c]) => {
+        base[k] = (c && c.value) || "";
+        if (c && c.locked) lockedSet.add(k);
+      });
+      try {
+        const rp = await getRegProfile();
+        if (rp?.reg_organ && !base.reg_organ) base.reg_organ = rp.reg_organ;
+        if (rp?.chief && !base.chief) base.chief = rp.chief;
+      } catch (e) {
+        /* ignore */
+      }
+      if (prefill) Object.assign(base, prefill);
+      setProfiles(list);
+      setActiveId(act ? act.id : null);
+      setLayout((act && act.layout) || []);
+      setDx((act && act.dx_mm) || 0);
+      setDy((act && act.dy_mm) || 0);
+      setRotate((act && act.rotate) || 0);
+      setLocked(lockedSet);
+      setValues(base);
+      setLoading(false);
+      if (prefill) toast.success("Данные договора подставлены в бланк");
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---- load printers (desktop app only) ----
@@ -174,12 +194,11 @@ export default function BlankOverlay() {
           if (def) setSelectedPrinter(def.name);
         }
       } catch (e) {
-        // printing UI simply won't appear if this fails
+        /* printing UI simply won't appear if this fails */
       }
     })();
   }, []);
 
-  // ---- measure canvas width for font scaling ----
   useEffect(() => {
     const measure = () => {
       if (canvasRef.current) setCw(canvasRef.current.clientWidth);
@@ -212,10 +231,9 @@ export default function BlankOverlay() {
     }
   };
 
-  // Returns true if all required fields are filled; otherwise highlights them.
   const checkRequired = () => {
     const miss = new Set(
-      REQUIRED_KEYS.filter((k) => !((values[k] || "").toString().trim()))
+      REQUIRED_KEYS.filter((k) => layout.some((f) => f.key === k) && !((values[k] || "").toString().trim()))
     );
     setMissing(miss);
     if (miss.size > 0) {
@@ -226,23 +244,184 @@ export default function BlankOverlay() {
   };
 
   const fillRandom = () => {
-    setValues(randomRecord());
+    // random data, but keep locked (constant) values intact
+    const r = randomRecord();
+    setValues((prev) => {
+      const next = { ...r };
+      locked.forEach((k) => { next[k] = prev[k]; });
+      return next;
+    });
     toast.success("Заполнено случайными данными");
   };
   const clearAll = () => {
-    setValues({});
-    toast("Поля очищены");
+    setValues((prev) => {
+      const next = {};
+      locked.forEach((k) => { next[k] = prev[k]; });
+      return next;
+    });
+    toast("Поля очищены (постоянные сохранены)");
+  };
+
+  // ---- build the constants map for saving ----
+  const buildConstants = useCallback(() => {
+    const c = {};
+    locked.forEach((k) => {
+      c[k] = { value: values[k] || "", locked: true };
+    });
+    return c;
+  }, [locked, values]);
+
+  // ---- profiles ----
+  const applyProfile = (p) => {
+    setActiveId(p.id);
+    setLayout(p.layout || []);
+    setDx(p.dx_mm || 0);
+    setDy(p.dy_mm || 0);
+    setRotate(p.rotate || 0);
+    const consts = p.constants || {};
+    const base = {};
+    const lockedSet = new Set();
+    Object.entries(consts).forEach(([k, c]) => {
+      base[k] = (c && c.value) || "";
+      if (c && c.locked) lockedSet.add(k);
+    });
+    setLocked(lockedSet);
+    setValues(base);
+    setSelected(null);
+    setMissing(new Set());
+  };
+
+  const switchProfile = async (id) => {
+    const p = profiles.find((x) => x.id === id);
+    if (!p) return;
+    applyProfile(p);
+    try {
+      await setActiveOverlayProfile(id);
+    } catch (e) {
+      /* non-critical */
+    }
+  };
+
+  const createProfile = async () => {
+    const name = window.prompt("Название нового профиля:", `Профиль ${profiles.length + 1}`);
+    if (!name) return;
+    try {
+      const p = await createOverlayProfile({ name });
+      setProfiles((ps) => [...ps, p]);
+      applyProfile(p);
+      toast.success(`Профиль «${p.name}» создан`);
+    } catch (e) {
+      toast.error("Не удалось создать профиль");
+    }
+  };
+
+  const duplicateProfile = async () => {
+    if (!activeProfile) return;
+    const name = window.prompt("Название копии:", `${activeProfile.name} (копия)`);
+    if (!name) return;
+    try {
+      const p = await createOverlayProfile({
+        name, layout, dx_mm: dx, dy_mm: dy, rotate, constants: buildConstants(),
+      });
+      setProfiles((ps) => [...ps, p]);
+      applyProfile(p);
+      toast.success("Профиль продублирован");
+    } catch (e) {
+      toast.error("Не удалось продублировать");
+    }
+  };
+
+  const renameProfile = async () => {
+    if (!activeProfile) return;
+    const name = window.prompt("Новое название профиля:", activeProfile.name);
+    if (!name) return;
+    try {
+      const p = await updateOverlayProfile(activeId, {
+        name, layout, dx_mm: dx, dy_mm: dy, rotate, constants: buildConstants(),
+      });
+      setProfiles((ps) => ps.map((x) => (x.id === activeId ? p : x)));
+      toast.success("Профиль переименован");
+    } catch (e) {
+      toast.error("Не удалось переименовать");
+    }
+  };
+
+  const removeProfile = async () => {
+    if (!activeProfile) return;
+    if (profiles.length <= 1) {
+      toast.error("Нельзя удалить последний профиль");
+      return;
+    }
+    if (!window.confirm(`Удалить профиль «${activeProfile.name}»?`)) return;
+    try {
+      await deleteOverlayProfile(activeId);
+      const data = await listOverlayProfiles();
+      const list = data.profiles || [];
+      setProfiles(list);
+      const act = list.find((p) => p.id === data.active_id) || list[0];
+      if (act) applyProfile(act);
+      toast.success("Профиль удалён");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось удалить");
+    }
+  };
+
+  const saveProfile = async () => {
+    if (!activeProfile) return;
+    try {
+      const p = await updateOverlayProfile(activeId, {
+        name: activeProfile.name, layout, dx_mm: dx, dy_mm: dy, rotate, constants: buildConstants(),
+      });
+      setProfiles((ps) => ps.map((x) => (x.id === activeId ? p : x)));
+      toast.success(`Профиль «${p.name}» сохранён`);
+    } catch (e) {
+      toast.error("Не удалось сохранить профиль");
+    }
+  };
+
+  // ---- fields: add / remove / lock (constant) ----
+  const addField = () => {
+    const label = window.prompt("Название нового поля (например: «Особые отметки»):", "");
+    if (!label) return;
+    const def = window.prompt("Текст по умолчанию (можно оставить пустым):", "") || "";
+    const key = "custom_" + Math.random().toString(36).slice(2, 8);
+    setLayout((l) => [...l, { key, label, x_pct: 45, y_pct: 45, font_pt: 9, group: "Свои поля", custom: true }]);
+    setValues((v) => ({ ...v, [key]: def }));
+    setSelected(key);
+    toast.success("Поле добавлено — перетащите его на нужное место");
+  };
+
+  const removeField = (key) => {
+    const f = layout.find((x) => x.key === key);
+    if (!f) return;
+    if (!window.confirm(`Убрать поле «${f.label}» из этого профиля?`)) return;
+    setLayout((l) => l.filter((x) => x.key !== key));
+    setValues((v) => { const n = { ...v }; delete n[key]; return n; });
+    setLocked((s) => { const n = new Set(s); n.delete(key); return n; });
+    if (selected === key) setSelected(null);
+  };
+
+  const toggleConstant = (key) => {
+    setLocked((s) => {
+      const n = new Set(s);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+  };
+
+  const restoreDefaults = async () => {
+    if (!window.confirm("Вернуть стандартный набор полей? Ваши свои поля будут убраны.")) return;
+    try {
+      const data = await getOverlayLayout();
+      setLayout(data.layout || []);
+      toast("Стандартная раскладка полей восстановлена (не забудьте «Сохранить»)");
+    } catch (e) {
+      toast.error("Ошибка");
+    }
   };
 
   // ---- dragging ----
-  const onPointerDown = (e, key) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setSelected(key);
-    dragRef.current = { key };
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-  };
   const onPointerMove = useCallback((e) => {
     if (!dragRef.current || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
@@ -258,14 +437,22 @@ export default function BlankOverlay() {
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
   }, [onPointerMove]);
+  const onPointerDown = (e, key) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected(key);
+    dragRef.current = { key };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
 
   const changeFont = (key, delta) =>
     setLayout((prev) => prev.map((f) => (f.key === key ? { ...f, font_pt: Math.max(5, Math.min(20, (f.font_pt || 9) + delta)) } : f)));
 
-  // ---- actions ----
+  // ---- print actions ----
   const doPreview = async () => {
     try {
-      const url = await overlayPdfUrl([values], { layout, dx_mm: dx, dy_mm: dy, withBackground: true });
+      const url = await overlayPdfUrl([values], { layout, dx_mm: dx, dy_mm: dy, rotate, withBackground: true });
       setPreviewUrl(url);
       setPreviewOpen(true);
     } catch (e) {
@@ -276,7 +463,7 @@ export default function BlankOverlay() {
     if (!checkRequired()) return;
     try {
       await openOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize, rotate });
-      toast("PDF открыт в новой вкладке — печатайте с масштабом «Фактический размер» (100%)");
+      toast("PDF открыт в новой вкладке — печатайте «Фактический размер» (100%)");
     } catch (e) {
       toast.error("Ошибка печати");
     }
@@ -285,15 +472,12 @@ export default function BlankOverlay() {
     if (!checkRequired()) return;
     setPrinting(true);
     try {
-      // Silent printing goes straight to the printer with the physical 147×103 blank
-      // pre-inserted — always print at the real card size so the data lands exactly.
       const res = await printOverlaySilent([values], {
         layout, dx_mm: dx, dy_mm: dy, pageSize: "card", rotate, printerName: selectedPrinter,
       });
       toast.success(`Отправлено на печать (147×103 мм): ${res.printer}`);
     } catch (e) {
-      const msg = e?.response?.data?.detail || "Ошибка печати";
-      toast.error(msg);
+      toast.error(e?.response?.data?.detail || "Ошибка печати");
     } finally {
       setPrinting(false);
     }
@@ -305,30 +489,12 @@ export default function BlankOverlay() {
       toast.error("Ошибка скачивания");
     }
   };
-  const doSave = async () => {
-    try {
-      await saveOverlayLayout(layout, dx, dy, rotate);
-      toast.success("Раскладка и калибровка сохранены");
-    } catch (e) {
-      toast.error("Не удалось сохранить");
-    }
-  };
   const doTestSheet = async () => {
     try {
       await openOverlayTestSheet(dx, dy, pageSize, rotate);
       toast("Пробный лист открыт — печатайте с масштабом 100%");
     } catch (e) {
       toast.error("Ошибка пробного листа");
-    }
-  };
-  const resetLayout = async () => {
-    try {
-      // reload default by clearing saved value is not exposed; just refetch (server default if none saved)
-      const data = await getOverlayLayout();
-      setLayout(data.layout || []);
-      toast("Раскладка перезагружена");
-    } catch (e) {
-      toast.error("Ошибка");
     }
   };
 
@@ -341,15 +507,14 @@ export default function BlankOverlay() {
   return (
     <div data-testid="blank-overlay-page">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-8">
+      <div className="flex items-start justify-between gap-4 mb-6">
         <div>
           <h1 className="font-heading text-4xl font-bold flex items-center gap-3">
             <Stamp className="h-8 w-8 text-[#E11D48]" /> Печать на бланке
           </h1>
           <p className="text-muted-foreground mt-2 max-w-2xl">
-            Бланк «СООБЩЕНИЕ» (147×103&nbsp;мм). Данные печатаются поверх уже
-            распечатанного бланка. Перетащите поля мышкой, чтобы попасть в строки,
-            затем откалибруйте под ваш принтер.
+            Бланк «СООБЩЕНИЕ» (147×103&nbsp;мм). Данные печатаются поверх готового бланка.
+            Настройте размещение полей и сохраните его в профиль (свой под каждый принтер/бланк).
           </p>
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
@@ -358,6 +523,36 @@ export default function BlankOverlay() {
           </Button>
           <Button variant="outline" onClick={clearAll}>Очистить</Button>
         </div>
+      </div>
+
+      {/* Profile bar */}
+      <div className="mb-6 rounded-lg border border-[#E11D48]/30 bg-[#E11D48]/5 p-3 flex flex-wrap items-center gap-2" data-testid="profile-bar">
+        <span className="text-sm font-semibold mr-1">Профиль размещения:</span>
+        <select
+          value={activeId || ""}
+          onChange={(e) => switchProfile(e.target.value)}
+          data-testid="profile-select"
+          className="rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm outline-none focus:border-[#E11D48] min-w-[180px]"
+        >
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id} className="bg-neutral-900">{p.name}</option>
+          ))}
+        </select>
+        <Button size="sm" onClick={saveProfile} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="btn-save-profile">
+          <Save className="h-4 w-4 mr-1" /> Сохранить
+        </Button>
+        <Button size="sm" variant="outline" onClick={createProfile} data-testid="btn-create-profile">
+          <FolderPlus className="h-4 w-4 mr-1" /> Новый
+        </Button>
+        <Button size="sm" variant="outline" onClick={duplicateProfile} data-testid="btn-dup-profile">
+          <Copy className="h-4 w-4 mr-1" /> Дублировать
+        </Button>
+        <Button size="sm" variant="outline" onClick={renameProfile}>
+          <Pencil className="h-4 w-4 mr-1" /> Переименовать
+        </Button>
+        <Button size="sm" variant="ghost" onClick={removeProfile} className="text-[#E11D48] hover:bg-[#E11D48]/10" data-testid="btn-del-profile">
+          <Trash2 className="h-4 w-4 mr-1" /> Удалить
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-6">
@@ -379,6 +574,7 @@ export default function BlankOverlay() {
             {layout.map((f) => {
               const v = values[f.key];
               const isSel = f.key === selected;
+              const isLocked = locked.has(f.key);
               const fontPx = Math.max(7, (f.font_pt || 9) * scale);
               return (
                 <div
@@ -391,7 +587,7 @@ export default function BlankOverlay() {
                     left: `${f.x_pct}%`,
                     top: `${f.y_pct}%`,
                     fontSize: `${fontPx}px`,
-                    color: v ? "#0a0a1f" : "#c026a1",
+                    color: v ? (isLocked ? "#0369a1" : "#0a0a1f") : "#c026a1",
                     transform: "translate(0, -0.9em)",
                     fontFamily: "Arial, sans-serif",
                   }}
@@ -404,7 +600,7 @@ export default function BlankOverlay() {
             })}
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Розовым показаны пустые поля (их подписи) — при печати они не выводятся.
+            Розовым — пустые поля (их подписи), при печати не выводятся. Синим — постоянные (с замком).
             Тяните любое поле, чтобы поставить его точно на нужную строку.
           </p>
         </div>
@@ -427,6 +623,21 @@ export default function BlankOverlay() {
               </div>
               <div className="text-[11px] text-muted-foreground mt-2 font-mono">
                 X {selField.x_pct}% · Y {selField.y_pct}%
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={locked.has(selField.key) ? "border-sky-500 text-sky-400" : ""}
+                  onClick={() => toggleConstant(selField.key)}
+                  data-testid={`toggle-const-${selField.key}`}
+                >
+                  {locked.has(selField.key) ? <Lock className="h-4 w-4 mr-1" /> : <Unlock className="h-4 w-4 mr-1" />}
+                  {locked.has(selField.key) ? "Постоянное" : "Сделать постоянным"}
+                </Button>
+                <Button size="sm" variant="ghost" className="text-[#E11D48] hover:bg-[#E11D48]/10" onClick={() => removeField(selField.key)} data-testid={`remove-field-${selField.key}`}>
+                  <Trash2 className="h-4 w-4 mr-1" /> Убрать
+                </Button>
               </div>
             </div>
           )}
@@ -463,22 +674,20 @@ export default function BlankOverlay() {
             <div className="mt-3 flex gap-2 text-[11px] text-muted-foreground bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
               <Info className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
               <span>
-                Вставляете готовый бланк в принтер? Выбирайте <b>147×103&nbsp;мм</b> и в драйвере
-                задайте такой же нестандартный размер (или A6). Печать через <b>обходной/ручной лоток</b>,
-                масштаб <b>«Фактический размер» (100%)</b>.
+                Вставляете готовый бланк? Выбирайте <b>147×103&nbsp;мм</b>, в драйвере задайте такой же
+                размер (или A6), печать через <b>обходной/ручной лоток</b>, масштаб <b>100%</b>.
               </span>
             </div>
           </div>
 
-          {/* Rotation (feed orientation) */}
+          {/* Rotation */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="text-sm font-semibold mb-1 flex items-center gap-2">
               <RotateCw className="h-4 w-4 text-[#E11D48]" /> Поворот под подачу бланка
             </div>
             <p className="text-[11px] text-muted-foreground mb-3">
-              Как принтер «затягивает» бланк? Если данные уезжают вбок — меняйте поворот
-              и проверяйте пробным листом. Вы кладёте бланк вертикально (узкой стороной вперёд) —
-              обычно нужно <b>90°</b> или <b>270°</b>.
+              Если данные уезжают вбок — меняйте поворот и проверяйте пробным листом. Бланк вертикально
+              (узкой стороной вперёд) — обычно нужно <b>90°</b> или <b>270°</b>.
             </p>
             <div className="grid grid-cols-4 gap-2">
               {[0, 90, 180, 270].map((r) => (
@@ -497,37 +706,6 @@ export default function BlankOverlay() {
             </div>
           </div>
 
-          {/* Printer setup instructions */}
-          <details className="rounded-lg border border-white/10 bg-white/5 p-4 group" data-testid="printer-howto">
-            <summary className="text-sm font-semibold flex items-center gap-2 cursor-pointer list-none">
-              <Info className="h-4 w-4 text-[#E11D48]" /> Как настроить принтер (Kyocera / Canon MF)
-              <span className="ml-auto text-[11px] text-muted-foreground group-open:hidden">развернуть</span>
-            </summary>
-            <ol className="mt-3 space-y-2 text-[11px] text-muted-foreground list-decimal pl-4 leading-relaxed">
-              <li>
-                Положите готовый бланк в <b>обходной (ручной) лоток</b> — узкая щель спереди/сбоку.
-                Кладите <b>вертикально</b>: узкой стороной (103&nbsp;мм) вперёд, лицом вверх.
-              </li>
-              <li>
-                В окне печати выберите свой принтер → <b>Свойства/Настройки</b> → размер бумаги
-                задайте <b>A6 (105×148&nbsp;мм)</b> или создайте нестандартный <b>147×103&nbsp;мм</b>.
-                Источник бумаги — <b>Обходной лоток</b>.
-              </li>
-              <li>
-                Масштаб — <b>«Фактический размер» / 100%</b> (НЕ «по размеру страницы»).
-              </li>
-              <li>
-                Нажмите <b>«Пробный лист выравнивания»</b> ниже и напечатайте его на одном бланке.
-                Кресты и линейка должны совпасть с рамкой бланка.
-              </li>
-              <li>
-                Если весь оттиск повёрнут — меняйте <b>Поворот</b> (90/180/270°).
-                Если сдвинут — правьте <b>Сдвиг X/Y</b>. Повторяйте, пока не сядет ровно, затем <b>«Сохранить»</b>.
-              </li>
-            </ol>
-          </details>
-
-
           {/* Calibration */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="text-sm font-semibold mb-3 flex items-center gap-2">
@@ -536,33 +714,32 @@ export default function BlankOverlay() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs">Сдвиг X, мм</Label>
-                <Input
-                  type="number"
-                  step="0.5"
-                  value={dx}
-                  onChange={(e) => setDx(parseFloat(e.target.value) || 0)}
-                  data-testid="cal-dx"
-                />
+                <Input type="number" step="0.5" value={dx} onChange={(e) => setDx(parseFloat(e.target.value) || 0)} data-testid="cal-dx" />
               </div>
               <div>
                 <Label className="text-xs">Сдвиг Y, мм</Label>
-                <Input
-                  type="number"
-                  step="0.5"
-                  value={dy}
-                  onChange={(e) => setDy(parseFloat(e.target.value) || 0)}
-                  data-testid="cal-dy"
-                />
+                <Input type="number" step="0.5" value={dy} onChange={(e) => setDy(parseFloat(e.target.value) || 0)} data-testid="cal-dy" />
               </div>
             </div>
             <Button variant="outline" className="w-full mt-3" onClick={doTestSheet} data-testid="btn-testsheet">
               <Printer className="h-4 w-4 mr-2" /> Пробный лист выравнивания
             </Button>
-            <p className="text-[11px] text-muted-foreground mt-2">
-              Распечатайте пробный лист на пустом бланке. Если кресты сместились —
-              подвиньте X/Y и повторите.
-            </p>
           </div>
+
+          {/* Printer setup instructions */}
+          <details className="rounded-lg border border-white/10 bg-white/5 p-4 group" data-testid="printer-howto">
+            <summary className="text-sm font-semibold flex items-center gap-2 cursor-pointer list-none">
+              <Info className="h-4 w-4 text-[#E11D48]" /> Как настроить принтер (Kyocera / Canon MF)
+              <span className="ml-auto text-[11px] text-muted-foreground group-open:hidden">развернуть</span>
+            </summary>
+            <ol className="mt-3 space-y-2 text-[11px] text-muted-foreground list-decimal pl-4 leading-relaxed">
+              <li>Готовый бланк — в <b>обходной (ручной) лоток</b>. Кладите <b>вертикально</b>: узкой стороной (103&nbsp;мм) вперёд, лицом вверх.</li>
+              <li>В окне печати → <b>Свойства</b> → размер бумаги <b>A6</b> или нестандартный <b>147×103&nbsp;мм</b>, источник — <b>Обходной лоток</b>.</li>
+              <li>Масштаб — <b>«Фактический размер» / 100%</b>.</li>
+              <li>Напечатайте <b>пробный лист</b> на одном бланке. Кресты и линейка должны совпасть.</li>
+              <li>Оттиск повёрнут — меняйте <b>Поворот</b>; сдвинут — правьте <b>X/Y</b>. Затем <b>«Сохранить»</b> в профиль.</li>
+            </ol>
+          </details>
 
           {/* Silent printing — desktop app only */}
           {IS_DESKTOP && (
@@ -592,10 +769,6 @@ export default function BlankOverlay() {
                 <Printer className="h-4 w-4 mr-2" />
                 {printing ? "Печать…" : "Печать на бланк (тихо, 100%)"}
               </Button>
-              <p className="text-[11px] text-white/50 leading-snug">
-                Печатает сразу на выбранный принтер, в фактическом размере (147×103 мм),
-                без окна выбора формата. Вставьте бланк в принтер и нажмите.
-              </p>
             </div>
           )}
 
@@ -610,35 +783,53 @@ export default function BlankOverlay() {
             <Button onClick={doDownload} variant="outline" data-testid="btn-download">
               <Download className="h-4 w-4 mr-2" /> Скачать PDF
             </Button>
-            <Button onClick={doSave} variant="outline" data-testid="btn-save">
-              <Save className="h-4 w-4 mr-2" /> Сохранить
-            </Button>
-            <Button onClick={resetLayout} variant="ghost" className="col-span-2">
-              <RotateCcw className="h-4 w-4 mr-2" /> Сбросить раскладку
+            <Button onClick={restoreDefaults} variant="ghost" data-testid="btn-restore-defaults">
+              <RotateCcw className="h-4 w-4 mr-2" /> Стандартные поля
             </Button>
           </div>
 
           {/* Fields inputs */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-4 max-h-[520px] overflow-auto">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold">Данные и поля</div>
+              <Button size="sm" variant="outline" onClick={addField} data-testid="btn-add-field">
+                <Plus className="h-4 w-4 mr-1" /> Добавить поле
+              </Button>
+            </div>
             {Object.entries(groups).map(([g, fs]) => (
               <div key={g}>
                 <div className="text-xs uppercase tracking-wider text-[#E11D48] font-semibold mb-2">{g}</div>
                 <div className="space-y-2">
-                  {fs.map((f) => (
-                    <div key={f.key}>
-                      <Label className="text-[11px] text-muted-foreground">
-                        {f.label}
-                        {REQUIRED_KEYS.includes(f.key) && <span className="text-[#E11D48]"> *</span>}
-                      </Label>
-                      <Input
-                        value={values[f.key] || ""}
-                        onFocus={() => setSelected(f.key)}
-                        onChange={(e) => setVal(f.key, e.target.value)}
-                        className={`h-8 text-sm ${missing.has(f.key) ? "border-[#E11D48] ring-1 ring-[#E11D48]" : ""}`}
-                        data-testid={`input-${f.key}`}
-                      />
-                    </div>
-                  ))}
+                  {fs.map((f) => {
+                    const isLocked = locked.has(f.key);
+                    return (
+                      <div key={f.key}>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] text-muted-foreground">
+                            {f.label}
+                            {REQUIRED_KEYS.includes(f.key) && <span className="text-[#E11D48]"> *</span>}
+                          </Label>
+                          <button
+                            type="button"
+                            onClick={() => toggleConstant(f.key)}
+                            title={isLocked ? "Постоянное (замок) — нажмите чтобы разблокировать" : "Сделать постоянным"}
+                            className={`p-1 rounded ${isLocked ? "text-sky-400" : "text-muted-foreground hover:text-white"}`}
+                            data-testid={`lock-${f.key}`}
+                          >
+                            {isLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                        <Input
+                          value={values[f.key] || ""}
+                          disabled={isLocked}
+                          onFocus={() => setSelected(f.key)}
+                          onChange={(e) => setVal(f.key, e.target.value)}
+                          className={`h-8 text-sm ${missing.has(f.key) ? "border-[#E11D48] ring-1 ring-[#E11D48]" : ""} ${isLocked ? "opacity-70 border-sky-500/40" : ""}`}
+                          data-testid={`input-${f.key}`}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}

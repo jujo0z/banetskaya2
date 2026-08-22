@@ -860,6 +860,148 @@ async def save_overlay_layout(req: OverlayLayoutSave):
     return {"saved": True, **value}
 
 
+# ---------- Overlay placement PROFILES (несколько раскладок под бланк) ----------
+class OverlayProfileIn(BaseModel):
+    name: str = "Профиль"
+    layout: List[Dict[str, Any]] = []
+    dx_mm: float = 0.0
+    dy_mm: float = 0.0
+    rotate: int = 0
+    constants: Dict[str, Any] = {}  # {field_key: {"value": str, "locked": bool}}
+
+
+def _profile_public(p: dict) -> dict:
+    return {
+        "id": p.get("id"),
+        "name": p.get("name", "Профиль"),
+        "layout": p.get("layout", []),
+        "dx_mm": p.get("dx_mm", 0.0),
+        "dy_mm": p.get("dy_mm", 0.0),
+        "rotate": p.get("rotate", 0),
+        "constants": p.get("constants", {}) or {},
+    }
+
+
+async def _ensure_default_profile():
+    """Seed a first profile from the legacy overlay_layout setting (or defaults)
+    so the profiles UI always has something to show."""
+    count = await db.overlay_profiles.count_documents({})
+    if count > 0:
+        return
+    legacy = await db.app_settings.find_one({"key": "overlay_layout"})
+    v = (legacy or {}).get("value", {}) or {}
+    now = datetime.now(timezone.utc).isoformat()
+    prof = {
+        "id": str(uuid.uuid4()),
+        "name": "Профиль 1",
+        "layout": v.get("layout", docsvc.SOOBSHENIE_LAYOUT),
+        "dx_mm": v.get("dx_mm", 0.0),
+        "dy_mm": v.get("dy_mm", 0.0),
+        "rotate": v.get("rotate", 0),
+        "constants": {},
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.overlay_profiles.insert_one(prof)
+    await db.app_settings.update_one(
+        {"key": "overlay_active_profile"},
+        {"$set": {"key": "overlay_active_profile", "value": prof["id"], "updated_at": now}},
+        upsert=True,
+    )
+
+
+@api_router.get("/overlay/profiles")
+async def list_overlay_profiles():
+    await _ensure_default_profile()
+    docs = await db.overlay_profiles.find().sort("created_at", 1).to_list(1000)
+    active = await db.app_settings.find_one({"key": "overlay_active_profile"})
+    active_id = (active or {}).get("value") or (docs[0]["id"] if docs else None)
+    return {"profiles": [_profile_public(d) for d in docs], "active_id": active_id}
+
+
+@api_router.post("/overlay/profiles")
+async def create_overlay_profile(req: OverlayProfileIn):
+    now = datetime.now(timezone.utc).isoformat()
+    prof = {
+        "id": str(uuid.uuid4()),
+        "name": (req.name or "Профиль").strip() or "Профиль",
+        "layout": req.layout or docsvc.SOOBSHENIE_LAYOUT,
+        "dx_mm": req.dx_mm,
+        "dy_mm": req.dy_mm,
+        "rotate": req.rotate,
+        "constants": req.constants or {},
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.overlay_profiles.insert_one(prof)
+    await db.app_settings.update_one(
+        {"key": "overlay_active_profile"},
+        {"$set": {"key": "overlay_active_profile", "value": prof["id"], "updated_at": now}},
+        upsert=True,
+    )
+    return _profile_public(prof)
+
+
+@api_router.put("/overlay/profiles/{pid}")
+async def update_overlay_profile(pid: str, req: OverlayProfileIn):
+    now = datetime.now(timezone.utc).isoformat()
+    upd = {
+        "name": (req.name or "Профиль").strip() or "Профиль",
+        "layout": req.layout,
+        "dx_mm": req.dx_mm,
+        "dy_mm": req.dy_mm,
+        "rotate": req.rotate,
+        "constants": req.constants or {},
+        "updated_at": now,
+    }
+    res = await db.overlay_profiles.update_one({"id": pid}, {"$set": upd})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Профиль не найден")
+    doc = await db.overlay_profiles.find_one({"id": pid})
+    return _profile_public(doc)
+
+
+@api_router.delete("/overlay/profiles/{pid}")
+async def delete_overlay_profile(pid: str):
+    total = await db.overlay_profiles.count_documents({})
+    if total <= 1:
+        raise HTTPException(status_code=400, detail="Нельзя удалить последний профиль")
+    res = await db.overlay_profiles.delete_one({"id": pid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Профиль не найден")
+    # if the active profile was removed, activate the first remaining one
+    active = await db.app_settings.find_one({"key": "overlay_active_profile"})
+    if (active or {}).get("value") == pid:
+        first = await db.overlay_profiles.find().sort("created_at", 1).to_list(1)
+        if first:
+            await db.app_settings.update_one(
+                {"key": "overlay_active_profile"},
+                {"$set": {"value": first[0]["id"]}},
+                upsert=True,
+            )
+    return {"deleted": True}
+
+
+class ActiveProfileIn(BaseModel):
+    id: str
+
+
+@api_router.post("/overlay/active-profile")
+async def set_active_overlay_profile(req: ActiveProfileIn):
+    exists = await db.overlay_profiles.find_one({"id": req.id})
+    if not exists:
+        raise HTTPException(status_code=404, detail="Профиль не найден")
+    await db.app_settings.update_one(
+        {"key": "overlay_active_profile"},
+        {"$set": {"key": "overlay_active_profile", "value": req.id,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"active_id": req.id}
+
+
+
+
 @api_router.post("/overlay/generate")
 async def generate_overlay(req: OverlayGenerateRequest):
     """PDF of the СООБЩЕНИЕ. mode="overlay" -> data sized to the physical blank

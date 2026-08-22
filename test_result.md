@@ -108,7 +108,21 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
-  - task: "Печать поверх бланка: поворот (rotate) + позиция на A4 + мультибланки на A4 (mode=full) + preview-png"
+  - task: "Профили раскладки бланка: CRUD /api/overlay/profiles + активный профиль"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВОЕ по запросу пользователя: несколько профилей размещения полей на бланке «СООБЩЕНИЕ» (каждый профиль = своя раскладка + калибровка dx/dy + поворот + постоянные поля-константы + свой набор полей). Коллекция db.overlay_profiles (UUID id). Эндпоинты: GET /api/overlay/profiles (авто-сид первого профиля из legacy overlay_layout, возвращает {profiles:[{id,name,layout,dx_mm,dy_mm,rotate,constants}], active_id}); POST /api/overlay/profiles (создать, поле constants={key:{value,locked}}); PUT /api/overlay/profiles/{id} (обновить); DELETE /api/overlay/profiles/{id} (нельзя удалить последний → 400; если удалён активный — активируется первый оставшийся); POST /api/overlay/active-profile {id} (сохранить активный). ПРОВЕРИТЬ: (1) GET /api/overlay/profiles → 200, есть хотя бы 1 профиль (авто-сид), active_id не пустой, у профиля поля layout(непустой)/dx_mm/dy_mm/rotate/constants. (2) POST create {name:'Kyocera', dx_mm:1, dy_mm:2, rotate:90, constants:{reg_organ:{value:'ОГиМ',locked:true}}} → 200, вернулся профиль с id и теми же значениями. (3) GET снова → профиль присутствует, active_id == созданный (create делает его активным). (4) PUT update созданного {name:'Kyocera-2', layout:[{key:'fio',label:'ФИО',x_pct:10,y_pct:20,font_pt:9,group:'Г'}], dx_mm:3, dy_mm:0, rotate:270, constants:{}} → 200, значения обновились. (5) POST /api/overlay/active-profile {id: <первый профиль>} → 200 {active_id}; GET profiles → active_id совпал. (6) DELETE созданного → 200 {deleted:true}; GET → профиля нет. (7) Граница: удалить, пока не останется 1, затем DELETE последнего → 400 'Нельзя удалить последний профиль'. (8) PUT/DELETE несуществующего id → 404. НЕ трогать договоры/историю."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 8 тестов прошли успешно (100% success rate). НОВЫЙ ФУНКЦИОНАЛ РАБОТАЕТ ПОЛНОСТЬЮ: (1) GET /api/overlay/profiles → 200, возвращает {profiles:[...], active_id}; найден 1 профиль (авто-сид из legacy overlay_layout), active_id непустой (f41ec9d5-9089-481d-ac1f-9cb68286e8d1); первый профиль содержит ВСЕ требуемые поля: id, name='Профиль 1', layout (23 поля, непустой массив), dx_mm=1.0, dy_mm=2.0, rotate=90, constants={} (объект). (2) POST /api/overlay/profiles {name:'Kyocera', dx_mm:1, dy_mm:2, rotate:90, constants:{reg_organ:{value:'ОГиМ',locked:true}}} → 200, вернулся объект с id (UUID 3c791f46-c9be-489c-aaf1-bfe9452d081a), name='Kyocera', dx_mm=1, dy_mm=2, rotate=90, constants.reg_organ={value:'ОГиМ',locked:true}; layout по умолчанию непустой (23 поля из SOOBSHENIE_LAYOUT). (3) GET /api/overlay/profiles после создания → 200, найдено 2 профиля, созданный профиль присутствует (name='Kyocera'), active_id=3c791f46-c9be-489c-aaf1-bfe9452d081a (create делает профиль активным — подтверждено). (4) PUT /api/overlay/profiles/3c791f46-c9be-489c-aaf1-bfe9452d081a {name:'Kyocera-2', layout:[{key:'fio',label:'ФИО',x_pct:10,y_pct:20,font_pt:9,group:'Г'}], dx_mm:3, dy_mm:0, rotate:270, constants:{}} → 200, значения обновились корректно: name='Kyocera-2', dx_mm=3.0, dy_mm=0.0, rotate=270, layout содержит 1 поле (key='fio'), constants={} (пустой объект). (5) POST /api/overlay/active-profile {id:'f41ec9d5-9089-481d-ac1f-9cb68286e8d1'} (первый/дефолтный профиль) → 200 {active_id:'f41ec9d5-9089-481d-ac1f-9cb68286e8d1'}; GET /api/overlay/profiles → active_id совпадает (f41ec9d5-9089-481d-ac1f-9cb68286e8d1) — смена активного профиля работает. (6) DELETE /api/overlay/profiles/3c791f46-c9be-489c-aaf1-bfe9452d081a → 200 {deleted:true}; GET /api/overlay/profiles → профиль удалён, остался 1 профиль. (7) ГРАНИЦА (несуществующий ID): создан временный профиль для избежания защиты 'нельзя удалить последний'; PUT /api/overlay/profiles/no-such-id → 404 'Профиль не найден'; DELETE /api/overlay/profiles/no-such-id → 404 'Профиль не найден'; временный профиль удалён. (8) ГРАНИЦА (нельзя удалить последний): осталось 1 профиль (f41ec9d5-9089-481d-ac1f-9cb68286e8d1); DELETE /api/overlay/profiles/f41ec9d5-9089-481d-ac1f-9cb68286e8d1 → 400 с detail='Нельзя удалить последний профиль' — защита работает корректно. После тестов остался 1 профиль в системе (требование выполнено). Все backend API полностью функциональны."
+
     implemented: true
     working: true
     file: "server.py, document_service.py"
@@ -360,7 +374,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Печать поверх бланка: поворот (rotate) + позиция на A4 + мультибланки на A4 (mode=full) + preview-png"
+    - "Профили раскладки бланка: CRUD /api/overlay/profiles + активный профиль"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -368,38 +382,33 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: >
-        Протестируй ТОЛЬКО backend, ТОЛЬКО новую задачу «Печать поверх бланка: поворот (rotate) +
-        позиция на A4 + мультибланки на A4 (mode=full) + preview-png». Детали и точные проверки —
-        в status_history этой задачи (8 пунктов). Ключевое: (1) rotate=90/270 → страница PDF
-        291.97×416.69 pt (swap, портрет 103×147), rotate=0/180 → 416.69×291.97; (2) mode='full'
-        landscape → страница A4 landscape 841.89×595.28, число листов = ceil(n/4); portrait →
-        595.28×841.89, ceil(n/2); per_sheet ограничивает плотность; (3) POST /api/overlay/preview-png →
-        image/png; (4) test-sheet?rotate=90 → 291.97×416.69; (5) layout сохраняет/возвращает rotate.
-        Размеры/число страниц проверяй через pymupdf. Регрессию базовой генерации (card без rotate,
-        print-silent 400 на Linux) не сломать. НЕ трогай договоры/историю.
+        Протестируй ТОЛЬКО backend, ТОЛЬКО задачу «Профили раскладки бланка: CRUD /api/overlay/profiles +
+        активный профиль». 8 проверок в status_history задачи (авто-сид, create/read/update/delete,
+        active-profile, граница «нельзя удалить последний» → 400, 404 на несуществующий). Учти: create
+        делает профиль активным; после тестов оставь хотя бы 1 профиль. Договоры/историю НЕ трогать.
     - agent: "testing"
       message: >
-        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 12 тестов прошли (100% success rate).
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 8 тестов прошли (100% success rate).
         
-        НОВЫЙ ФУНКЦИОНАЛ РАБОТАЕТ ПОЛНОСТЬЮ:
+        НОВЫЙ ФУНКЦИОНАЛ «ПРОФИЛИ РАСКЛАДКИ БЛАНКА» РАБОТАЕТ ПОЛНОСТЬЮ:
         
-        1. ROTATE (4/4 теста): POST /api/overlay/generate с rotate=90 → 200 PDF, размер страницы РОВНО 291.97×416.69 pt (103×147 мм портрет, swap); rotate=0 → 416.69×291.97 pt (147×103 мм ландшафт); rotate=270 → 291.97×416.69 pt; rotate=180 → 416.69×291.97 pt. Все размеры точные (допуск ±1.5 pt выполнен).
+        1. GET /api/overlay/profiles (initial) → 200, возвращает {profiles:[...], active_id}; найден 1 профиль (авто-сид из legacy overlay_layout), active_id непустой; первый профиль содержит ВСЕ требуемые поля: id, name, layout (23 поля, непустой массив), dx_mm, dy_mm, rotate, constants (объект).
         
-        2. MODE=FULL LANDSCAPE (1/1 тест): POST /api/overlay/generate {records:[3 записи], mode:'full', orientation:'landscape'} → 200 PDF, страница A4 landscape РОВНО 841.89×595.28 pt, число листов = 1 (ceil(3/4)=1).
+        2. POST /api/overlay/profiles (create) → 200, создан профиль 'Kyocera' с id (UUID), dx_mm=1, dy_mm=2, rotate=90, constants.reg_organ={value:'ОГиМ',locked:true}; layout по умолчанию непустой (23 поля).
         
-        3. MODE=FULL PORTRAIT (1/1 тест): POST /api/overlay/generate {records:[3 записи], mode:'full', orientation:'portrait'} → 200 PDF, страница A4 portrait РОВНО 595.28×841.89 pt, число листов = 2 (ceil(3/2)=2).
+        3. GET /api/overlay/profiles (after create) → 200, созданный профиль присутствует, active_id равен созданному профилю (create делает профиль активным — подтверждено).
         
-        4. MODE=FULL PER_SHEET (1/1 тест): POST /api/overlay/generate {records:[5 записей], mode:'full', orientation:'landscape', per_sheet:2} → 200 PDF, число листов = 3 (ceil(5/2)=3).
+        4. PUT /api/overlay/profiles/{id} (update) → 200, значения обновились: name='Kyocera-2', dx_mm=3, dy_mm=0, rotate=270, layout содержит 1 поле (key='fio'), constants={}.
         
-        5. PREVIEW-PNG (1/1 тест): POST /api/overlay/preview-png {records:[2 записи], mode:'full', orientation:'landscape'} → 200, Content-Type image/png, тело начинается с \x89PNG, размер 74396 байт (> 1000 байт).
+        5. POST /api/overlay/active-profile (set active) → 200 {active_id}; GET /api/overlay/profiles → active_id совпадает — смена активного профиля работает.
         
-        6. TEST-SHEET ROTATE (1/1 тест): GET /api/overlay/test-sheet?rotate=90 → 200 PDF, размер страницы РОВНО 291.97×416.69 pt.
+        6. DELETE /api/overlay/profiles/{id} → 200 {deleted:true}; GET /api/overlay/profiles → профиль удалён.
         
-        7. LAYOUT ROTATE SAVE (1/1 тест): POST /api/overlay/layout {layout:[...], dx_mm:1, dy_mm:2, rotate:90} → 200 {saved:true, rotate:90}; затем GET /api/overlay/layout → rotate:90 (персистентность в MongoDB подтверждена).
+        7. ГРАНИЦА (несуществующий ID): PUT /api/overlay/profiles/no-such-id → 404; DELETE /api/overlay/profiles/no-such-id → 404.
         
-        8. РЕГРЕССИЯ (2/2 теста): ✅ POST /api/overlay/generate {records:[{fio:'Тест Регрессия'}], page_size:'card'} (без rotate) → 200 PDF, размер страницы РОВНО 416.69×291.97 pt (обратная совместимость сохранена); ✅ POST /api/overlay/print-silent {records:[{fio:'Тест'}], page_size:'card'} → 400 (грейсфул деградация на Linux работает корректно).
+        8. ГРАНИЦА (нельзя удалить последний): DELETE последнего профиля → 400 с detail='Нельзя удалить последний профиль' — защита работает корректно.
         
-        Все backend API полностью функциональны. Новая фича готова к использованию.
+        После тестов остался 1 профиль в системе (требование выполнено). Все backend API полностью функциональны.
 
 
 

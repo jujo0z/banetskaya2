@@ -217,6 +217,28 @@ export async function saveOverlayLayout(layout, dx_mm, dy_mm, rotate = 0) {
   return data;
 }
 
+// ---------- Overlay placement PROFILES ----------
+export async function listOverlayProfiles() {
+  const { data } = await api.get("/overlay/profiles");
+  return data; // { profiles: [...], active_id }
+}
+export async function createOverlayProfile(profile) {
+  const { data } = await api.post("/overlay/profiles", profile);
+  return data; // created profile
+}
+export async function updateOverlayProfile(id, profile) {
+  const { data } = await api.put(`/overlay/profiles/${id}`, profile);
+  return data;
+}
+export async function deleteOverlayProfile(id) {
+  const { data } = await api.delete(`/overlay/profiles/${id}`);
+  return data;
+}
+export async function setActiveOverlayProfile(id) {
+  const { data } = await api.post("/overlay/active-profile", { id });
+  return data;
+}
+
 export async function overlayPdfUrl(records, { layout, dx_mm = 0, dy_mm = 0, withBackground = false, withForm = false, pageSize = "card", rotate = 0, a4Position = "top-left", mode = "overlay", orientation = "portrait", perSheet = 0 } = {}) {
   const res = await api.post(
     "/overlay/generate",
