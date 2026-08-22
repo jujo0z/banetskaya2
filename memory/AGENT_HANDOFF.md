@@ -1,0 +1,75 @@
+# AGENT HANDOFF — Banetskaya.by (контекст для передачи другому агенту)
+
+> Этот файл — сжатый, но полный контекст проекта, чтобы новый агент мог продолжить
+> без потери информации. Обновляйте его при значимых изменениях.
+> (Реальный системный промпт агента-платформы недоступен для дословного экспорта —
+> здесь зафиксировано всё, что нужно для продолжения работы: архитектура, деплой,
+> учётки, особенности и «грабли».)
+
+## 1. Что это за приложение
+Веб/десктоп-приложение для администратора колледжа:
+- Загрузка Excel со студентами → автозаполнение шаблона **договора найма** → экспорт **DOCX + PDF** (один в один как исходный Word).
+- История договоров (поиск, повторная печать, пакетный ZIP, экспорт реестра в Excel).
+- Бланк **«СООБЩЕНИЕ»** (регистрация по месту пребывания, формат **147×103 мм**):
+  - **«Печать на бланке»** (`/blank`, BlankOverlay.js) — печать ДАННЫХ поверх пред-распечатанного физического бланка; предпросмотр = данные поверх скана `soobshenie_blank.png`.
+  - **«Полная печать»** (`/full-print`, FullPrint.js) — печать всего документа на белом листе; фон = чистый векторный бланк, рендер `/api/overlay/form-background`.
+  - Тихая печать (без диалогов) через SumatraPDF — ТОЛЬКО в Windows-приложении.
+- **Профиль органа регистрации** (Настройки) — наименование органа/начальник/город, автоподстановка в бланк.
+- Валидация обязательных полей бланка (подсветка красным перед печатью).
+
+## 2. Технологии / структура
+- **Frontend**: React (CRA), Tailwind, shadcn/ui, react-router. Тёмная тема, акцент crimson `#E11D48`.
+  - Страницы: `Landing.js` (welcome-gate для веба), `Dashboard.js`, `Generate.js`, `History.js`, `BlankOverlay.js`, `FullPrint.js`, `Settings.js`. Меню — `components/Layout.js` (сгруппировано: Обзор / Договоры найма / Бланк «СООБЩЕНИЕ» / Система).
+  - `lib/apiClient.js` — все вызовы API. `lib/env.js` — `IS_DESKTOP/IS_WEB`.
+- **Backend**: FastAPI (`backend/server.py`), генерация документов (`backend/document_service.py`), MongoDB (motor).
+  - Все роуты с префиксом `/api`. Фронтенд билд отдаётся самим backend (`FRONTEND_BUILD_DIR`, catch-all в конце server.py).
+  - PDF-бланки — **reportlab** (шрифт «AppSans» = Liberation Sans, `backend/assets/fonts/`). DOCX — docxtpl. DOCX→PDF — **LibreOffice** (`convert_to_pdf`).
+- **.env**: backend `MONGO_URL`, `DB_NAME=banetskaya_db`, `CORS_ORIGINS`. frontend `REACT_APP_BACKEND_URL`. Не хардкодить, не коммитить.
+
+## 3. Три среды
+1. **Emergent контейнер (dev)**: правки тут, backend :8001 / frontend :3000 через supervisor. Данные Mongo локально.
+2. **Веб-прод (VPS Contabo)**:
+   - SSH: `root@173.249.41.148` (пароль был `ght336702` — при передаче смените!).
+   - Домен: **https://banetskaya.duckdns.org** (nginx + Certbot HTTPS + DuckDNS cron).
+   - Код: `/opt/banetskaya` (НЕ git-репозиторий), запуск через systemd `banetskaya.service` = uvicorn на **127.0.0.1:8099** (отдаёт и API, и фронтенд). nginx проксирует `/`→8099, `/downloads/`→`/opt/banetskaya/downloads/`.
+   - На этом же VPS есть ДРУГИЕ проекты (abitura, quiz, admissions) — их не трогать. `deploy/vps_deploy.sh` НЕ запускать (он делает `rm -rf` + ставит Caddy → конфликт с nginx).
+   - Обновление на месте: клон свежего кода из GitHub → rsync в `/opt/banetskaya` (исключая `.env/.venv/node_modules/build/downloads`) → `pip install pymupdf requests` в venv (NB: `backend/requirements.txt` содержит `emergentintegrations`, которого нет в публичном PyPI — ставить нужные пакеты точечно) → `yarn build` → `systemctl restart banetskaya`.
+3. **Windows десктоп (.exe)**: см. раздел 4.
+
+## 4. Windows-приложение и сборка
+- **GitHub**: публичный репозиторий **jujo0z/banetskaya2** (ветка `main`). Сборка через GitHub Actions `.github/workflows/windows-installer.yml`, публикует релиз с тегом **`latest`**, ассет **`BanetskayaSetup.exe`**.
+- Прямая ссылка (в Настройках как «Скачать для Windows»): `https://github.com/jujo0z/banetskaya2/releases/download/latest/BanetskayaSetup.exe`.
+- **Пользователь сам жмёт «Save to GitHub»** в интерфейсе Emergent (агент НЕ делает git push и не трогает `.git`).
+- Точка входа десктопа: `backend/desktop_main.py`:
+  - Стартует bundled **MongoDB** (portable), затем **uvicorn** (127.0.0.1:8001) в фоне.
+  - **Окно приложения = Microsoft Edge/Chrome в режиме `--app`** (отдельное окно без вкладок). НЕ pywebview (от него отказались — падал/не открывал окно).
+  - **Single-instance** (замок на порту 8766) — повторные клики по иконке не плодят копии.
+  - **Keep-alive**: страница шлёт `/api/_ping` каждые 5с; когда окно закрыто (пинги стоп) — `start_idle_watchdog` гасит процесс (иначе Edge-лаунчер завершается сразу и `proc.wait` рвал сервер → «127.0.0.1 отказано»).
+  - Лог запуска: `%LOCALAPPDATA%\Banetskaya\logs\startup.log`.
+- **PyInstaller** spec: `windows-package/installer/banetskaya.spec` — бандлит `templates`, **`assets`** (шрифты + скан бланка!), `frontend/build`, `resources/mongodb`. `console=False`.
+- **Зависимости Windows-сборки**: `windows-package/requirements-windows.txt` (без pywebview/pythonnet; есть `pymupdf`, `requests`).
+- **LibreOffice** в CI ставится ПОЛНОЙ тихой установкой (`msiexec /i /qn`) и копируется рядом с .exe (в нём есть `soffice.bin` — иначе была ошибка `soffice.bin`). SumatraPDF — для тихой печати.
+- **Установщик**: `windows-package/installer/installer.iss` (Inno Setup). `CloseApplications=yes` (для обновлений поверх).
+- **Автообновление в приложении**: Настройки → «Обновления приложения» (только desktop). Эндпоинты `/api/app-version`, `/api/updates/check` (сравнивает время сборки из `backend/_buildinfo.py` с датой релиза на GitHub), `/api/updates/apply` (качает установщик и запускает). `backend/_buildinfo.py` генерится CI (VERSION/BUILD_TIME/GIT_SHA/REPO); в dev — заглушка.
+
+## 5. Ключевые «грабли» (уже решены — не сломать повторно)
+- **Шрифт «AppSans»**: `_ensure_fonts` ДОЛЖЕН ставить `_FONTS_READY=True` только при реальной регистрации TTF; иначе PDF падает с «Can't find font: appsans». Есть fallback на шрифты Windows.
+- **assets ОБЯЗАТЕЛЬНО в spec** (шрифты + `soobshenie_blank.png`), иначе на Windows пустой предпросмотр и ошибки PDF.
+- **LibreOffice**: только полная установка, не `msiexec /a` (иначе неполный → `soffice.bin` error). `convert_to_pdf` перебирает bundled+системный soffice.
+- **Desktop-окно**: только Edge `--app` + keep-alive watchdog; НЕ возвращать pywebview.
+- **Workflow YAML**: не использовать PowerShell here-string `@" "@` (ломает YAML). Проверять `actionlint`.
+- **UUID**, не Mongo ObjectID. Все API под `/api`.
+
+## 6. Тестовые учётки
+- `memory/test_credentials.md` — пуст (аутентификации у приложения нет; это внутренний инструмент администратора).
+
+## 7. Текущее состояние (на момент написания)
+- Веб-прод работает: https://banetskaya.duckdns.org (данные есть, datasets присутствуют).
+- Windows-установщик собирается в CI и доступен по ссылке из раздела 4.
+- Backend протестирован (overlay 147×103, form-background, reg-profile, updates, DOCX→PDF) — ок.
+- **В работе / запрошено пользователем далее**: (1) РЕДИЗАЙН интерфейса (структурировать, «вау», убрать «разбегаются глаза»); (2) затем доработки backend и функционала.
+
+## 8. Протокол работы с агентом
+- Тестирование: см. `/app/test_result.md` (протокол + история). Backend тестировать `deep_testing_backend_v2`; frontend — только с разрешения пользователя.
+- Не делать git-операций записи; пуш — через кнопку «Save to GitHub».
+- Язык общения с пользователем — русский.
