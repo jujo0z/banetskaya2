@@ -227,18 +227,74 @@ def _run():
         return
 
     # Native desktop window (Edge WebView2). No browser, no console tab.
-    import webview
-    window = webview.create_window(
-        "Banetskaya.by",
-        f"http://{HOST}:{PORT}",
-        width=1360,
-        height=900,
-        min_size=(1024, 680),
-        confirm_close=False,
-    )
-    window.events.closed += _on_window_closed
+    # Native desktop window (Edge WebView2). If the WebView2 runtime is missing
+    # or the backend fails to initialise, fall back to the default browser so the
+    # app always opens instead of hanging as an invisible background process.
+    _open_ui()
+
+
+def _ensure_webview2():
+    """Best-effort: if WebView2 runtime seems absent, run the bundled bootstrapper."""
     try:
+        boot = app_root() / "MicrosoftEdgeWebview2Setup.exe"
+        if boot.exists():
+            print("[info] ensuring WebView2 runtime ...")
+            subprocess.run([str(boot), "/silent", "/install"], timeout=180,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        print("[warn] WebView2 bootstrapper failed:", e)
+
+
+def _open_ui():
+    try:
+        import webview
+        window = webview.create_window(
+            "Banetskaya.by",
+            f"http://{HOST}:{PORT}",
+            width=1360,
+            height=900,
+            min_size=(1024, 680),
+            confirm_close=False,
+        )
+        window.events.closed += _on_window_closed
         webview.start()  # blocks until the window is closed
+        stop_mongo()
+        return
+    except Exception as e:
+        print("[warn] native window failed, trying WebView2 install then browser:", e)
+
+    # Try to install the WebView2 runtime, then retry the native window once.
+    _ensure_webview2()
+    try:
+        import importlib, webview
+        importlib.reload(webview)
+        window = webview.create_window("Banetskaya.by", f"http://{HOST}:{PORT}",
+                                       width=1360, height=900, min_size=(1024, 680))
+        window.events.closed += _on_window_closed
+        webview.start()
+        stop_mongo()
+        return
+    except Exception as e:
+        print("[warn] native window still unavailable, falling back to browser:", e)
+
+    # Last resort: open the default browser and keep the local server running.
+    try:
+        import webbrowser
+        webbrowser.open(f"http://{HOST}:{PORT}")
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "Приложение открыто в браузере.\n\nЧтобы работало отдельное окно, установите\n"
+                "Microsoft Edge WebView2 Runtime (можно из папки приложения — файл\n"
+                "MicrosoftEdgeWebview2Setup.exe) и запустите программу снова.\n\n"
+                f"Адрес приложения: http://{HOST}:{PORT}",
+                "Banetskaya.by", 0x40,
+            )
+        except Exception:
+            pass
+        while True:
+            time.sleep(3600)
     finally:
         stop_mongo()
 
