@@ -31,18 +31,18 @@ const NAV_GROUPS = [
 ];
 
 const itemClass = ({ isActive }) =>
-  `group flex items-center gap-3 px-5 py-2.5 text-sm font-medium border-l-2 transition-colors duration-200 ${
+  `group relative flex items-center gap-3 mx-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
     isActive
-      ? "border-[#E11D48] text-white bg-white/5"
-      : "border-transparent text-muted-foreground hover:text-white hover:bg-white/5"
+      ? "text-white bg-gradient-to-r from-[#E11D48]/25 to-[#E11D48]/5 border border-[#E11D48]/30 shadow-[0_8px_24px_-16px_rgba(225,29,72,0.8)]"
+      : "text-muted-foreground border border-transparent hover:text-white hover:bg-white/5"
   }`;
 
 export default function Layout() {
   return (
     <div className="App min-h-screen bg-background flex">
-      <aside className="no-print w-64 shrink-0 bg-[#0A0A0C]/80 backdrop-blur-xl border-r border-white/10 flex flex-col sticky top-0 h-screen z-30">
+      <aside className="no-print w-64 shrink-0 glass border-r border-white/10 flex flex-col sticky top-0 h-screen z-30">
         <div className="flex items-center gap-3 px-5 h-20 border-b border-white/10">
-          <div className="h-10 w-10 bg-gradient-to-br from-[#F43F5E] to-[#BE123C] flex items-center justify-center rounded-md glow-crimson">
+          <div className="h-10 w-10 bg-gradient-to-br from-[#F43F5E] to-[#BE123C] flex items-center justify-center rounded-xl glow-crimson">
             <FileSignature className="h-5 w-5 text-white" strokeWidth={2} />
           </div>
           <div>
@@ -56,8 +56,8 @@ export default function Layout() {
         </div>
         <nav className="flex flex-col py-4 overflow-y-auto" data-testid="sidebar-nav">
           {NAV_GROUPS.map((group) => (
-            <div key={group.title} className="mb-2">
-              <div className="px-5 pt-3 pb-1.5 text-[10px] font-mono uppercase tracking-[0.2em] text-white/35">
+            <div key={group.title} className="mb-3">
+              <div className="px-5 pt-2 pb-2 text-[10px] font-mono uppercase tracking-[0.2em] text-white/30">
                 {group.title}
               </div>
               {group.items.map(({ to, end, label, icon: Icon, testid }) => (
