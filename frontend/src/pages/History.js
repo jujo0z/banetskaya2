@@ -48,6 +48,7 @@ import { IS_DESKTOP } from "@/lib/env";
 import DocumentPreviewDialog from "@/components/DocumentPreviewDialog";
 import DocumentEditor from "@/components/DocumentEditor";
 import ManualDuplexDialog from "@/components/ManualDuplexDialog";
+import { PageHeader } from "@/components/Page";
 
 export default function History() {
   const navigate = useNavigate();
@@ -243,17 +244,27 @@ export default function History() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-heading text-4xl sm:text-5xl font-black tracking-tighter">
-          История договоров
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Поиск по ФИО и номеру договора, повторная печать и выгрузка.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Договоры найма"
+        title="История договоров"
+        subtitle="Поиск по ФИО и номеру договора, повторная печать и выгрузка."
+        icon={FileClock}
+        actions={
+          <Button
+            variant="outline"
+            className="h-11 border-white/15"
+            onClick={handleExport}
+            disabled={exporting}
+            data-testid="history-export-excel-btn"
+          >
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+            Экспорт в Excel
+          </Button>
+        }
+      />
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-card border border-border p-1 w-fit rounded-md" data-testid="history-status-tabs">
+        <div className="flex items-center gap-1 card-premium p-1 w-fit" data-testid="history-status-tabs">
           {[
             { k: "", label: "Все" },
             { k: "final", label: "Готовые" },
@@ -262,7 +273,7 @@ export default function History() {
             <button
               key={t.k}
               onClick={() => setStatusFilter(t.k)}
-              className={`px-4 py-1.5 text-sm rounded-sm transition-colors ${
+              className={`px-4 py-1.5 text-sm rounded-lg transition-colors ${
                 statusFilter === t.k
                   ? "bg-[#E11D48] text-white"
                   : "text-muted-foreground hover:text-white"
@@ -273,19 +284,9 @@ export default function History() {
             </button>
           ))}
         </div>
-        <Button
-          variant="outline"
-          className="rounded-none border-white/15"
-          onClick={handleExport}
-          disabled={exporting}
-          data-testid="history-export-excel-btn"
-        >
-          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
-          Экспорт в Excel
-        </Button>
       </div>
 
-      <div className="bg-card border border-border">
+      <div className="card-premium overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 p-4 border-b border-border">
           <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

@@ -73,3 +73,26 @@
 - Тестирование: см. `/app/test_result.md` (протокол + история). Backend тестировать `deep_testing_backend_v2`; frontend — только с разрешения пользователя.
 - Не делать git-операций записи; пуш — через кнопку «Save to GitHub».
 - Язык общения с пользователем — русский.
+
+## 9. РЕДИЗАЙН (в процессе) — премиальная тёмная тема + crimson
+Выбор пользователя: 1a (тёмная премиум), 2a+b (дашборд-хаб + порядок на каждой странице), все страницы, 5b (редкие функции можно сворачивать).
+
+**Дизайн-система (готово, задеплоено на VPS):**
+- `frontend/src/index.css`: утилиты `.glass`, `.card-premium`, `.hover-lift`, `.ring-accent`, `.chip`, `.chip-muted`, `.eyebrow`, `.divider-soft`; `--radius: 0.85rem`; премиальный `.bg-grid` (ambient crimson+violet). Акцент `#E11D48`/`#F43F5E`.
+- `frontend/src/components/Page.jsx`: примитивы `PageHeader`, `Section`, `StatTile`, `ActionTile` — использовать на ВСЕХ страницах для единообразия.
+- `components/Layout.js`: сайдбар стеклянный, активный пункт = градиентная «пилюля».
+
+**Готово и задеплоено:** Dashboard (хаб: StatTile + ActionTile + последние), Layout (сайдбар), Generate, History, Settings (карточки → `card-premium`, единый `PageHeader`).
+
+**ОСТАЛОСЬ (продолжить с этого):**
+1. **BlankOverlay.js** и **FullPrint.js** — привести к единому `PageHeader` (сейчас свои `<h1>` с иконкой) и обернуть панели в `card-premium`/`Section`. Их панели используют собственные тёмные классы (`bg-[#...]`), а не `bg-card border border-border`, поэтому авто-замена их не тронула — нужно вручную заменить фоны панелей на `card-premium` и сетку «форма слева / предпросмотр справа» оформить через `Section`.
+2. **Settings.js (5b)** — свернуть редкие блоки в аккуратные сворачиваемые секции (шаблоны, пресеты, seed/clear демо, ссылка Windows) через `Section` + Radix `Collapsible`/`Accordion`; оставить на виду: Профиль органа, Обновления.
+3. **Landing.js** — при желании подтянуть под новый стиль (welcome-gate веба).
+4. После правок фронта: `rsync /app/frontend/src → VPS:/opt/banetskaya/frontend/src`, затем `yarn build` + `systemctl restart banetskaya` (сборка в фоне, ждать «Done in»). Для нового `.exe` — пользователь жмёт «Save to GitHub».
+
+**Как деплоить фронт на VPS (проверено):**
+```
+sshpass -e rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" /app/frontend/src/ root@173.249.41.148:/opt/banetskaya/frontend/src/
+ssh root@173.249.41.148 'cd /opt/banetskaya/frontend && NODE_OPTIONS=--max_old_space_size=2048 yarn build && systemctl restart banetskaya'
+```
+(Пароль SSH был `ght336702` — сменить при передаче. IS_DESKTOP на домене = false, keep-alive не шлётся.)

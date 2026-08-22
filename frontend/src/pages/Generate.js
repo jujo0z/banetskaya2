@@ -35,6 +35,7 @@ import { FIELDS, mapRowsToStudents } from "@/lib/fields";
 import { uploadExcel, saveContractsBatch, batchDownload, batchPrint, downloadSampleTemplate } from "@/lib/apiClient";
 import EditContractDialog from "@/components/DocumentEditor";
 import ManualDuplexDialog from "@/components/ManualDuplexDialog";
+import { PageHeader } from "@/components/Page";
 
 const NONE = "__none__";
 
@@ -156,17 +157,15 @@ export default function Generate() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-heading text-4xl sm:text-5xl font-black tracking-tighter">
-          Генерация договоров
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Загрузите Excel-таблицу студентов, выберите нужных и сформируйте договоры найма.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Договоры найма"
+        title="Генерация из Excel"
+        subtitle="Загрузите Excel-таблицу студентов, выберите нужных и сформируйте договоры найма."
+        icon={FileSpreadsheet}
+      />
 
       {/* Upload */}
-      <div className="bg-card border border-border p-6">
+      <div className="card-premium p-6">
         <input
           ref={fileRef}
           type="file"
@@ -255,7 +254,7 @@ export default function Generate() {
 
       {/* Students */}
       {dataset && (
-        <div className="bg-card border border-border">
+        <div className="card-premium overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 p-4 border-b border-border">
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

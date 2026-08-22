@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check, MonitorDown, Save, Building2, RefreshCw, DownloadCloud } from "lucide-react";
+import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check, MonitorDown, Save, Building2, RefreshCw, DownloadCloud, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS } from "@/lib/fields";
 import {
@@ -11,6 +11,7 @@ import {
   getAppVersion, checkUpdates, applyUpdate,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
+import { PageHeader } from "@/components/Page";
 
 export default function Settings() {
   const [downloading, setDownloading] = useState(false);
@@ -180,17 +181,17 @@ export default function Settings() {
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="font-heading text-4xl sm:text-5xl font-black tracking-tighter">Настройки</h1>
-        <p className="text-muted-foreground mt-2">
-          Шаблон договора, поля автозаполнения и образец Excel.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Система"
+        title="Настройки"
+        subtitle="Профиль органа, обновления, шаблон договора, поля автозаполнения и образец Excel."
+        icon={Settings2}
+      />
 
       {/* App updates (desktop app only) */}
       {IS_DESKTOP && (
-        <div className="bg-card border border-border p-6" data-testid="settings-updates-card">
+        <div className="card-premium p-6" data-testid="settings-updates-card">
           <div className="flex items-start gap-4">
             <div className="h-10 w-10 bg-[#38bdf8]/10 flex items-center justify-center shrink-0 rounded-md">
               <DownloadCloud className="h-5 w-5 text-[#38bdf8]" strokeWidth={2} />
@@ -245,7 +246,7 @@ export default function Settings() {
       )}
 
       {/* Reg-authority profile */}
-      <div className="bg-card border border-border p-6" data-testid="settings-regprofile-card">
+      <div className="card-premium p-6" data-testid="settings-regprofile-card">
         <div className="flex items-start gap-4">
           <div className="h-10 w-10 bg-[#E11D48]/10 flex items-center justify-center shrink-0 rounded-md">
             <Building2 className="h-5 w-5 text-[#E11D48]" strokeWidth={2} />
@@ -300,7 +301,7 @@ export default function Settings() {
       </div>
 
       {/* Windows installer link */}
-      <div className="bg-card border border-border p-6" data-testid="settings-winlink-card">
+      <div className="card-premium p-6" data-testid="settings-winlink-card">
         <div className="flex items-start gap-4">
           <div className="h-10 w-10 bg-[#38bdf8]/10 flex items-center justify-center shrink-0 rounded-md">
             <MonitorDown className="h-5 w-5 text-[#38bdf8]" strokeWidth={2} />
@@ -342,7 +343,7 @@ export default function Settings() {
       </div>
 
       {/* Template info */}
-      <div className="bg-card border border-border p-6">
+      <div className="card-premium p-6">
         <div className="flex items-start gap-4">
           <div className="h-10 w-10 bg-[#E11D48]/10 flex items-center justify-center shrink-0">
             <FileCheck2 className="h-5 w-5 text-[#E11D48]" strokeWidth={2} />
@@ -364,7 +365,7 @@ export default function Settings() {
       </div>
 
       {/* Sample excel */}
-      <div className="bg-card border border-border p-6">
+      <div className="card-premium p-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="font-heading text-xl font-bold tracking-tight">Образец Excel</h2>
@@ -386,7 +387,7 @@ export default function Settings() {
       </div>
 
       {/* Demo data */}
-      <div className="bg-card border border-border p-6" data-testid="settings-demo-card">
+      <div className="card-premium p-6" data-testid="settings-demo-card">
         <div className="flex items-start gap-4">
           <div className="h-10 w-10 bg-[#E11D48]/10 flex items-center justify-center shrink-0 rounded-md">
             <Database className="h-5 w-5 text-[#E11D48]" strokeWidth={2} />
@@ -423,7 +424,7 @@ export default function Settings() {
       </div>
 
       {/* Templates */}
-      <div className="bg-card border border-border" data-testid="settings-templates-card">
+      <div className="card-premium" data-testid="settings-templates-card">
         <div className="p-4 border-b border-border flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
             <FileText className="h-5 w-5 text-[#E11D48]" />
@@ -467,7 +468,7 @@ export default function Settings() {
       </div>
 
       {/* Presets */}
-      <div className="bg-card border border-border" data-testid="settings-presets-card">
+      <div className="card-premium" data-testid="settings-presets-card">
         <div className="p-4 border-b border-border flex items-center gap-3">
           <Bookmark className="h-5 w-5 text-[#E11D48]" />
           <div>
@@ -511,7 +512,7 @@ export default function Settings() {
       </div>
 
       {/* Fields list */}
-      <div className="bg-card border border-border">
+      <div className="card-premium">
         <div className="p-4 border-b border-border">
           <h2 className="font-heading text-xl font-bold tracking-tight">
             Поля автозаполнения ({FIELDS.length})
