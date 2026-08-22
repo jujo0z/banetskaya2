@@ -31,13 +31,13 @@ jobs:
           $bt  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           $ver = (Get-Date).ToUniversalTime().ToString("yyyy.MM.dd.HHmm")
           $repo = "${{ github.repository }}"
-          $content = @"
-VERSION = "$ver"
-BUILD_TIME = "$bt"
-GIT_SHA = "$sha"
-REPO = "$repo"
-"@
-          Set-Content -Path backend/_buildinfo.py -Value $content -Encoding UTF8
+          $lines = @(
+            "VERSION = `"$ver`"",
+            "BUILD_TIME = `"$bt`"",
+            "GIT_SHA = `"$sha`"",
+            "REPO = `"$repo`""
+          )
+          Set-Content -Path backend/_buildinfo.py -Value $lines -Encoding UTF8
           Write-Host "Wrote backend/_buildinfo.py:"; Get-Content backend/_buildinfo.py
 
       - name: Build frontend (static)
