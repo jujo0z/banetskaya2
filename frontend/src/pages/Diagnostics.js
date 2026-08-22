@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Activity, CheckCircle2, XCircle, Info, RefreshCw, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Activity, CheckCircle2, XCircle, Info, RefreshCw, ShieldCheck, ShieldAlert, Download } from "lucide-react";
 import { getDiagnostics } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
 
@@ -29,6 +29,31 @@ export default function Diagnostics() {
   const checks = data?.checks || [];
   const allOk = data?.all_ok;
 
+  const saveReport = () => {
+    if (!data) return;
+    const now = new Date();
+    const lines = [];
+    lines.push("Banetskaya.by — отчёт проверки системы");
+    lines.push("Дата: " + now.toLocaleString("ru-RU"));
+    lines.push("Платформа: " + (data.platform || "?") + (data.is_desktop ? " (приложение)" : " (веб)"));
+    lines.push("Итог: " + (allOk ? "ВСЁ ГОТОВО К РАБОТЕ" : "ЕСТЬ ЗАМЕЧАНИЯ"));
+    lines.push("".padEnd(48, "-"));
+    checks.forEach((c) => {
+      const mark = c.ok ? (c.info ? "[i]" : "[OK]") : "[!!]";
+      lines.push(`${mark} ${c.label}: ${c.detail || ""}`);
+    });
+    const blob = new Blob([lines.join("\r\n")], { type: "text/plain;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `diagnostics_${now.toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    toast.success("Отчёт сохранён — пришлите файл при обращении в поддержку");
+  };
+
   return (
     <div className="p-6 lg:p-8 space-y-6" data-testid="diagnostics-page">
       <div className="flex items-start justify-between gap-4">
@@ -42,9 +67,14 @@ export default function Diagnostics() {
             или при любых сбоях — так сразу видно, что не так.
           </p>
         </div>
-        <Button onClick={run} disabled={loading} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="btn-recheck">
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Проверить снова
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={saveReport} disabled={!data} variant="outline" data-testid="btn-save-report">
+            <Download className="h-4 w-4 mr-2" /> Сохранить отчёт
+          </Button>
+          <Button onClick={run} disabled={loading} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="btn-recheck">
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Проверить снова
+          </Button>
+        </div>
       </div>
 
       {/* Overall banner */}

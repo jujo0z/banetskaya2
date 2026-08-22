@@ -24,6 +24,7 @@ import {
   getPrinters,
   printOverlaySilent,
   getRegProfile,
+  listOverlayProfiles,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
 import { randomRecord, REQUIRED_KEYS } from "@/pages/BlankOverlay";
@@ -33,6 +34,10 @@ const recordLabel = (r, i) => (r && (r.fio || "").toString().trim()) || `Зап�
 // Full print: complete СООБЩЕНИЕ forms laid out as a grid on real A4 pages.
 export default function FullPrint() {
   const [layout, setLayout] = useState([]);
+  const [baseLayout, setBaseLayout] = useState([]);
+  const [profiles, setProfiles] = useState([]);
+  const [activeProfileId, setActiveProfileId] = useState("");
+  const [profileConstants, setProfileConstants] = useState({});
   const [records, setRecords] = useState([{}]);
   const [orientation, setOrientation] = useState("portrait"); // portrait=2/лист, landscape=4/лист
   const [perSheet, setPerSheet] = useState(2);
@@ -80,19 +85,55 @@ export default function FullPrint() {
     }
   };
 
-  // ---- load layout ----
+  // ---- load layout + profiles ----
   useEffect(() => {
     (async () => {
       try {
         const data = await getOverlayLayout();
-        setLayout(data.layout || []);
+        const base = data.layout || [];
+        setBaseLayout(base);
+        setLayout(base);
       } catch (e) {
         toast.error("Не удалось загрузить раскладку");
+      }
+      try {
+        const pd = await listOverlayProfiles();
+        const list = pd.profiles || [];
+        setProfiles(list);
+        const act = list.find((p) => p.id === pd.active_id) || list[0] || null;
+        if (act) {
+          setActiveProfileId(act.id);
+          const consts = {};
+          Object.entries(act.constants || {}).forEach(([k, c]) => { consts[k] = (c && c.value) || ""; });
+          setProfileConstants(consts);
+          const custom = (act.layout || []).filter((f) => f.custom);
+          setLayout((cur) => {
+            const base = cur.length ? cur : [];
+            return [...base.filter((f) => !f.custom), ...custom];
+          });
+          setRecords((rs) => rs.map((r) => ({ ...consts, ...r })));
+        }
+      } catch (e) {
+        /* профили не критичны для полной печати */
       } finally {
         setLoading(false);
       }
     })();
   }, []);
+
+  // ---- switch data profile: подставляет постоянные данные + добавленные поля ----
+  const switchDataProfile = (id) => {
+    const p = profiles.find((x) => x.id === id);
+    if (!p) return;
+    setActiveProfileId(id);
+    const consts = {};
+    Object.entries(p.constants || {}).forEach(([k, c]) => { consts[k] = (c && c.value) || ""; });
+    setProfileConstants(consts);
+    const custom = (p.layout || []).filter((f) => f.custom);
+    setLayout([...baseLayout, ...custom]);
+    setRecords((rs) => rs.map((r) => ({ ...r, ...consts })));
+    toast.success(`Профиль «${p.name}» применён (постоянные данные подставлены)`);
+  };
 
   // ---- load printers (desktop app only) ----
   useEffect(() => {
@@ -137,9 +178,9 @@ export default function FullPrint() {
     setRecords((rs) => rs.map((r, i) => (i === idx ? { ...r, [key]: val } : r)));
 
   const addRecord = () => {
-    const base = {};
-    if (profileRef.current?.reg_organ) base.reg_organ = profileRef.current.reg_organ;
-    if (profileRef.current?.chief) base.chief = profileRef.current.chief;
+    const base = { ...profileConstants };
+    if (profileRef.current?.reg_organ && !base.reg_organ) base.reg_organ = profileRef.current.reg_organ;
+    if (profileRef.current?.chief && !base.chief) base.chief = profileRef.current.chief;
     setRecords((rs) => {
       const next = [...rs, base];
       setActiveIdx(next.length - 1);
@@ -255,6 +296,27 @@ export default function FullPrint() {
       <div className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-6">
         {/* ---- Controls ---- */}
         <div className="space-y-4">
+          {/* Data profile */}
+          {profiles.length > 0 && (
+            <div className="rounded-lg border border-[#E11D48]/30 bg-[#E11D48]/5 p-4 space-y-2" data-testid="fp-profile-box">
+              <div className="text-sm font-semibold">Профиль данных</div>
+              <select
+                value={activeProfileId}
+                onChange={(e) => switchDataProfile(e.target.value)}
+                data-testid="fp-profile-select"
+                className="w-full rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm outline-none focus:border-[#E11D48]"
+              >
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id} className="bg-neutral-900">{p.name}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-muted-foreground">
+                Подставляет из профиля <b>постоянные данные</b> (орган, начальник и т.п.) и <b>добавленные поля</b>
+                во все записи. Положение полей на A4 задаётся автоматически.
+              </p>
+            </div>
+          )}
+
           {/* Layout settings */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
             <div className="text-sm font-semibold flex items-center gap-2">
