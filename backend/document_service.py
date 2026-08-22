@@ -20,18 +20,38 @@ def _resource_base() -> Path:
 TEMPLATE_PATH = _resource_base() / "templates" / "contract_template.docx"
 
 # LibreOffice binary — configurable for Windows (e.g. C:\Program Files\LibreOffice\program\soffice.exe)
-def _resolve_soffice():
+def _soffice_candidates():
+    """Ordered list of possible LibreOffice launchers to try."""
+    cands = []
     env = os.environ.get("SOFFICE_BIN")
     if env:
-        return env
-    # Desktop build: prefer a LibreOffice bundled next to the app (portable, no install).
-    candidates = [_resource_base() / "libreoffice" / "program" / "soffice.exe"]
+        cands.append(env)
+    # Desktop build: LibreOffice bundled next to the app (portable, no install).
+    cands.append(str(_resource_base() / "libreoffice" / "program" / "soffice.exe"))
     if getattr(sys, "frozen", False):
-        candidates.append(Path(sys.executable).parent / "libreoffice" / "program" / "soffice.exe")
-    for c in candidates:
+        cands.append(str(Path(sys.executable).parent / "libreoffice" / "program" / "soffice.exe"))
+    # System installs (Windows / Linux / macOS)
+    cands += [
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        "/usr/bin/soffice",
+        "/usr/bin/libreoffice",
+        "soffice",
+    ]
+    # De-duplicate preserving order
+    seen, out = set(), []
+    for c in cands:
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def _resolve_soffice():
+    for c in _soffice_candidates():
         try:
-            if c.exists():
-                return str(c)
+            if c in ("soffice", "/usr/bin/soffice", "/usr/bin/libreoffice") or Path(c).exists():
+                return c
         except Exception:
             pass
     return "soffice"
@@ -238,27 +258,53 @@ _FONTS_READY = False
 
 
 def _ensure_fonts():
-    """Register bundled Liberation Sans (Cyrillic) fonts with reportlab once."""
+    """Register a Unicode (Cyrillic) TTF font with reportlab once as "AppSans".
+
+    Looks for the bundled Liberation Sans first, then common system locations on
+    Linux and Windows. IMPORTANT: only marks fonts as ready when a font was
+    actually registered — otherwise _font() would return an unregistered
+    "AppSans" and reportlab would raise a "Can't find font: AppSans" error."""
     global _FONTS_READY
     if _FONTS_READY:
         return
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
+    def _first_existing(paths):
+        for p in paths:
+            try:
+                pp = Path(p)
+                if pp.exists():
+                    return pp
+            except Exception:
+                pass
+        return None
+
     fonts_dir = _resource_base() / "assets" / "fonts"
-    reg = fonts_dir / "LiberationSans-Regular.ttf"
-    bold = fonts_dir / "LiberationSans-Bold.ttf"
-    # fallback to common system paths
-    if not reg.exists():
-        reg = Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf")
-    if not bold.exists():
-        bold = Path("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")
+    reg = _first_existing([
+        fonts_dir / "LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\tahoma.ttf",
+        r"C:\Windows\Fonts\segoeui.ttf",
+        r"C:\Windows\Fonts\calibri.ttf",
+    ])
+    bold = _first_existing([
+        fonts_dir / "LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf",
+        r"C:\Windows\Fonts\tahomabd.ttf",
+        r"C:\Windows\Fonts\segoeuib.ttf",
+        r"C:\Windows\Fonts\calibrib.ttf",
+    ])
     try:
-        if reg.exists():
+        if reg:
             pdfmetrics.registerFont(TTFont("AppSans", str(reg)))
-        if bold.exists():
-            pdfmetrics.registerFont(TTFont("AppSans-Bold", str(bold)))
-        _FONTS_READY = True
+            # Always make a bold face available so _font(bold=True) never fails.
+            pdfmetrics.registerFont(TTFont("AppSans-Bold", str(bold or reg)))
+            _FONTS_READY = True
+        else:
+            _FONTS_READY = False
     except Exception:
         _FONTS_READY = False
 
@@ -466,34 +512,52 @@ def convert_to_pdf(docx_bytes: bytes) -> bytes:
         profile_uri = "file://" + str(profile_dir)
 
         last_err = None
-        for attempt in range(2):
+        candidates = []
+        for c in _soffice_candidates():
             try:
-                subprocess.run(
-                    [
-                        SOFFICE_BIN,
-                        "-env:UserInstallation=" + profile_uri,
-                        "--headless",
-                        "--norestore",
-                        "--convert-to",
-                        "pdf",
-                        "--outdir",
-                        str(tmp_path),
-                        str(docx_file),
-                    ],
-                    check=True,
-                    capture_output=True,
-                    timeout=90,
-                )
-                pdf_file = tmp_path / "contract.pdf"
-                if pdf_file.exists():
-                    return pdf_file.read_bytes()
-                last_err = RuntimeError("LibreOffice не создал PDF-файл")
-            except subprocess.CalledProcessError as e:
-                last_err = RuntimeError(
-                    f"soffice error: {e.stderr.decode('utf-8', 'ignore')[:300]}"
-                )
-            time.sleep(0.6)
-        raise last_err or RuntimeError("Не удалось конвертировать в PDF")
+                if c in ("soffice", "/usr/bin/soffice", "/usr/bin/libreoffice") or Path(c).exists():
+                    candidates.append(c)
+            except Exception:
+                pass
+        if not candidates:
+            candidates = [SOFFICE_BIN]
+        for soffice in candidates:
+            for attempt in range(2):
+                try:
+                    subprocess.run(
+                        [
+                            soffice,
+                            "-env:UserInstallation=" + profile_uri,
+                            "--headless",
+                            "--norestore",
+                            "--convert-to",
+                            "pdf",
+                            "--outdir",
+                            str(tmp_path),
+                            str(docx_file),
+                        ],
+                        check=True,
+                        capture_output=True,
+                        timeout=90,
+                    )
+                    pdf_file = tmp_path / "contract.pdf"
+                    if pdf_file.exists():
+                        return pdf_file.read_bytes()
+                    last_err = RuntimeError("LibreOffice не создал PDF-файл")
+                except FileNotFoundError:
+                    last_err = RuntimeError(f"LibreOffice не найден: {soffice}")
+                    break  # try next candidate
+                except subprocess.CalledProcessError as e:
+                    last_err = RuntimeError(
+                        f"soffice error: {e.stderr.decode('utf-8', 'ignore')[:300]}"
+                    )
+                except Exception as e:
+                    last_err = RuntimeError(f"soffice error: {e}")
+                time.sleep(0.6)
+        raise last_err or RuntimeError(
+            "Не удалось конвертировать в PDF (LibreOffice недоступен). "
+            "Скачайте документ в формате DOCX."
+        )
 
 
 

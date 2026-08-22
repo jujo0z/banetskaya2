@@ -95,20 +95,25 @@ jobs:
             if ($ok) { break }
           }
           if (-not $ok) { throw "Could not download LibreOffice MSI from any mirror" }
-          New-Item -ItemType Directory -Force -Path lo_extract | Out-Null
-          $target = (Resolve-Path lo_extract).Path
-          Write-Host "Administrative extract ..."
-          Start-Process msiexec.exe -ArgumentList "/a `"$((Resolve-Path lo.msi).Path)`" /qn TARGETDIR=`"$target`"" -Wait
-          $soffice = Get-ChildItem -Recurse $target -Filter soffice.exe | Select-Object -First 1
-          if (-not $soffice) { throw "soffice.exe not found after extraction" }
+          # Full SILENT INSTALL (not an admin /a extract): lays down a COMPLETE tree
+          # incl. soffice.bin and the required runtime DLLs, so the portable copy works
+          # on a clean laptop. Admin extract (/a) often produced an incomplete tree
+          # which caused a "soffice.bin" launch error.
+          $msi = (Resolve-Path lo.msi).Path
+          Write-Host "Silent installing LibreOffice ..."
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait
+          $soffice = Get-ChildItem -Recurse "C:\Program Files\LibreOffice","C:\Program Files (x86)\LibreOffice" -Filter soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $soffice) { throw "soffice.exe not found after install" }
           # LibreOffice root = parent of the 'program' folder
           $loRoot = $soffice.Directory.Parent.FullName
+          if (-not (Test-Path (Join-Path $soffice.Directory.FullName 'soffice.bin'))) { throw "soffice.bin missing after install ($($soffice.Directory.FullName))" }
           $dest = "dist/Banetskaya/libreoffice"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Write-Host "Copying LibreOffice tree from $loRoot -> $dest"
           Copy-Item -Path (Join-Path $loRoot '*') -Destination $dest -Recurse -Force
           if (-not (Test-Path "$dest/program/soffice.exe")) { throw "Bundled soffice.exe missing at $dest/program" }
-          Write-Host "LibreOffice bundled OK."
+          if (-not (Test-Path "$dest/program/soffice.bin")) { throw "Bundled soffice.bin missing at $dest/program" }
+          Write-Host "LibreOffice bundled OK (soffice.exe + soffice.bin present)."
 
       - name: Bundle SumatraPDF (silent printing)
         shell: pwsh

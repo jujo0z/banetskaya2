@@ -108,6 +108,23 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Фикс шрифта AppSans + фоны бланка + устойчивый soffice (DOCX→PDF)"
+    implemented: true
+    working: true
+    file: "document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Баг на Windows-сборке: _ensure_fonts ставил _FONTS_READY=True даже когда TTF не найден -> _font() возвращал незарегистрированный 'AppSans' -> ошибка при генерации PDF ('appsans') и пустой предпросмотр. Исправлено: _FONTS_READY=True только при реальной регистрации + fallback на шрифты Windows/системные; AppSans-Bold всегда создаётся (алиас на regular при отсутствии). Также _resolve_soffice/_soffice_candidates перебирают bundled+системный LibreOffice, convert_to_pdf пробует всех кандидатов с понятной ошибкой. Дополнительно: spec бандлит backend/assets (шрифты+скан бланка), workflow ставит LibreOffice полной установкой (есть soffice.bin), а не admin-extract."
+        - working: true
+          agent: "testing"
+          comment: "✅ 6/6 (100%). overlay/generate card=147x103 и a4 -> валидные PDF с кириллицей ('Штамп','СООБЩЕНИЕ','Иванов'); form-background и background -> валидные PNG; contracts/preview?format=pdf (DOCX->PDF через LibreOffice) -> валидный PDF 4 стр. с кириллицей ('ДОГОВОР','г. Минск'); stats -> 200. Ошибки 'Can not find font: appsans' нет, fallback шрифтов работает."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 6 тестов прошли успешно (100% success rate). КРИТИЧЕСКИЙ ФИКС ПОДТВЕРЖДЁН: Шрифт AppSans работает корректно, кириллица отображается в PDF. (1) POST /api/overlay/generate {records:[{fio:'Иванов Иван Иванович',address:'г. Минск',from_day:'1',from_month:'июля',from_year:'25',to_day:'1',to_month:'июля',to_year:'26'}], page_size:'card', with_form:true} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер страницы РОВНО 416.69×291.97 pt (147×103 мм, проверено через pymupdf). Извлечён текст первой страницы через pymupdf.get_text() — кириллица присутствует ('Штамп', 'органа регистрации', 'СООБЩЕНИЕ', 'Гр.', 'зарегистрирован(а)' и т.д.), шрифт AppSans зарегистрирован и работает БЕЗ ошибки 'Can't find font: appsans'. (2) POST /api/overlay/generate с page_size:'a4', with_form:true → 200, валидный PDF, размер страницы 595.28×841.89 pt (A4). (3) GET /api/overlay/form-background → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 56860 байт (> 1000 байт). (4) GET /api/overlay/background → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 747920 байт (скан бланка). (5) КОНВЕРТАЦИЯ ДОГОВОРА (DOCX→PDF через LibreOffice): GET /api/fields → 200, 17 полей доступны; POST /api/contracts/preview?format=pdf с минимальным набором полей {contract_number:'TEST-001', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567'} → 200, валидный PDF начинается с %PDF, 4 страницы. Извлечён текст первой страницы — кириллица присутствует ('ДОГОВОР', 'найма жилого помещения', 'г. Минск', 'Белорусский государственный медицинский колледж', 'Наймодатель', 'Колледж', 'директора Катовой Ольги Николаевны'), LibreOffice soffice работает корректно, НЕ падает с ошибкой про шрифт 'appsans' или 'Can't find font'. (6) GET /api/stats → 200, JSON с полями total, drafts, this_month, datasets, recent. Все backend API полностью функциональны. Фикс шрифта AppSans работает: _FONTS_READY=True только при реальной регистрации TTF, fallback на системные шрифты (Liberation Sans, Arial, Tahoma, Segoe UI, Calibri), AppSans-Bold создаётся как алиас на regular при отсутствии bold-версии. LibreOffice установлен и работает (convert_to_pdf с изолированным профилем -env:UserInstallation, ретрай, перебор кандидатов). Готово к финализации."
   - task: "Десктоп: версия и автообновление GET /api/app-version, GET /api/updates/check, POST /api/updates/apply"
     implemented: true
     working: true
@@ -892,4 +909,39 @@ agent_communication:
         9. GET /api/sample-template (1/1 тест): → 200, Content-Type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (Excel файл) ✅
         
         ВАЖНО: Все backend API полностью функциональны. Новые эндпоинты версии/обновления работают корректно в облачном окружении (не frozen, REPO пуст — это ожидаемое поведение). Регрессии не обнаружено. Готово к финализации.
+
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend (FastAPI, /api). Проверяем фикс генерации PDF (шрифт AppSans), фоны бланка и конвертацию DOCX→PDF. Для PDF используй pymupdf.
+        
+        КОНТЕКСТ: раньше при отсутствии TTF-шрифта код всё равно пытался использовать незарегистрированный шрифт "AppSans" → reportlab падал. Исправлено. На этом сервере шрифты есть, поэтому всё должно работать; задача — подтвердить, что генерация PDF реально работает и не падает по шрифту.
+        
+        ТЕСТЫ:
+        1. POST /api/overlay/generate тело {"records":[{"fio":"Иванов Иван Иванович","address":"г. Минск","from_day":"1","from_month":"июля","from_year":"25","to_day":"1","to_month":"июля","to_year":"26"}],"page_size":"card","with_form":true} → 200, Content-Type application/pdf, валидный PDF (%PDF), размер страницы ~416.69×291.97 pt (147×103 мм). Открой pymupdf-ом и извлеки текст первой страницы — там должна быть кириллица (например "Иванов" или "Минск"), т.е. шрифт с кириллицей отработал.
+        2. POST /api/overlay/generate с "page_size":"a4","with_form":true, те же records → 200 PDF, страница ~595×842 pt.
+        3. GET /api/overlay/form-background → 200 image/png, тело > 1000 байт (валидное PNG \x89PNG).
+        4. GET /api/overlay/background → 200 image/png (скан бланка).
+        5. КОНВЕРТАЦИЯ ДОГОВОРА (DOCX→PDF через LibreOffice): найди рабочий поток генерации договора. Сначала GET /api/fields чтобы узнать поля. Затем сгенерируй PDF договора — вероятно POST /api/generate или /api/contracts (посмотри доступные роуты через OpenAPI /openapi.json или /docs) с минимальным набором полей. Ожидается 200 и валидный PDF (%PDF). Если для конвертации нужен предварительно загруженный шаблон/данные и это невозможно без доступа — сообщи какой роут и почему, но проверь хотя бы что запрос НЕ падает с ошибкой про шрифт "appsans" или "Can't find font".
+        6. GET /api/stats → 200.
+        
+        Верни чёткий отчёт: какие PDF валидны, извлечённый текст (подтверждение кириллицы), и результат конвертации договора.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 6 тестов прошли (100% success rate).
+        
+        КРИТИЧЕСКИЙ ФИКС ШРИФТА AppSans ПОДТВЕРЖДЁН:
+        
+        1. POST /api/overlay/generate (card, with_form=true) (1/1 тест): → 200, Content-Type application/pdf ✅, валидный PDF начинается с %PDF ✅, размер страницы РОВНО 416.69×291.97 pt (147×103 мм, проверено через pymupdf doc[0].rect) ✅. КИРИЛЛИЦА ИЗВЛЕЧЕНА через pymupdf.get_text(): 'Штамп', 'органа регистрации', 'СООБЩЕНИЕ', 'Гр.', 'зарегистрирован(а)', 'по месту пребывания', 'Документ' — шрифт AppSans зарегистрирован и работает БЕЗ ошибки 'Can't find font: appsans' ✅
+        
+        2. POST /api/overlay/generate (a4, with_form=true) (1/1 тест): → 200, валидный PDF начинается с %PDF ✅, размер страницы 595.28×841.89 pt (A4) ✅
+        
+        3. GET /api/overlay/form-background (1/1 тест): → 200, Content-Type image/png ✅, валидный PNG начинается с \x89PNG ✅, размер 56860 байт (> 1000 байт требование выполнено) ✅
+        
+        4. GET /api/overlay/background (1/1 тест): → 200, Content-Type image/png ✅, валидный PNG начинается с \x89PNG ✅, размер 747920 байт (скан бланка) ✅
+        
+        5. КОНВЕРТАЦИЯ ДОГОВОРА (DOCX→PDF через LibreOffice) (1/1 тест): GET /api/fields → 200, 17 полей доступны ✅; POST /api/contracts/preview?format=pdf с минимальным набором полей {contract_number:'TEST-001', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567'} → 200 ✅, валидный PDF начинается с %PDF ✅, 4 страницы ✅. КИРИЛЛИЦА ИЗВЛЕЧЕНА через pymupdf.get_text(): 'ДОГОВОР', 'найма жилого помещения', 'г. Минск', 'Белорусский государственный медицинский колледж', 'Наймодатель', 'Колледж', 'директора Катовой Ольги Николаевны' — LibreOffice soffice работает корректно, НЕ падает с ошибкой про шрифт 'appsans' или 'Can't find font' ✅
+        
+        6. GET /api/stats (1/1 тест): → 200 JSON с полями total, drafts, this_month, datasets, recent ✅
+        
+        ВАЖНО: Все backend API полностью функциональны. Фикс шрифта AppSans работает: _FONTS_READY=True только при реальной регистрации TTF (Liberation Sans найден в /usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf), fallback на системные шрифты (Liberation Sans, Arial, Tahoma, Segoe UI, Calibri), AppSans-Bold создаётся как алиас на regular при отсутствии bold-версии. LibreOffice установлен и работает (convert_to_pdf с изолированным профилем -env:UserInstallation, ретрай, перебор кандидатов _soffice_candidates). Кириллица отображается корректно в обоих типах PDF (overlay и contract). Готово к финализации.
 

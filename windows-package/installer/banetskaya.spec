@@ -10,6 +10,7 @@ ICON = os.path.join(SPECPATH, "assets", "icon.ico")
 
 datas = [
     (os.path.join(BACKEND, "templates"), "templates"),
+    (os.path.join(BACKEND, "assets"), "assets"),
     (os.path.join(ROOT, "frontend", "build"), "frontend_build"),
 ]
 # Bundled portable MongoDB (downloaded by the CI workflow into resources/mongodb)
