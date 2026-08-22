@@ -108,7 +108,21 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
-  - task: "Профили раскладки бланка: CRUD /api/overlay/profiles + активный профиль"
+  - task: "Самодиагностика: GET /api/health/diagnostics (экран «Проверка системы»)"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВОЕ: эндпоинт самодиагностики для экрана «Проверка системы» (нужен, т.к. агент не запускает .exe — приложение проверяет себя само на машине пользователя). GET /api/health/diagnostics → 200 JSON {checks:[{key,label,ok,detail,info?}], all_ok, is_desktop, platform}. checks включает: mongo (ping БД), fonts (кириллица/AppSans), assets (скан бланка), template (contract_template.docx), libreoffice (найден soffice), pdf (самотест build_overlay → %PDF), printers (в Linux info=true, ok=true; в Windows проверяет наличие). ПРОВЕРИТЬ: (1) GET /api/health/diagnostics → 200, есть ключи checks(массив, len>=6), all_ok(bool), is_desktop(bool), platform(str). (2) В облаке (Linux) mongo.ok=true (БД поднята), fonts.ok=true, assets.ok=true, template.ok=true, pdf.ok=true; printers присутствует с info=true и ok=true. (3) Каждый элемент checks имеет ключи key,label,ok,detail. (4) all_ok == (все checks[].ok true). НЕ трогать договоры/историю."
+        - working: true
+          agent: "testing"
+          comment: "✅ ТЕСТ ПРОШЁЛ УСПЕШНО (100%). GET /api/health/diagnostics → 200 JSON с ВСЕМИ требуемыми ключами. СТРУКТУРА ОТВЕТА: checks (7 элементов >= 6), all_ok (bool), is_desktop (bool), platform (str). ВАЛИДАЦИЯ CHECKS: Все 7 проверок содержат обязательные ключи (key, label, ok, detail); info опционально присутствует у printers. ВСЕ ОЖИДАЕМЫЕ КЛЮЧИ ПРИСУТСТВУЮТ: mongo, fonts, assets, template, libreoffice, pdf, printers. ПРОВЕРКИ В ОБЛАКЕ (LINUX): ✅ mongo.ok=true (detail='Подключение активно'); ✅ fonts.ok=true (detail='Шрифт AppSans зарегистрирован'); ✅ assets.ok=true (detail='/app/backend/assets/soobshenie_blank.png'); ✅ template.ok=true (detail='/app/backend/templates/contract_template.docx'); ✅ libreoffice.ok=true (detail='/usr/bin/soffice'); ✅ pdf.ok=true (detail='58771 байт' — генерация PDF бланка работает); ✅ printers: ok=true, info=true (detail='Проверка доступна только в Windows-приложении' — корректное информационное сообщение на Linux). ЛОГИКА all_ok: Проверена корректность — all_ok=true совпадает с логическим AND всех checks[].ok (все 7 проверок прошли). ОКРУЖЕНИЕ: ✅ is_desktop=false (облако); ✅ platform='linux'. Все критические проверки (mongo, fonts, assets, template, pdf) прошли успешно. Эндпоинт самодиагностики полностью функционален и готов к использованию в экране «Проверка системы»."
+
     implemented: true
     working: true
     file: "server.py"
@@ -369,12 +383,11 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "2.5"
-  test_sequence: 6
+  test_sequence: 7
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Профили раскладки бланка: CRUD /api/overlay/profiles + активный профиль"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -382,33 +395,47 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: >
-        Протестируй ТОЛЬКО backend, ТОЛЬКО задачу «Профили раскладки бланка: CRUD /api/overlay/profiles +
-        активный профиль». 8 проверок в status_history задачи (авто-сид, create/read/update/delete,
-        active-profile, граница «нельзя удалить последний» → 400, 404 на несуществующий). Учти: create
-        делает профиль активным; после тестов оставь хотя бы 1 профиль. Договоры/историю НЕ трогать.
+        Протестируй ТОЛЬКО backend, ТОЛЬКО задачу «Самодиагностика: GET /api/health/diagnostics».
+        4 проверки в status_history. Ключевое: 200 JSON с checks(массив>=6 элементов, каждый с
+        key/label/ok/detail), all_ok(bool)==все ok, is_desktop(bool), platform(str); в Linux-облаке
+        mongo/fonts/assets/template/pdf → ok=true, printers → info=true & ok=true. Договоры/историю
+        и профили НЕ трогать.
     - agent: "testing"
       message: >
-        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 8 тестов прошли (100% success rate).
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО (1/1 тест, 100% success rate).
         
-        НОВЫЙ ФУНКЦИОНАЛ «ПРОФИЛИ РАСКЛАДКИ БЛАНКА» РАБОТАЕТ ПОЛНОСТЬЮ:
+        ЭНДПОИНТ САМОДИАГНОСТИКИ РАБОТАЕТ ПОЛНОСТЬЮ:
         
-        1. GET /api/overlay/profiles (initial) → 200, возвращает {profiles:[...], active_id}; найден 1 профиль (авто-сид из legacy overlay_layout), active_id непустой; первый профиль содержит ВСЕ требуемые поля: id, name, layout (23 поля, непустой массив), dx_mm, dy_mm, rotate, constants (объект).
+        GET /api/health/diagnostics → 200 JSON с корректной структурой:
+        - checks: 7 элементов (>= 6 требование выполнено)
+        - all_ok: true (boolean)
+        - is_desktop: false (boolean, корректно для облака)
+        - platform: "linux" (string)
         
-        2. POST /api/overlay/profiles (create) → 200, создан профиль 'Kyocera' с id (UUID), dx_mm=1, dy_mm=2, rotate=90, constants.reg_organ={value:'ОГиМ',locked:true}; layout по умолчанию непустой (23 поля).
+        ВАЛИДАЦИЯ СТРУКТУРЫ CHECKS:
+        ✅ Все 7 проверок содержат обязательные ключи: key (string), label (string), ok (boolean), detail (string)
+        ✅ Опциональный ключ info (boolean) присутствует у printers
         
-        3. GET /api/overlay/profiles (after create) → 200, созданный профиль присутствует, active_id равен созданному профилю (create делает профиль активным — подтверждено).
+        ВСЕ ОЖИДАЕМЫЕ ПРОВЕРКИ ПРИСУТСТВУЮТ:
+        ✅ mongo, fonts, assets, template, libreoffice, pdf, printers
         
-        4. PUT /api/overlay/profiles/{id} (update) → 200, значения обновились: name='Kyocera-2', dx_mm=3, dy_mm=0, rotate=270, layout содержит 1 поле (key='fio'), constants={}.
+        РЕЗУЛЬТАТЫ ПРОВЕРОК В ОБЛАКЕ (LINUX):
+        ✅ mongo: ok=true, detail="Подключение активно" — БД работает
+        ✅ fonts: ok=true, detail="Шрифт AppSans зарегистрирован" — кириллица поддерживается
+        ✅ assets: ok=true, detail="/app/backend/assets/soobshenie_blank.png" — скан бланка найден
+        ✅ template: ok=true, detail="/app/backend/templates/contract_template.docx" — шаблон договора найден
+        ✅ libreoffice: ok=true, detail="/usr/bin/soffice" — LibreOffice установлен
+        ✅ pdf: ok=true, detail="58771 байт" — генерация PDF бланка работает корректно
+        ✅ printers: ok=true, info=true, detail="Проверка доступна только в Windows-приложении" — корректное информационное сообщение на Linux (не ошибка)
         
-        5. POST /api/overlay/active-profile (set active) → 200 {active_id}; GET /api/overlay/profiles → active_id совпадает — смена активного профиля работает.
+        ЛОГИКА all_ok:
+        ✅ all_ok=true корректно вычислен как логическое AND всех checks[].ok (все 7 проверок прошли)
         
-        6. DELETE /api/overlay/profiles/{id} → 200 {deleted:true}; GET /api/overlay/profiles → профиль удалён.
+        ОКРУЖЕНИЕ:
+        ✅ is_desktop=false (корректно для облачного окружения)
+        ✅ platform="linux" (корректно)
         
-        7. ГРАНИЦА (несуществующий ID): PUT /api/overlay/profiles/no-such-id → 404; DELETE /api/overlay/profiles/no-such-id → 404.
-        
-        8. ГРАНИЦА (нельзя удалить последний): DELETE последнего профиля → 400 с detail='Нельзя удалить последний профиль' — защита работает корректно.
-        
-        После тестов остался 1 профиль в системе (требование выполнено). Все backend API полностью функциональны.
+        Все критические проверки (mongo, fonts, assets, template, pdf) прошли успешно. Эндпоинт самодиагностики полностью функционален и готов к использованию в экране «Проверка системы». Backend API работает корректно.
 
 
 

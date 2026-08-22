@@ -319,6 +319,12 @@ export async function exportHistory(q = "", status = "") {
   downloadBlob(res.data, parseFilename(res.headers, "Реестр_договоров.xlsx"));
 }
 
+// ---------- System diagnostics ----------
+export async function getDiagnostics() {
+  const { data } = await api.get("/health/diagnostics");
+  return data; // { checks:[{key,label,ok,detail,info?}], all_ok, is_desktop, platform }
+}
+
 // ---------- Reg-authority profile ----------
 export async function getRegProfile() {
   const { data } = await api.get("/reg-profile");

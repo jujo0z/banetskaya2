@@ -75,6 +75,11 @@
 - **ВАЖНО (инфраструктура):** при передаче в этот контейнер отсутствовали `backend/.env` и `frontend/.env` — восстановлены (MONGO_URL=mongodb://localhost:27017, DB_NAME=banetskaya_db; REACT_APP_BACKEND_URL=preview-домен). На VPS/Windows свои .env — не путать.
 - **В работе / запрошено пользователем далее**: (было) РЕДИЗАЙН — сделан; сейчас акцент на функционале печати — сделан.
 
+## 10. Профили раскладки + самодиагностика + CI smoke-тест (готово, протестировано)
+- **Профили размещения** (`db.overlay_profiles`, только для «Печать на бланке»): GET/POST/PUT/DELETE `/api/overlay/profiles`, POST `/api/overlay/active-profile`. Профиль = layout + dx/dy + rotate + constants({key:{value,locked}}). Авто-сид «Профиль 1» из legacy `overlay_layout`. Нельзя удалить последний (400). Frontend `BlankOverlay.js`: панель профилей (Сохранить/Новый/Дублировать/Переименовать/Удалить), замок на поле = «постоянное» (константа, синим на бланке), «Добавить поле» (кастомные поля с custom:true), «Стандартные поля». Тест 8/8.
+- **Самодиагностика**: GET `/api/health/diagnostics` → {checks:[mongo,fonts,assets,template,libreoffice,pdf,printers], all_ok, is_desktop, platform}. `docsvc.run_diagnostics()`. Frontend страница `Diagnostics.js` (маршрут `/diagnostics`, пункт меню «Проверка системы» в группе Система). Смысл: агент не запускает .exe → приложение проверяет себя на машине пользователя. Тест ок.
+- **CI smoke-тест**: `windows-package/smoke_test.py` + job `smoke` (ubuntu) в `windows-installer.yml`, `build` зависит от него (`needs: smoke`). Гоняет build_overlay(card/rotate90), build_full_sheets(portrait/landscape), test-sheet, preview-png, run_diagnostics — битые сборки не публикуются.
+
 
 ## 8. Протокол работы с агентом
 - Тестирование: см. `/app/test_result.md` (протокол + история). Backend тестировать `deep_testing_backend_v2`; frontend — только с разрешения пользователя.

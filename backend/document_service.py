@@ -1031,3 +1031,74 @@ def render_form_background_png(scale: float = 3.0) -> bytes:
     doc.close()
     _FORM_BG_CACHE = png
     return png
+
+
+# ---------- System self-diagnostics (для экрана «Проверка системы») ----------
+def run_diagnostics():
+    """Проверяет ключевые компоненты на МАШИНЕ, где запущен backend
+    (в десктоп-приложении — на компьютере пользователя). Возвращает список
+    проверок [{key, label, ok, detail, info?}]. Не требует БД."""
+    import shutil
+    checks = []
+
+    # Шрифты (кириллица)
+    try:
+        _ensure_fonts()
+        checks.append({
+            "key": "fonts", "label": "Шрифты (кириллица)", "ok": bool(_FONTS_READY),
+            "detail": "Шрифт AppSans зарегистрирован" if _FONTS_READY else "Используется системный fallback",
+        })
+    except Exception as e:
+        checks.append({"key": "fonts", "label": "Шрифты (кириллица)", "ok": False, "detail": str(e)})
+
+    # Скан бланка (assets)
+    bp = _overlay_bg_path()
+    checks.append({
+        "key": "assets", "label": "Скан бланка (assets)", "ok": bool(bp),
+        "detail": (str(bp) if bp else "Файл soobshenie_blank.png не найден"),
+    })
+
+    # Шаблон договора
+    checks.append({
+        "key": "template", "label": "Шаблон договора найма", "ok": TEMPLATE_PATH.exists(),
+        "detail": (str(TEMPLATE_PATH) if TEMPLATE_PATH.exists() else "contract_template.docx не найден"),
+    })
+
+    # LibreOffice (для PDF)
+    soffice = SOFFICE_BIN
+    ok_soffice, detail = False, soffice
+    try:
+        if soffice in ("soffice", "/usr/bin/soffice", "/usr/bin/libreoffice"):
+            found = shutil.which(soffice) or (soffice if (soffice.startswith("/") and Path(soffice).exists()) else None)
+            ok_soffice = bool(found)
+            detail = str(found) if found else f"{soffice} (не найден)"
+        else:
+            ok_soffice = Path(soffice).exists()
+            detail = soffice if ok_soffice else f"{soffice} (не найден)"
+    except Exception as e:
+        detail = str(e)
+    checks.append({"key": "libreoffice", "label": "LibreOffice (экспорт в PDF)", "ok": ok_soffice, "detail": detail})
+
+    # Самотест генерации PDF бланка
+    try:
+        pdf = build_overlay([{"fio": "тест"}], page_size="card", with_form=True)
+        ok_pdf = pdf[:4] == b"%PDF"
+        checks.append({"key": "pdf", "label": "Генерация PDF бланка", "ok": ok_pdf, "detail": f"{len(pdf)} байт"})
+    except Exception as e:
+        checks.append({"key": "pdf", "label": "Генерация PDF бланка", "ok": False, "detail": str(e)})
+
+    # Принтеры (только Windows)
+    supported = printing_supported()
+    if supported:
+        prs = list_printers()
+        checks.append({
+            "key": "printers", "label": "Принтеры", "ok": len(prs) > 0,
+            "detail": (f"Найдено принтеров: {len(prs)}" if prs else "Принтеры не найдены"),
+        })
+    else:
+        checks.append({
+            "key": "printers", "label": "Принтеры", "ok": True, "info": True,
+            "detail": "Проверка доступна только в Windows-приложении",
+        })
+
+    return checks

@@ -1042,6 +1042,30 @@ async def list_printers_endpoint():
     return {"supported": docsvc.printing_supported(), "printers": docsvc.list_printers()}
 
 
+@api_router.get("/health/diagnostics")
+async def health_diagnostics():
+    """Self-check for the «Проверка системы» screen: MongoDB, fonts, assets,
+    template, LibreOffice, PDF generation and printers. Runs on the machine
+    where the backend is running (the user's PC in the desktop app)."""
+    checks = docsvc.run_diagnostics()
+    mongo_ok, mongo_detail = False, ""
+    try:
+        await db.command("ping")
+        mongo_ok, mongo_detail = True, "Подключение активно"
+    except Exception as e:  # pragma: no cover
+        mongo_detail = str(e)
+    checks.insert(0, {"key": "mongo", "label": "База данных (MongoDB)",
+                      "ok": mongo_ok, "detail": mongo_detail})
+    all_ok = all(c.get("ok") for c in checks)
+    return {
+        "checks": checks,
+        "all_ok": all_ok,
+        "is_desktop": docsvc.printing_supported(),
+        "platform": sys.platform,
+    }
+
+
+
 @api_router.post("/overlay/print-silent")
 async def overlay_print_silent(req: OverlayPrintRequest):
     """Print the overlay straight to a local printer at actual size — no dialog.

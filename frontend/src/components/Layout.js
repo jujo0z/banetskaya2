@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp, FileText } from "lucide-react";
+import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp, FileText, Activity } from "lucide-react";
 
 const NAV_GROUPS = [
   {
@@ -25,6 +25,7 @@ const NAV_GROUPS = [
   {
     title: "Система",
     items: [
+      { to: "/diagnostics", label: "Проверка системы", icon: Activity, testid: "nav-diagnostics" },
       { to: "/settings", label: "Настройки", icon: Settings, testid: "nav-settings" },
     ],
   },
