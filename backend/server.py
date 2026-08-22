@@ -950,6 +950,38 @@ async def set_app_config(cfg: AppConfig):
     return {"saved": True, **value}
 
 
+# ---------- Reg-authority profile (auto-fills the СООБЩЕНИЕ blank) ----------
+class RegProfile(BaseModel):
+    reg_organ: str = ""
+    chief: str = ""
+    city: str = ""
+
+
+@api_router.get("/reg-profile")
+async def get_reg_profile():
+    s = await db.app_settings.find_one({"key": "reg_profile"})
+    v = (s or {}).get("value", {}) or {}
+    return {
+        "reg_organ": v.get("reg_organ", ""),
+        "chief": v.get("chief", ""),
+        "city": v.get("city", ""),
+    }
+
+
+@api_router.post("/reg-profile")
+async def set_reg_profile(p: RegProfile):
+    value = {
+        "reg_organ": (p.reg_organ or "").strip(),
+        "chief": (p.chief or "").strip(),
+        "city": (p.city or "").strip(),
+    }
+    await db.app_settings.update_one(
+        {"key": "reg_profile"},
+        {"$set": {"key": "reg_profile", "value": value,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"saved": True, **value}
 
 
 app.include_router(api_router)

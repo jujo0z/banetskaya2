@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,7 +28,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye, Pencil, FileClock, FileSpreadsheet, Layers } from "lucide-react";
+import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye, Pencil, FileClock, FileSpreadsheet, Layers, Stamp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
@@ -39,12 +40,17 @@ import {
   savedPdfUrl,
   exportHistory,
   api,
+  contractToOverlay,
+  openOverlayPdf,
+  printOverlaySilent,
 } from "@/lib/apiClient";
+import { IS_DESKTOP } from "@/lib/env";
 import DocumentPreviewDialog from "@/components/DocumentPreviewDialog";
 import DocumentEditor from "@/components/DocumentEditor";
 import ManualDuplexDialog from "@/components/ManualDuplexDialog";
 
 export default function History() {
+  const navigate = useNavigate();
   const [contracts, setContracts] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -53,6 +59,7 @@ export default function History() {
   const [busyId, setBusyId] = useState("");
   const [batching, setBatching] = useState(false);
   const [batchPrinting, setBatchPrinting] = useState(false);
+  const [blankPrinting, setBlankPrinting] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [toDelete, setToDelete] = useState(null);
   const [statusFilter, setStatusFilter] = useState("");
@@ -192,6 +199,34 @@ export default function History() {
     }
   }
 
+  // Open the СООБЩЕНИЕ blank (overlay or full print) with this contract prefilled.
+  function openBlank(c, path) {
+    navigate(path, { state: { prefill: contractToOverlay(c) } });
+  }
+
+  // Batch-print СООБЩЕНИЕ blanks (147×103) for all selected contracts, one job.
+  async function handleBatchBlankPrint() {
+    if (selected.size === 0) return;
+    const records = contracts
+      .filter((c) => selected.has(c.id))
+      .map((c) => contractToOverlay(c));
+    if (records.length === 0) return;
+    setBlankPrinting(true);
+    try {
+      if (IS_DESKTOP) {
+        const res = await printOverlaySilent(records, { pageSize: "card" });
+        toast.success(`Бланки отправлены на печать (147×103 мм): ${res.pages}`);
+      } else {
+        await openOverlayPdf(records, { pageSize: "card" });
+        toast(`PDF из ${records.length} бланков (147×103) открыт — печатайте «Фактический размер» (100%)`);
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось напечатать бланки");
+    } finally {
+      setBlankPrinting(false);
+    }
+  }
+
   function fmtDate(iso) {
     try {
       return new Date(iso).toLocaleString("ru-RU", {
@@ -300,6 +335,17 @@ export default function History() {
           >
             <Layers className="h-4 w-4" />
             Двусторонняя вручную ({selected.size})
+          </Button>
+          <Button
+            variant="outline"
+            className="rounded-none border-[#E11D48]/40 text-[#E11D48] hover:bg-[#E11D48]/10"
+            onClick={handleBatchBlankPrint}
+            disabled={selected.size === 0 || blankPrinting}
+            title="Печать бланков «СООБЩЕНИЕ» 147×103 для выбранных договоров"
+            data-testid="history-batch-blank-btn"
+          >
+            {blankPrinting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Stamp className="h-4 w-4" />}
+            Печать бланков 147×103 ({selected.size})
           </Button>
         </div>
 
@@ -410,6 +456,26 @@ export default function History() {
                         data-testid={`print-${c.id}`}
                       >
                         {busyId === `${c.id}-print` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-none text-[#E11D48] hover:text-[#E11D48] hover:bg-[#E11D48]/10"
+                        onClick={() => openBlank(c, "/blank")}
+                        title="Заполнить бланк «СООБЩЕНИЕ» данными договора"
+                        data-testid={`toblank-${c.id}`}
+                      >
+                        <Stamp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-none text-[#E11D48] hover:text-[#E11D48] hover:bg-[#E11D48]/10"
+                        onClick={() => openBlank(c, "/full-print")}
+                        title="Полная печать бланка с данными договора"
+                        data-testid={`tofull-${c.id}`}
+                      >
+                        <FileText className="h-4 w-4" strokeWidth={2.4} />
                       </Button>
                       <Button
                         variant="ghost"

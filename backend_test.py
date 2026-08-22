@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-Backend testing for overlay printing with exact page size verification.
-Tests the 147×103 mm (card) page size and Linux degradation for silent printing.
+Backend testing for reg-profile endpoints and batch blank generation.
+Tests:
+1. POST /api/reg-profile - save registration organ profile
+2. GET /api/reg-profile - retrieve profile (idempotency)
+3. POST /api/reg-profile with empty body - clear profile
+4. POST /api/overlay/generate with multiple records - batch PDF generation (3 pages, each 147×103 mm)
+5-7. Regression tests (form-background, print-silent, stats)
 """
 import io
 import sys
@@ -299,22 +304,166 @@ def test_regression_stats():
     return True
 
 
+def test_reg_profile_post():
+    """Test 1: POST /api/reg-profile with data
+    Should return 200 JSON {"saved":true,"reg_organ":"ОГиМ Тестовый","chief":"Иванов И.И.","city":"г. Минск"}"""
+    print("\n=== TEST 1: POST /api/reg-profile (set profile) ===")
+    
+    payload = {
+        "reg_organ": "ОГиМ Тестовый",
+        "chief": "Иванов И.И.",
+        "city": "г. Минск"
+    }
+    
+    response = requests.post(f"{BACKEND_URL}/reg-profile", json=payload)
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
+    
+    data = response.json()
+    print(f"Response: {data}")
+    
+    assert data.get("saved") == True, f"Expected saved=true, got {data.get('saved')}"
+    assert data.get("reg_organ") == "ОГиМ Тестовый", f"Expected reg_organ='ОГиМ Тестовый', got {data.get('reg_organ')}"
+    assert data.get("chief") == "Иванов И.И.", f"Expected chief='Иванов И.И.', got {data.get('chief')}"
+    assert data.get("city") == "г. Минск", f"Expected city='г. Минск', got {data.get('city')}"
+    
+    print("✓ Profile saved successfully with correct values")
+    print("✅ TEST 1 PASSED\n")
+    return True
+
+
+def test_reg_profile_get():
+    """Test 2: GET /api/reg-profile
+    Should return 200 JSON with the same values saved in test 1 (idempotency)"""
+    print("\n=== TEST 2: GET /api/reg-profile (idempotency check) ===")
+    
+    response = requests.get(f"{BACKEND_URL}/reg-profile")
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
+    
+    data = response.json()
+    print(f"Response: {data}")
+    
+    assert data.get("reg_organ") == "ОГиМ Тестовый", f"Expected reg_organ='ОГиМ Тестовый', got {data.get('reg_organ')}"
+    assert data.get("chief") == "Иванов И.И.", f"Expected chief='Иванов И.И.', got {data.get('chief')}"
+    assert data.get("city") == "г. Минск", f"Expected city='г. Минск', got {data.get('city')}"
+    
+    print("✓ Profile retrieved successfully with correct values (idempotent)")
+    print("✅ TEST 2 PASSED\n")
+    return True
+
+
+def test_reg_profile_post_empty():
+    """Test 3: POST /api/reg-profile with empty body {}
+    Should return 200 JSON with empty string values"""
+    print("\n=== TEST 3: POST /api/reg-profile (empty body) ===")
+    
+    payload = {}
+    
+    response = requests.post(f"{BACKEND_URL}/reg-profile", json=payload)
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/json" in response.headers.get('Content-Type', ''), "Expected Content-Type application/json"
+    
+    data = response.json()
+    print(f"Response: {data}")
+    
+    assert data.get("saved") == True, f"Expected saved=true, got {data.get('saved')}"
+    assert data.get("reg_organ") == "", f"Expected reg_organ='', got {data.get('reg_organ')}"
+    assert data.get("chief") == "", f"Expected chief='', got {data.get('chief')}"
+    assert data.get("city") == "", f"Expected city='', got {data.get('city')}"
+    
+    print("✓ Profile cleared successfully (empty strings)")
+    print("✅ TEST 3 PASSED\n")
+    return True
+
+
+def test_batch_generate_multipage():
+    """Test 4: POST /api/overlay/generate with 3 records (batch generation)
+    Should return 200, Content-Type application/pdf, EXACTLY 3 pages, each page ~416.69 × 291.97 pt (147×103 mm)"""
+    print("\n=== TEST 4: POST /api/overlay/generate (BATCH: 3 records, page_size='card', with_form=true) ===")
+    
+    payload = {
+        "records": [
+            {"fio": "Первый"},
+            {"fio": "Второй"},
+            {"fio": "Третий"}
+        ],
+        "page_size": "card",
+        "with_form": True
+    }
+    
+    response = requests.post(f"{BACKEND_URL}/overlay/generate", json=payload)
+    
+    print(f"Status Code: {response.status_code}")
+    print(f"Content-Type: {response.headers.get('Content-Type')}")
+    
+    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+    assert "application/pdf" in response.headers.get('Content-Type', ''), "Expected Content-Type application/pdf"
+    
+    # Check PDF validity
+    pdf_bytes = response.content
+    assert pdf_bytes.startswith(b'%PDF'), "PDF should start with %PDF signature"
+    print(f"✓ Valid PDF signature: {pdf_bytes[:8]}")
+    
+    # Open PDF with pymupdf and check page count
+    doc = pymupdf.open(stream=pdf_bytes, filetype='pdf')
+    page_count = len(doc)
+    
+    print(f"Page count: {page_count}")
+    assert page_count == 3, f"Expected EXACTLY 3 pages, got {page_count}"
+    print(f"✓ PDF contains EXACTLY 3 pages")
+    
+    # Check each page size
+    for i in range(page_count):
+        page = doc[i]
+        rect = page.rect
+        width_pt = rect.width
+        height_pt = rect.height
+        
+        print(f"  Page {i+1} size: {width_pt:.2f} × {height_pt:.2f} pt")
+        
+        width_diff = abs(width_pt - CARD_WIDTH_PT)
+        height_diff = abs(height_pt - CARD_HEIGHT_PT)
+        
+        assert width_diff <= TOLERANCE_PT, f"Page {i+1} width {width_pt:.2f} pt differs from expected {CARD_WIDTH_PT:.2f} pt by {width_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
+        assert height_diff <= TOLERANCE_PT, f"Page {i+1} height {height_pt:.2f} pt differs from expected {CARD_HEIGHT_PT:.2f} pt by {height_diff:.2f} pt (tolerance {TOLERANCE_PT} pt)"
+        
+        print(f"  ✓ Page {i+1} size is correct: {width_pt:.2f} × {height_pt:.2f} pt (147×103 mm)")
+    
+    doc.close()
+    
+    print(f"✓ All 3 pages have correct size: ~{CARD_WIDTH_PT:.2f} × {CARD_HEIGHT_PT:.2f} pt (147×103 mm, tolerance ±{TOLERANCE_PT} pt)")
+    print("✅ TEST 4 PASSED\n")
+    return True
+
+
 def main():
     """Run all tests"""
     print("=" * 80)
-    print("BACKEND TESTING: Overlay Printing with Exact Page Size Verification")
-    print("Testing 147×103 mm (card) page size and Linux degradation")
+    print("BACKEND TESTING: Reg-Profile + Batch Blank Generation")
+    print("Testing new reg-profile endpoints and multi-page PDF generation")
     print("=" * 80)
     
     tests = [
-        ("Test 1: overlay/generate card without form", test_overlay_generate_card_without_form),
-        ("Test 2: overlay/generate card with form", test_overlay_generate_card_with_form),
-        ("Test 3: overlay/generate A4", test_overlay_generate_a4),
-        ("Test 4: overlay/print-silent degradation", test_overlay_print_silent_degradation),
-        ("Test 5: printers endpoint", test_printers_endpoint),
-        ("Test 6 (REGRESSION): form-background", test_regression_form_background),
-        ("Test 7 (REGRESSION): overlay/layout", test_regression_overlay_layout),
-        ("Test 8 (REGRESSION): stats", test_regression_stats),
+        ("Test 1: POST /api/reg-profile (set profile)", test_reg_profile_post),
+        ("Test 2: GET /api/reg-profile (idempotency)", test_reg_profile_get),
+        ("Test 3: POST /api/reg-profile (empty body)", test_reg_profile_post_empty),
+        ("Test 4: BATCH overlay/generate (3 records, 3 pages)", test_batch_generate_multipage),
+        ("Test 5 (REGRESSION): form-background", test_regression_form_background),
+        ("Test 6 (REGRESSION): overlay/print-silent degradation", test_overlay_print_silent_degradation),
+        ("Test 7 (REGRESSION): stats", test_regression_stats),
     ]
     
     passed = 0

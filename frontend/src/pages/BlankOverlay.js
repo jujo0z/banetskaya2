@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,11 +32,18 @@ import {
   openOverlayTestSheet,
   getPrinters,
   printOverlaySilent,
+  getRegProfile,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const BG_URL = `${BACKEND_URL}/api/overlay/background`;
+// Обязательные поля бланка «СООБЩЕНИЕ» (проверяются перед печатью).
+export const REQUIRED_KEYS = [
+  "fio", "address",
+  "from_day", "from_month", "from_year",
+  "to_day", "to_month", "to_year",
+];
 // Physical page: 147 x 103 mm (landscape). Points = mm / 25.4 * 72.
 const PAGE_W_PT = (147 / 25.4) * 72; // ~416.69
 
@@ -108,9 +116,32 @@ export default function BlankOverlay() {
   const [printers, setPrinters] = useState([]);
   const [selectedPrinter, setSelectedPrinter] = useState("");
   const [printing, setPrinting] = useState(false);
+  const [missing, setMissing] = useState(new Set());
+
+  const location = useLocation();
 
   const canvasRef = useRef(null);
   const dragRef = useRef(null);
+
+  // ---- prefill from reg-profile + contract passed via history ----
+  useEffect(() => {
+    const prefill = location.state?.prefill || null;
+    getRegProfile()
+      .then((p) => {
+        setValues((s) => {
+          const next = { ...s };
+          if (p?.reg_organ && !next.reg_organ) next.reg_organ = p.reg_organ;
+          if (p?.chief && !next.chief) next.chief = p.chief;
+          if (prefill) Object.assign(next, prefill);
+          return next;
+        });
+      })
+      .catch(() => {
+        if (prefill) setValues((s) => ({ ...s, ...prefill }));
+      });
+    if (prefill) toast.success("Данные договора подставлены в бланк");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- load layout ----
   useEffect(() => {
@@ -166,7 +197,30 @@ export default function BlankOverlay() {
 
   const scale = cw / PAGE_W_PT; // px per pt on screen
 
-  const setVal = (k, v) => setValues((s) => ({ ...s, [k]: v }));
+  const setVal = (k, v) => {
+    setValues((s) => ({ ...s, [k]: v }));
+    if (v && v.trim()) {
+      setMissing((m) => {
+        if (!m.has(k)) return m;
+        const n = new Set(m);
+        n.delete(k);
+        return n;
+      });
+    }
+  };
+
+  // Returns true if all required fields are filled; otherwise highlights them.
+  const checkRequired = () => {
+    const miss = new Set(
+      REQUIRED_KEYS.filter((k) => !((values[k] || "").toString().trim()))
+    );
+    setMissing(miss);
+    if (miss.size > 0) {
+      toast.error(`Заполните обязательные поля (${miss.size}) — подсвечены красным`);
+      return false;
+    }
+    return true;
+  };
 
   const fillRandom = () => {
     setValues(randomRecord());
@@ -216,6 +270,7 @@ export default function BlankOverlay() {
     }
   };
   const doPrint = async () => {
+    if (!checkRequired()) return;
     try {
       await openOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize });
       toast("PDF открыт в новой вкладке — печатайте с масштабом «Фактический размер» (100%)");
@@ -224,6 +279,7 @@ export default function BlankOverlay() {
     }
   };
   const doPrintSilent = async () => {
+    if (!checkRequired()) return;
     setPrinting(true);
     try {
       // Silent printing goes straight to the printer with the physical 147×103 blank
@@ -509,12 +565,15 @@ export default function BlankOverlay() {
                 <div className="space-y-2">
                   {fs.map((f) => (
                     <div key={f.key}>
-                      <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
+                      <Label className="text-[11px] text-muted-foreground">
+                        {f.label}
+                        {REQUIRED_KEYS.includes(f.key) && <span className="text-[#E11D48]"> *</span>}
+                      </Label>
                       <Input
                         value={values[f.key] || ""}
                         onFocus={() => setSelected(f.key)}
                         onChange={(e) => setVal(f.key, e.target.value)}
-                        className="h-8 text-sm"
+                        className={`h-8 text-sm ${missing.has(f.key) ? "border-[#E11D48] ring-1 ring-[#E11D48]" : ""}`}
                         data-testid={`input-${f.key}`}
                       />
                     </div>

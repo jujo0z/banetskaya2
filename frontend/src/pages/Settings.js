@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check, MonitorDown, Save } from "lucide-react";
+import { Download, FileCheck2, Info, Database, Trash2, Bookmark, Loader2, RotateCcw, FileUp, FileText, Check, MonitorDown, Save, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS } from "@/lib/fields";
 import {
   downloadSampleTemplate, seedDemo, clearDemo, getPresets, deletePreset,
   listTemplates, uploadTemplate, activateTemplate, deleteTemplateById,
-  getAppConfig, saveAppConfig,
+  getAppConfig, saveAppConfig, getRegProfile, saveRegProfile,
 } from "@/lib/apiClient";
 
 export default function Settings() {
@@ -19,12 +19,29 @@ export default function Settings() {
   const [tplBusy, setTplBusy] = useState(false);
   const [winUrl, setWinUrl] = useState("");
   const [savingWin, setSavingWin] = useState(false);
+  const [profile, setProfile] = useState({ reg_organ: "", chief: "", city: "" });
+  const [savingProfile, setSavingProfile] = useState(false);
 
   useEffect(() => {
     getPresets().then(setPresets).catch(() => {});
     loadTemplates();
     getAppConfig().then((c) => setWinUrl(c?.windows_download_url || "")).catch(() => {});
+    getRegProfile().then((p) => setProfile({
+      reg_organ: p?.reg_organ || "", chief: p?.chief || "", city: p?.city || "",
+    })).catch(() => {});
   }, []);
+
+  async function handleSaveProfile() {
+    setSavingProfile(true);
+    try {
+      await saveRegProfile(profile);
+      toast.success("Профиль органа сохранён — подставится в бланк автоматически");
+    } catch {
+      toast.error("Не удалось сохранить профиль");
+    } finally {
+      setSavingProfile(false);
+    }
+  }
 
   async function handleSaveWin() {
     setSavingWin(true);
@@ -134,6 +151,61 @@ export default function Settings() {
         <p className="text-muted-foreground mt-2">
           Шаблон договора, поля автозаполнения и образец Excel.
         </p>
+      </div>
+
+      {/* Reg-authority profile */}
+      <div className="bg-card border border-border p-6" data-testid="settings-regprofile-card">
+        <div className="flex items-start gap-4">
+          <div className="h-10 w-10 bg-[#E11D48]/10 flex items-center justify-center shrink-0 rounded-md">
+            <Building2 className="h-5 w-5 text-[#E11D48]" strokeWidth={2} />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-heading text-xl font-bold tracking-tight">Профиль органа регистрации</h2>
+            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+              Наименование органа, начальник и город. Эти значения автоматически подставляются
+              в бланк «СООБЩЕНИЕ» (поля «Орган регистрации», «Начальник») при открытии разделов
+              «Печать на бланке» и «Полная печать».
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 max-w-2xl">
+              <div className="sm:col-span-2">
+                <label className="text-xs text-muted-foreground">Наименование органа регистрации</label>
+                <Input
+                  value={profile.reg_organ}
+                  onChange={(e) => setProfile((s) => ({ ...s, reg_organ: e.target.value }))}
+                  placeholder="напр. ОГиМ Мозырского РОВД"
+                  data-testid="regprofile-organ"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Начальник</label>
+                <Input
+                  value={profile.chief}
+                  onChange={(e) => setProfile((s) => ({ ...s, chief: e.target.value }))}
+                  placeholder="напр. Ковалёв А.А."
+                  data-testid="regprofile-chief"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Город</label>
+                <Input
+                  value={profile.city}
+                  onChange={(e) => setProfile((s) => ({ ...s, city: e.target.value }))}
+                  placeholder="напр. г. Мозырь"
+                  data-testid="regprofile-city"
+                />
+              </div>
+            </div>
+            <Button
+              onClick={handleSaveProfile}
+              disabled={savingProfile}
+              className="mt-4 bg-[#E11D48] hover:bg-[#BE123C]"
+              data-testid="regprofile-save"
+            >
+              {savingProfile ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+              Сохранить профиль
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* Windows installer link */}

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,9 +11,10 @@ import {
   downloadOverlayPdf,
   getPrinters,
   printOverlaySilent,
+  getRegProfile,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
-import { randomRecord } from "@/pages/BlankOverlay";
+import { randomRecord, REQUIRED_KEYS } from "@/pages/BlankOverlay";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const BG_URL = `${BACKEND_URL}/api/overlay/form-background`;
@@ -30,8 +32,30 @@ export default function FullPrint() {
   const [printers, setPrinters] = useState([]);
   const [selectedPrinter, setSelectedPrinter] = useState("");
   const [printing, setPrinting] = useState(false);
+  const [missing, setMissing] = useState(new Set());
 
+  const location = useLocation();
   const canvasRef = useRef(null);
+
+  // prefill from reg-profile + contract passed via history
+  useEffect(() => {
+    const prefill = location.state?.prefill || null;
+    getRegProfile()
+      .then((p) => {
+        setValues((s) => {
+          const next = { ...s };
+          if (p?.reg_organ && !next.reg_organ) next.reg_organ = p.reg_organ;
+          if (p?.chief && !next.chief) next.chief = p.chief;
+          if (prefill) Object.assign(next, prefill);
+          return next;
+        });
+      })
+      .catch(() => {
+        if (prefill) setValues((s) => ({ ...s, ...prefill }));
+      });
+    if (prefill) toast.success("Данные договора подставлены в бланк");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -83,10 +107,33 @@ export default function FullPrint() {
   }, [layout]);
 
   const scale = cw / PAGE_W_PT;
-  const setVal = (k, v) => setValues((s) => ({ ...s, [k]: v }));
+  const setVal = (k, v) => {
+    setValues((s) => ({ ...s, [k]: v }));
+    if (v && v.trim()) {
+      setMissing((m) => {
+        if (!m.has(k)) return m;
+        const n = new Set(m);
+        n.delete(k);
+        return n;
+      });
+    }
+  };
+
+  const checkRequired = () => {
+    const miss = new Set(
+      REQUIRED_KEYS.filter((k) => !((values[k] || "").toString().trim()))
+    );
+    setMissing(miss);
+    if (miss.size > 0) {
+      toast.error(`Заполните обязательные поля (${miss.size}) — подсвечены красным`);
+      return false;
+    }
+    return true;
+  };
 
   const fillRandom = () => {
     setValues(randomRecord());
+    setMissing(new Set());
     toast.success("Заполнено случайными данными");
   };
   const clearAll = () => {
@@ -97,6 +144,7 @@ export default function FullPrint() {
   const opts = () => ({ layout, dx_mm: dx, dy_mm: dy, pageSize: "card", withForm: true });
 
   const doOpen = async () => {
+    if (!checkRequired()) return;
     try {
       await openOverlayPdf([values], opts());
       toast("PDF открыт в новой вкладке — печатайте «Фактический размер» (100%)");
@@ -112,10 +160,11 @@ export default function FullPrint() {
     }
   };
   const doPrintSilent = async () => {
+    if (!checkRequired()) return;
     setPrinting(true);
     try {
       const res = await printOverlaySilent([values], { ...opts(), printerName: selectedPrinter });
-      toast.success(`Отправлено на печать: ${res.printer}`);
+      toast.success(`Отправлено на печать (147×103 мм): ${res.printer}`);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Ошибка печати");
     } finally {
@@ -240,11 +289,14 @@ export default function FullPrint() {
                 <div className="space-y-2">
                   {fs.map((f) => (
                     <div key={f.key}>
-                      <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
+                      <Label className="text-[11px] text-muted-foreground">
+                        {f.label}
+                        {REQUIRED_KEYS.includes(f.key) && <span className="text-[#E11D48]"> *</span>}
+                      </Label>
                       <Input
                         value={values[f.key] || ""}
                         onChange={(e) => setVal(f.key, e.target.value)}
-                        className="h-8 text-sm"
+                        className={`h-8 text-sm ${missing.has(f.key) ? "border-[#E11D48] ring-1 ring-[#E11D48]" : ""}`}
                         data-testid={`input-${f.key}`}
                       />
                     </div>

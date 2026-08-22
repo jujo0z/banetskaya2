@@ -108,6 +108,23 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Профиль органа регистрации: GET/POST /api/reg-profile + пакетная генерация бланков (мультистраничный PDF 147×103)"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Новые эндпоинты профиля органа (для автозаполнения бланка). Проверить: (1) POST /api/reg-profile {reg_organ:'ОГиМ',chief:'Иванов И.И.',city:'г. Минск'} -> 200 {saved:true, reg_organ, chief, city}; (2) GET /api/reg-profile -> 200 c теми же значениями (идемпотентно после POST); (3) POST /api/reg-profile с пустым телом {} -> 200 (пустые строки). ПАКЕТНАЯ ПЕЧАТЬ (мультизапись): (4) POST /api/overlay/generate {records:[{fio:'A'},{fio:'B'},{fio:'C'}], page_size:'card', with_form:true} -> 200 application/pdf, PDF содержит РОВНО 3 страницы, каждая ~416.69×291.97 pt (147×103 мм). Для числа страниц/размеров используй pymupdf (len(doc), doc[i].rect)."
+        - working: true
+          agent: "testing"
+          comment: "✅ 7/7 (100%). POST/GET /api/reg-profile сохраняет и идемпотентно возвращает {reg_organ,chief,city}; пустое тело обнуляет. Пакет: overlay/generate с 3 записями -> PDF ровно 3 страницы, каждая 416.69×291.97 pt (147×103 мм). Регрессия (form-background, print-silent 400 на Linux, stats) ок."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 7 тестов прошли успешно (100% success rate). ПРОФИЛЬ ОРГАНА РЕГИСТРАЦИИ (3/3 теста): (1) POST /api/reg-profile {reg_organ:'ОГиМ Тестовый', chief:'Иванов И.И.', city:'г. Минск'} → 200 JSON {saved:true, reg_organ:'ОГиМ Тестовый', chief:'Иванов И.И.', city:'г. Минск'} — профиль сохранён корректно; (2) GET /api/reg-profile → 200 JSON с ТОЧНО теми же значениями (reg_organ:'ОГиМ Тестовый', chief:'Иванов И.И.', city:'г. Минск') — идемпотентность подтверждена; (3) POST /api/reg-profile с пустым телом {} → 200 JSON {saved:true, reg_organ:'', chief:'', city:''} — профиль очищен (пустые строки). ПАКЕТНАЯ ГЕНЕРАЦИЯ БЛАНКОВ (1/1 тест): (4) POST /api/overlay/generate {records:[{fio:'Первый'},{fio:'Второй'},{fio:'Третий'}], page_size:'card', with_form:true} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, содержит РОВНО 3 страницы (проверено через pymupdf len(doc)==3), КАЖДАЯ страница имеет размер РОВНО 416.69 × 291.97 pt (147×103 мм, допуск ±1.5pt выполнен для всех 3 страниц, проверено через pymupdf doc[i].rect). РЕГРЕССИЯ (3/3 теста): ✅ GET /api/overlay/form-background → 200 image/png, валидный PNG начинается с \\x89PNG, размер 56860 байт; ✅ POST /api/overlay/print-silent {records:[{fio:'X'}], page_size:'card'} → 400 (Bad Request), detail='Тихая печать доступна только в установленном Windows-приложении.' — грейсфул деградация на Linux работает корректно; ✅ GET /api/stats → 200 JSON с ключами total, drafts, this_month, datasets, recent. Все backend API полностью функциональны. Профиль органа регистрации работает идемпотентно, пакетная генерация создаёт мультистраничный PDF с точными размерами страниц 147×103 мм."
   - task: "Тихая печать бланка ровно 147×103 мм (page_size=card) + деградация на Linux"
     implemented: true
     working: true
@@ -775,3 +792,43 @@ agent_communication:
         5. GET /api/stats (2/2 теста): → 200 ✅, JSON с ключами total, drafts, this_month, datasets, recent ✅
         
         ВАЖНО: Все backend API полностью функциональны. Новая фича GET /api/overlay/form-background работает корректно и возвращает чистую векторную форму (не скан-фото). Регрессии не обнаружено. Готово к финализации.
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend (FastAPI, префикс /api). Новые эндпоинты профиля органа + пакетная генерация бланков. Для PDF используй pymupdf.
+        
+        1. POST /api/reg-profile с телом {"reg_organ":"ОГиМ Тестовый","chief":"Иванов И.И.","city":"г. Минск"} → 200, JSON {"saved":true,"reg_organ":"ОГиМ Тестовый","chief":"Иванов И.И.","city":"г. Минск"}.
+        2. GET /api/reg-profile → 200, вернёт ровно те значения, что были сохранены в п.1 (идемпотентность).
+        3. POST /api/reg-profile с телом {} → 200, значения пустые строки.
+        4. ПАКЕТ: POST /api/overlay/generate с телом {"records":[{"fio":"Первый"},{"fio":"Второй"},{"fio":"Третий"}], "page_size":"card", "with_form":true} → 200, Content-Type application/pdf. Открой PDF через pymupdf: должно быть РОВНО 3 страницы, и КАЖДАЯ страница ~416.69 × 291.97 pt (147×103 мм, допуск ±1.5pt).
+        
+        РЕГРЕССИЯ (кратко):
+        5. GET /api/overlay/form-background → 200 image/png.
+        6. POST /api/overlay/print-silent {"records":[{"fio":"X"}],"page_size":"card"} → 400 (Linux, ожидаемо).
+        7. GET /api/stats → 200 JSON.
+        
+        ВАЖНО: восстанови профиль после тестов не требуется, но учти что п.3 обнулит профиль — это ок.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 7 тестов прошли (100% success rate).
+        
+        ПРОФИЛЬ ОРГАНА РЕГИСТРАЦИИ (3/3 теста):
+        
+        1. POST /api/reg-profile (1/1 тест): с телом {reg_organ:'ОГиМ Тестовый', chief:'Иванов И.И.', city:'г. Минск'} → 200 JSON {saved:true, reg_organ:'ОГиМ Тестовый', chief:'Иванов И.И.', city:'г. Минск'} — профиль сохранён корректно ✅
+        
+        2. GET /api/reg-profile (1/1 тест): → 200 JSON с ТОЧНО теми же значениями (reg_organ:'ОГиМ Тестовый', chief:'Иванов И.И.', city:'г. Минск') — идемпотентность подтверждена ✅
+        
+        3. POST /api/reg-profile с пустым телом (1/1 тест): {} → 200 JSON {saved:true, reg_organ:'', chief:'', city:''} — профиль очищен (пустые строки) ✅
+        
+        ПАКЕТНАЯ ГЕНЕРАЦИЯ БЛАНКОВ (1/1 тест):
+        
+        4. POST /api/overlay/generate (BATCH, 3 records) (1/1 тест): с телом {records:[{fio:'Первый'},{fio:'Второй'},{fio:'Третий'}], page_size:'card', with_form:true} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, содержит РОВНО 3 страницы (проверено через pymupdf len(doc)==3), КАЖДАЯ страница имеет размер РОВНО 416.69 × 291.97 pt (147×103 мм, допуск ±1.5pt выполнен для всех 3 страниц, проверено через pymupdf doc[i].rect) ✅
+        
+        РЕГРЕССИЯ (3/3 теста):
+        
+        5. GET /api/overlay/form-background (1/1 тест): → 200 image/png, валидный PNG начинается с \x89PNG, размер 56860 байт ✅
+        
+        6. POST /api/overlay/print-silent (1/1 тест): {records:[{fio:'X'}], page_size:'card'} → 400 (Bad Request), detail='Тихая печать доступна только в установленном Windows-приложении.' — грейсфул деградация на Linux работает корректно ✅
+        
+        7. GET /api/stats (1/1 тест): → 200 JSON с ключами total, drafts, this_month, datasets, recent ✅
+        
+        ВАЖНО: Все backend API полностью функциональны. Профиль органа регистрации работает идемпотентно (сохранение → чтение → очистка). Пакетная генерация создаёт мультистраничный PDF с точными размерами страниц 147×103 мм для каждой записи. Регрессии не обнаружено. Готово к финализации.

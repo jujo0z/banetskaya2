@@ -281,3 +281,29 @@ export async function exportHistory(q = "", status = "") {
   const res = await api.get("/contracts/export", { params, responseType: "blob" });
   downloadBlob(res.data, parseFilename(res.headers, "Реестр_договоров.xlsx"));
 }
+
+// ---------- Reg-authority profile ----------
+export async function getRegProfile() {
+  const { data } = await api.get("/reg-profile");
+  return data; // { reg_organ, chief, city }
+}
+
+export async function saveRegProfile(profile) {
+  const { data } = await api.post("/reg-profile", profile);
+  return data;
+}
+
+// Map a saved contract (договор найма) to the СООБЩЕНИЕ overlay field keys.
+// Only the reliably-overlapping text fields are mapped; split date fields
+// (day/month/year) are left for the operator to fill.
+export function contractToOverlay(c = {}) {
+  const f = c.fields || c || {};
+  const out = {};
+  if (f.full_name) out.fio = f.full_name;
+  if (f.birth_date) out.birth = f.citizenship ? `${f.birth_date}, ${f.citizenship}` : f.birth_date;
+  if (f.reg_address || f.registration_address) out.address = f.registration_address || f.reg_address;
+  if (f.passport_number) out.passport_number = f.passport_number;
+  if (f.passport_issued_by) out.issued_by = f.passport_issued_by;
+  if (f.contract_number) out.number = f.contract_number;
+  return out;
+}
