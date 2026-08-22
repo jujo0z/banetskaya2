@@ -3,16 +3,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Printer, Eye, Download, Shuffle, Eraser, FileText } from "lucide-react";
+import { Printer, Download, Shuffle, Eraser, FileText } from "lucide-react";
 import {
   getOverlayLayout,
-  overlayPdfUrl,
   openOverlayPdf,
   downloadOverlayPdf,
   getPrinters,
@@ -22,7 +15,7 @@ import { IS_DESKTOP } from "@/lib/env";
 import { randomRecord } from "@/pages/BlankOverlay";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const BG_URL = `${BACKEND_URL}/api/overlay/background`;
+const BG_URL = `${BACKEND_URL}/api/overlay/form-background`;
 const PAGE_W_PT = (147 / 25.4) * 72; // ~416.69
 
 // Full print always renders the scanned blank as background + data, sized 147x103 mm.
@@ -33,8 +26,6 @@ export default function FullPrint() {
   const [dy, setDy] = useState(0);
   const [loading, setLoading] = useState(true);
   const [cw, setCw] = useState(700);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
   // desktop silent printing
   const [printers, setPrinters] = useState([]);
   const [selectedPrinter, setSelectedPrinter] = useState("");
@@ -105,15 +96,6 @@ export default function FullPrint() {
 
   const opts = () => ({ layout, dx_mm: dx, dy_mm: dy, pageSize: "card", withForm: true });
 
-  const doPreview = async () => {
-    try {
-      const url = await overlayPdfUrl([values], opts());
-      setPreviewUrl(url);
-      setPreviewOpen(true);
-    } catch (e) {
-      toast.error("Ошибка предпросмотра");
-    }
-  };
   const doOpen = async () => {
     try {
       await openOverlayPdf([values], opts());
@@ -152,7 +134,7 @@ export default function FullPrint() {
           <FileText className="h-8 w-8 text-[#E11D48]" /> Полная печать
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Печать всего документа на обычном белом листе: бланк рисуется по скану + данные поверх.
+          Печать всего документа на обычном белом листе: бланк набирается заново (чистый типографский вид) + данные.
           Размер 147×103 мм. Готовый бумажный бланк не нужен.
         </p>
       </div>
@@ -195,7 +177,7 @@ export default function FullPrint() {
             })}
           </div>
           <p className="text-[11px] text-white/50 mt-2">
-            Позиции полей берутся из раскладки, настроенной в разделе «Печать на бланке».
+            Так документ и напечатается на белом листе. Позиции полей — из раскладки раздела «Печать на бланке».
           </p>
         </div>
 
@@ -242,13 +224,10 @@ export default function FullPrint() {
           )}
 
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={doPreview} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="btn-preview">
-              <Eye className="h-4 w-4 mr-2" /> Предпросмотр
-            </Button>
-            <Button onClick={doOpen} variant="outline" data-testid="btn-open">
+            <Button onClick={doOpen} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="btn-open">
               <Printer className="h-4 w-4 mr-2" /> Открыть/Печать PDF
             </Button>
-            <Button onClick={doDownload} variant="outline" className="col-span-2" data-testid="btn-download">
+            <Button onClick={doDownload} variant="outline" data-testid="btn-download">
               <Download className="h-4 w-4 mr-2" /> Скачать PDF
             </Button>
           </div>
@@ -276,18 +255,6 @@ export default function FullPrint() {
           </div>
         </div>
       </div>
-
-      {/* Preview dialog */}
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Предпросмотр (полный документ)</DialogTitle>
-          </DialogHeader>
-          {previewUrl && (
-            <iframe title="fullprint-preview" src={previewUrl} className="w-full h-[70vh] rounded-md bg-white" />
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

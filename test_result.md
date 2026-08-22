@@ -108,6 +108,23 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Чистый векторный фон бланка: GET /api/overlay/form-background (для «Полной печати»)"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Новый эндпоинт GET /api/overlay/form-background — рендерит чистую векторную форму «СООБЩЕНИЕ» (без данных) как PNG через pymupdf (docsvc.render_form_background_png, кэшируется). Используется как фон живого предпросмотра в разделе «Полная печать» вместо скана фотографии. Также мелко подправлены координаты SOOBSHENIE_LAYOUT (date_year 27.5->29.5, address 43->44.5) чтобы значения не наезжали на «20»/подпись. Проверить: (1) GET /api/overlay/form-background -> 200, Content-Type image/png, тело начинается с PNG-сигнатуры (\\x89PNG); (2) РЕГРЕССИЯ: POST /api/overlay/generate с with_form=true, page_size=card -> 200 валидный PDF (%PDF); GET /api/overlay/background (скан) -> 200 image/png; GET /api/overlay/layout -> 200; GET /api/stats -> 200."
+        - working: true
+          agent: "testing"
+          comment: "✅ 17/17 тестов прошли (100%). GET /api/overlay/form-background -> 200 image/png, валидное PNG (\\x89PNG), 56860 байт — чистая векторная форма без данных. Регрессия без ошибок: overlay/generate (card/a4, with_form=true) -> валидный PDF; overlay/background (скан) -> 200 image/png; overlay/layout -> 200; stats -> 200."
+        - working: true
+          agent: "testing"
+          comment: "✅ Все 17 тестов прошли успешно (100% success rate). НОВЫЙ ЭНДПОИНТ РАБОТАЕТ ПОЛНОСТЬЮ: (1) GET /api/overlay/form-background → 200, Content-Type: image/png, тело начинается с валидной PNG-сигнатуры \\x89PNG, размер 56860 байт (> 1000 байт требование выполнено). Это чистая векторная форма «СООБЩЕНИЕ» без данных, отрендеренная через pymupdf. РЕГРЕССИЯ (5/5 тестов): ✅ POST /api/overlay/generate с {records:[...], page_size:'card', with_form:true} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 59030 байт; ✅ POST /api/overlay/generate с page_size:'a4', with_form:true → 200, валидный PDF, размер 58945 байт; ✅ GET /api/overlay/background (скан-фото) → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 747920 байт; ✅ GET /api/overlay/layout → 200 JSON с ключами layout (23 поля), dx_mm, dy_mm, page_mm; ✅ GET /api/stats → 200 JSON с ключами total, drafts, this_month, datasets, recent. Все backend API полностью функциональны. Новая фича работает корректно, регрессии не обнаружено."
   - task: "LibreOffice восстановлен (soffice) для PDF-конвертации"
     implemented: true
     working: true
@@ -711,3 +728,33 @@ agent_communication:
         ✅ GET /api/stats → 200 JSON с ключом 'total'
         
         ВАЖНО: Тихая печать корректно недоступна на Linux (ожидаемое поведение по дизайну). API контракты соблюдены, грейсфул деградация работает как задумано. Все backend API полностью функциональны. Готово к финализации.
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend приложения (FastAPI, префикс /api). Новая фича + регрессия.
+        НОВЫЙ ЭНДПОИНТ: (1) GET /api/overlay/form-background → должен вернуть 200, Content-Type: image/png, тело — валидное PNG (начинается с байтов \x89PNG, размер > 1000 байт). Это чистая векторная форма «СООБЩЕНИЕ» без данных.
+        РЕГРЕССИЯ (должны продолжать работать): (2) POST /api/overlay/generate с телом {"records":[{"fio":"Иванов Иван Иванович","passport_series":"МР","passport_number":"1234567","date_day":"5","date_year":"25"}], "page_size":"card", "with_form":true} → 200, Content-Type application/pdf, валидный PDF (начинается с %PDF). (3) POST /api/overlay/generate с page_size="a4", with_form=true → 200 валидный PDF. (4) GET /api/overlay/background → 200, Content-Type image/png (это скан-фото, остаётся без изменений). (5) GET /api/overlay/layout → 200 JSON с ключами layout, dx_mm, dy_mm, page_mm. (6) GET /api/stats → 200 JSON.
+        Не пытайся печатать физически (Linux — печать недоступна, это ожидаемо). Сфокусируйся на контрактах и валидности ответов.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 17 тестов прошли (100% success rate).
+        
+        НОВЫЙ ЭНДПОИНТ РАБОТАЕТ ПОЛНОСТЬЮ (4/4 теста):
+        
+        1. GET /api/overlay/form-background (1/1 тест): → 200, Content-Type: image/png ✅
+        2. PNG Signature (1/1 тест): тело начинается с валидной PNG-сигнатуры \x89PNG ✅
+        3. Size Validation (1/1 тест): размер 56860 байт (> 1000 байт требование выполнено) ✅
+        4. Content Validation (1/1 тест): это чистая векторная форма «СООБЩЕНИЕ» без данных, отрендеренная через pymupdf (document_service.py render_form_background_png) ✅
+        
+        РЕГРЕССИЯ (5/5 тестов):
+        
+        1. POST /api/overlay/generate (card, with_form=true) (3/3 теста): → 200, Content-Type application/pdf ✅, валидный PDF начинается с %PDF ✅, размер 59030 байт ✅
+        
+        2. POST /api/overlay/generate (a4, with_form=true) (2/2 теста): → 200 ✅, валидный PDF начинается с %PDF, размер 58945 байт ✅
+        
+        3. GET /api/overlay/background (3/3 теста): → 200 ✅, Content-Type image/png ✅, валидный PNG начинается с \x89PNG, размер 747920 байт (скан-фото) ✅
+        
+        4. GET /api/overlay/layout (3/3 теста): → 200 ✅, JSON с ключами layout, dx_mm, dy_mm, page_mm ✅, layout содержит 23 поля ✅
+        
+        5. GET /api/stats (2/2 теста): → 200 ✅, JSON с ключами total, drafts, this_month, datasets, recent ✅
+        
+        ВАЖНО: Все backend API полностью функциональны. Новая фича GET /api/overlay/form-background работает корректно и возвращает чистую векторную форму (не скан-фото). Регрессии не обнаружено. Готово к финализации.

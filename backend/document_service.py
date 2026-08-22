@@ -512,12 +512,12 @@ SOOBSHENIE_LAYOUT = [
     {"key": "reg_organ",       "label": "Орган регистрации",        "x_pct": 58.0, "y_pct": 9.0,  "font_pt": 9,  "group": "Шапка"},
     {"key": "date_day",        "label": "День (дата сообщения)",    "x_pct": 8.0,  "y_pct": 15.5, "font_pt": 9,  "group": "Шапка"},
     {"key": "date_month",      "label": "Месяц (дата сообщения)",   "x_pct": 13.5, "y_pct": 15.5, "font_pt": 9,  "group": "Шапка"},
-    {"key": "date_year",       "label": "Год (20__)",               "x_pct": 27.5, "y_pct": 15.5, "font_pt": 9,  "group": "Шапка"},
+    {"key": "date_year",       "label": "Год (20__)",               "x_pct": 29.5, "y_pct": 15.5, "font_pt": 9,  "group": "Шапка"},
     {"key": "number",          "label": "№ сообщения",              "x_pct": 11.0, "y_pct": 20.0, "font_pt": 9,  "group": "Шапка"},
     {"key": "fio",             "label": "ФИО",                       "x_pct": 11.0, "y_pct": 28.5, "font_pt": 10, "group": "Гражданин"},
     {"key": "fio2",            "label": "ФИО (2-я строка)",          "x_pct": 7.0,  "y_pct": 36.0, "font_pt": 10, "group": "Гражданин"},
     {"key": "birth",           "label": "Год и место рождения",      "x_pct": 7.0,  "y_pct": 41.5, "font_pt": 10, "group": "Гражданин"},
-    {"key": "address",         "label": "Адрес пребывания",          "x_pct": 43.0, "y_pct": 44.5, "font_pt": 9,  "group": "Регистрация"},
+    {"key": "address",         "label": "Адрес пребывания",          "x_pct": 44.5, "y_pct": 44.5, "font_pt": 9,  "group": "Регистрация"},
     {"key": "address2",        "label": "Адрес (2-я строка)",        "x_pct": 7.0,  "y_pct": 50.5, "font_pt": 9,  "group": "Регистрация"},
     {"key": "passport_series", "label": "Серия",                     "x_pct": 13.0, "y_pct": 61.0, "font_pt": 9,  "group": "Документ"},
     {"key": "passport_number", "label": "Номер",                     "x_pct": 24.0, "y_pct": 61.0, "font_pt": 9,  "group": "Документ"},
@@ -794,3 +794,31 @@ def build_overlay_test_sheet(blank_mm=SOOBSHENIE_PAGE_MM, page_size="card", dx_m
     c.save()
     buf.seek(0)
     return buf.getvalue()
+
+
+
+# --- Clean vector form background (no data) for the "Полная печать" preview ---
+_FORM_BG_CACHE = None
+
+
+def render_form_background_png(scale: float = 3.0) -> bytes:
+    """Render the clean vector СООБЩЕНИЕ form (no data) as a PNG image.
+
+    Used by the "Полная печать" live preview so the operator sees exactly the
+    typed document that will be printed on plain paper — NOT the scanned photo
+    (that scan stays only in the overlay-on-blank mode).
+    """
+    global _FORM_BG_CACHE
+    if _FORM_BG_CACHE is not None:
+        return _FORM_BG_CACHE
+
+    import pymupdf
+
+    pdf_bytes = build_overlay([], layout=SOOBSHENIE_LAYOUT, page_size="card", with_form=True)
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[0]
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+    png = pix.tobytes("png")
+    doc.close()
+    _FORM_BG_CACHE = png
+    return png

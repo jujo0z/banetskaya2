@@ -911,6 +911,21 @@ async def overlay_background():
     return FileResponse(str(p), media_type="image/png")
 
 
+@api_router.get("/overlay/form-background")
+async def overlay_form_background():
+    """Clean vector СООБЩЕНИЕ form (no data) — used by «Полная печать» preview.
+
+    Unlike /overlay/background (a scanned photo, used only in the overlay-on-blank
+    mode), this returns the typed document exactly as it will be printed on plain
+    paper, so the full-print preview no longer relies on the scanned photo."""
+    try:
+        png = docsvc.render_form_background_png()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось отрисовать бланк: {e}")
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 # ---------- App config (e.g. Windows installer download link) ----------
 class AppConfig(BaseModel):
     windows_download_url: str = ""
