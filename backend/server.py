@@ -1199,26 +1199,46 @@ _SHUTDOWN_HOOK = None
 # ONLY armed by the desktop entrypoint — the web/VPS server never auto-exits.
 import time as _time
 _LAST_PING = _time.time()
+_GOT_FIRST_PING = False
 
 
 @api_router.get("/_ping")
 async def keepalive_ping():
-    global _LAST_PING
+    global _LAST_PING, _GOT_FIRST_PING
     _LAST_PING = _time.time()
+    _GOT_FIRST_PING = True
     return {"ok": True}
 
 
-def start_idle_watchdog(timeout: float = 30.0):
+def start_idle_watchdog(timeout: float = 30.0, initial_grace: float = 180.0):
     """Desktop-only: exit the process if no keep-alive ping arrives within
-    `timeout` seconds (i.e. the app window was closed)."""
+    `timeout` seconds (i.e. the app window was closed).
+
+    `initial_grace`: on the very FIRST launch the Edge/Chrome window with a
+    fresh profile can take a long time to cold-start before the UI sends its
+    first ping. Until that first ping arrives we wait up to `initial_grace`
+    seconds instead of `timeout`, so a slow first start is never mistaken for
+    a closed window (which caused ERR_CONNECTION_REFUSED after ~30s)."""
     global _LAST_PING
     _LAST_PING = _time.time()
     import threading
 
     def _loop():
+        start = _time.time()
         while True:
             _time.sleep(5)
-            if _time.time() - _LAST_PING > timeout:
+            now = _time.time()
+            if not _GOT_FIRST_PING:
+                # still waiting for the window to finish loading the UI
+                if now - start > initial_grace:
+                    try:
+                        if _SHUTDOWN_HOOK:
+                            _SHUTDOWN_HOOK()
+                    except Exception:
+                        pass
+                    os._exit(0)
+                continue
+            if now - _LAST_PING > timeout:
                 try:
                     if _SHUTDOWN_HOOK:
                         _SHUTDOWN_HOOK()

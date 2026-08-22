@@ -83,6 +83,23 @@ def wait_port(host: str, port: int, timeout: float = 40.0) -> bool:
     return False
 
 
+def wait_http_ready(url: str, timeout: float = 60.0) -> bool:
+    """Confirm the backend actually SERVES HTTP (not just an open TCP socket)
+    before we point the window at it. Avoids the Edge --app window loading a
+    moment too early and showing ERR_CONNECTION_REFUSED."""
+    import urllib.request
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:
+                if 200 <= getattr(r, "status", r.getcode()) < 500:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
 def start_mongo(base: Path, data_dir: Path, log_dir: Path):
     global _MONGO_PROC
     # A previous copy (or a hard-killed run) may have left MongoDB running.
@@ -226,10 +243,21 @@ def _run():
         stop_mongo()
         return
 
+    # Confirm HTTP is actually served before opening the window. Use a normal
+    # endpoint (NOT /api/_ping) so this readiness probe does not count as the
+    # UI's first keep-alive ping (which would cancel the watchdog grace period).
+    if not wait_http_ready(f"http://{HOST}:{PORT}/api/app-config", 60):
+        print("[warn] backend port open but HTTP not confirmed — opening window anyway")
+    else:
+        print("[info] backend HTTP ready")
+
     # Keep the local server alive only while the app window is open: the UI pings
     # /api/_ping; when pings stop (window closed) the watchdog exits the process.
+    # A generous initial grace lets a slow first-time Edge cold-start finish
+    # loading before its first ping (otherwise the server was killed after ~30s
+    # → ERR_CONNECTION_REFUSED in the window).
     try:
-        server.start_idle_watchdog(30)
+        server.start_idle_watchdog(30, 240)
     except Exception as e:
         print("[warn] watchdog not started:", e)
 

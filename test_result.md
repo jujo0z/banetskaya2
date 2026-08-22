@@ -108,7 +108,18 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
-  - task: "Фикс soffice.bin на Windows: корректный file:// URI профиля LibreOffice + реальный тест в диагностике"
+  - task: "Фикс ERR_CONNECTION_REFUSED в десктоп-окне: льготный период idle-watchdog + HTTP-readiness перед открытием окна"
+    implemented: true
+    working: "NA"
+    file: "server.py, desktop_main.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "БАГ (пользователь): установленный .exe при запуске показывал «отказано в подключении» в окне Edge. startup.log ЗДОРОВЫЙ (Mongo up, server up, окно открыто) — значит сервер стартовал, но соединение отвергалось. RCA: idle-watchdog (start_idle_watchdog(30)) убивал процесс, если за 30с не пришёл keep-alive /api/_ping; при ПЕРВОМ запуске Edge с чистым профилем + медленный холодный старт (в логе даже import server занял ~30с) первый пинг от UI приходил ПОЗЖЕ 30с → сервер уже мёртв → refused. ФИКС: (1) server.start_idle_watchdog(timeout=30, initial_grace=180): пока не пришёл ПЕРВЫЙ пинг — ждём до initial_grace секунд (не убиваем); после первого пинга — обычный timeout 30с (быстрый выход при закрытии окна). Флаг _GOT_FIRST_PING в keepalive_ping. (2) desktop_main вызывает start_idle_watchdog(30, 240). (3) desktop_main: перед открытием окна wait_http_ready('/api/app-config') подтверждает, что HTTP реально отвечает (не только TCP-порт открыт); используется НЕ /_ping, чтобы readiness-проба не засчиталась как первый keep-alive. ПРОВЕРИТЬ (регрессия на Linux, сам Windows-баг тут не воспроизвести): (1) GET /api/_ping → 200 {ok:true} (несколько раз). (2) GET /api/health/diagnostics → 200 all_ok=true. (3) GET /api/overlay/profiles → 200. (4) GET /api/fields → 200 и POST /api/contracts/preview?format=pdf → 200 валидный PDF (не задето). (5) Импорт server.py без ошибок (бэкенд поднят). ПРИМЕЧАНИЕ: idle-watchdog на web/VPS НЕ активируется (arm только из desktop_main), поэтому на облаке поведение не меняется."
+
     implemented: true
     working: true
     file: "document_service.py"
@@ -401,7 +412,8 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Фикс ERR_CONNECTION_REFUSED в десктоп-окне: льготный период idle-watchdog + HTTP-readiness перед открытием окна"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
