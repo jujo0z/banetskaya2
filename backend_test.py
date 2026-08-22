@@ -7,7 +7,7 @@ break the working Linux path.
 import requests
 import sys
 
-BASE_URL = "https://df5d1aab-d151-43c7-81f6-15cafa62422e.preview.emergentagent.com/api"
+BASE_URL = "https://work-progress-49.preview.emergentagent.com/api"
 
 def test_fields():
     """Test 1: GET /api/fields → 200 (список полей договора)"""
