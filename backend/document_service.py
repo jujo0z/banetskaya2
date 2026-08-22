@@ -509,7 +509,12 @@ def convert_to_pdf(docx_bytes: bytes) -> bytes:
         docx_file = tmp_path / "contract.docx"
         docx_file.write_bytes(docx_bytes)
         profile_dir = tmp_path / "lo_profile"
-        profile_uri = "file://" + str(profile_dir)
+        # ВАЖНО: правильный file:// URI на всех ОС. На Windows str(path) = "C:\..."
+        # и "file://" + str(path) даёт БИТЫЙ URI (file://C:\...), из-за чего
+        # LibreOffice не создаёт профиль и падает с ошибкой soffice.bin.
+        # Path.as_uri() формирует корректный file:///C:/... (и file:///tmp/... на Linux).
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        profile_uri = profile_dir.as_uri()
 
         last_err = None
         candidates = []
@@ -1038,7 +1043,6 @@ def run_diagnostics():
     """Проверяет ключевые компоненты на МАШИНЕ, где запущен backend
     (в десктоп-приложении — на компьютере пользователя). Возвращает список
     проверок [{key, label, ok, detail, info?}]. Не требует БД."""
-    import shutil
     checks = []
 
     # Шрифты (кириллица)
@@ -1064,19 +1068,20 @@ def run_diagnostics():
         "detail": (str(TEMPLATE_PATH) if TEMPLATE_PATH.exists() else "contract_template.docx не найден"),
     })
 
-    # LibreOffice (для PDF)
+    # LibreOffice (реальный тест конвертации DOCX→PDF)
     soffice = SOFFICE_BIN
-    ok_soffice, detail = False, soffice
     try:
-        if soffice in ("soffice", "/usr/bin/soffice", "/usr/bin/libreoffice"):
-            found = shutil.which(soffice) or (soffice if (soffice.startswith("/") and Path(soffice).exists()) else None)
-            ok_soffice = bool(found)
-            detail = str(found) if found else f"{soffice} (не найден)"
-        else:
-            ok_soffice = Path(soffice).exists()
-            detail = soffice if ok_soffice else f"{soffice} (не найден)"
+        from docx import Document as _Docx
+        _buf = io.BytesIO()
+        _doc = _Docx()
+        _doc.add_paragraph("Тест конвертации — проверка LibreOffice (кириллица)")
+        _doc.save(_buf)
+        pdf = convert_to_pdf(_buf.getvalue())
+        ok_soffice = pdf[:4] == b"%PDF"
+        detail = f"OK · {soffice}" if ok_soffice else f"Не создан PDF · {soffice}"
     except Exception as e:
-        detail = str(e)
+        ok_soffice = False
+        detail = f"{str(e)[:220]} · {soffice}"
     checks.append({"key": "libreoffice", "label": "LibreOffice (экспорт в PDF)", "ok": ok_soffice, "detail": detail})
 
     # Самотест генерации PDF бланка

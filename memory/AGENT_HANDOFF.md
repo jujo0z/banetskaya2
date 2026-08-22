@@ -59,6 +59,7 @@
 - **Desktop-окно**: только Edge `--app` + keep-alive watchdog; НЕ возвращать pywebview.
 - **Workflow YAML**: не использовать PowerShell here-string `@" "@` (ломает YAML). Проверять `actionlint`.
 - **UUID**, не Mongo ObjectID. Все API под `/api`.
+- **soffice.bin на Windows (ФИКС)**: в `convert_to_pdf` профиль LibreOffice задаётся через `-env:UserInstallation`. НЕЛЬЗЯ строить URI как `"file://" + str(path)` — на Windows путь `C:\...` даёт битый `file://C:\...`, LO падает с ошибкой soffice.bin (на Linux `/...` давал валидный URI, потому баг был не виден в контейнере). Правильно: `profile_dir.as_uri()`. Диагностика (`run_diagnostics`) реально конвертирует тестовый DOCX→PDF и показывает stderr — так Windows-проблемы видны на экране «Проверка системы» у пользователя.
 
 ## 6. Тестовые учётки
 - `memory/test_credentials.md` — пуст (аутентификации у приложения нет; это внутренний инструмент администратора).

@@ -108,7 +108,21 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
-  - task: "Самодиагностика: GET /api/health/diagnostics (экран «Проверка системы»)"
+  - task: "Фикс soffice.bin на Windows: корректный file:// URI профиля LibreOffice + реальный тест в диагностике"
+    implemented: true
+    working: true
+    file: "document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "БАГ (сообщил пользователь): в установленном Windows .exe при просмотре договора падало с ошибкой LibreOffice про soffice.bin. RCA: в convert_to_pdf profile_uri формировался как 'file://' + str(profile_dir); на Windows путь 'C:\\...\\lo_profile' → БИТЫЙ URI 'file://C:\\...' → LibreOffice не создаёт -env:UserInstallation профиль и падает (soffice.bin). На Linux путь с '/' давал валидный file:///tmp/... — поэтому в контейнере работало, а в .exe нет. ФИКС: profile_dir.mkdir(...) + profile_uri = profile_dir.as_uri() (корректный file:///C:/... на Windows и file:///tmp/... на Linux). Плюс усилена диагностика: проверка 'libreoffice' теперь РЕАЛЬНО конвертирует крошечный DOCX→PDF (docx→convert_to_pdf) и показывает точную ошибку stderr, если что — чтобы на машине пользователя экран «Проверка системы» пинпоинтил проблему. ПРОВЕРИТЬ на Linux (регрессия — что не сломал рабочий путь): (1) GET /api/fields → 200. (2) POST /api/contracts/preview?format=pdf с минимальным набором полей → 200, валидный PDF (%PDF), несколько страниц, кириллица в тексте (pymupdf). (3) GET /api/health/diagnostics → 200, элемент checks с key='libreoffice' имеет ok=true и detail начинается с 'OK' (реальная конвертация прошла), pdf.ok=true, all_ok=true. (4) POST /api/overlay/generate card → 200 (не задет). ПРИМЕЧАНИЕ: сам Windows-баг проверяется только пересборкой .exe + экраном «Проверка системы» у пользователя; здесь верифицируем отсутствие регрессии на Linux."
+        - working: true
+          agent: "testing"
+          comment: "✅ РЕГРЕССИОННОЕ ТЕСТИРОВАНИЕ ПРОШЛО УСПЕШНО (4/4 теста, 100% success rate). ФИКС НЕ СЛОМАЛ РАБОЧИЙ LINUX-ПУТЬ: (1) GET /api/fields → 200, возвращает 17 полей договора. (2) POST /api/contracts/preview?format=pdf с минимальным набором полей {contract_number:'TEST-URI', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 77531 байт, 4 страницы (проверено через pymupdf len(doc)==4), первая страница содержит кириллицу ('ДОГОВОР' найден в тексте через pymupdf.get_text()). Конвертация DOCX→PDF через LibreOffice работает корректно с изолированным профилем (profile_uri = profile_dir.as_uri()). (3) GET /api/health/diagnostics → 200, структура ответа корректна (checks, all_ok, is_desktop, platform); элемент checks с key='libreoffice' имеет ok=true и detail='OK · /usr/bin/soffice' (реальная конвертация DOCX→PDF прошла успешно); элемент checks с key='pdf' имеет ok=true и detail='58771 байт'; all_ok=true (все проверки прошли). Усиленная диагностика работает: проверка 'libreoffice' теперь РЕАЛЬНО конвертирует тестовый DOCX→PDF (не просто проверяет наличие soffice). (4) POST /api/overlay/generate {records:[{fio:'Тест'}], page_size:'card'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 28629 байт. Все backend API полностью функциональны. ФИКС Path.as_uri() корректно формирует file:///tmp/... URI на Linux (не сломал рабочий путь). Windows-баг (file://C:\...) будет проверен пользователем на экране «Проверка системы» после пересборки .exe."
+
     implemented: true
     working: true
     file: "server.py, document_service.py"
@@ -382,8 +396,8 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.5"
-  test_sequence: 7
+  version: "2.6"
+  test_sequence: 8
   run_ui: false
 
 test_plan:
@@ -395,11 +409,12 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: >
-        Протестируй ТОЛЬКО backend, ТОЛЬКО задачу «Самодиагностика: GET /api/health/diagnostics».
-        4 проверки в status_history. Ключевое: 200 JSON с checks(массив>=6 элементов, каждый с
-        key/label/ok/detail), all_ok(bool)==все ok, is_desktop(bool), platform(str); в Linux-облаке
-        mongo/fonts/assets/template/pdf → ok=true, printers → info=true & ok=true. Договоры/историю
-        и профили НЕ трогать.
+        НОВЫЙ ПРОГОН. Протестируй ТОЛЬКО backend, задачу «Фикс soffice.bin ... file:// URI профиля
+        LibreOffice». Регрессия на Linux (Windows-баг тут не воспроизвести). 4 проверки: (1) GET
+        /api/fields 200; (2) POST /api/contracts/preview?format=pdf с минимальными полями → 200
+        валидный PDF с кириллицей (pymupdf, несколько страниц); (3) GET /api/health/diagnostics →
+        checks[key=libreoffice].ok=true и detail начинается с 'OK', pdf.ok=true, all_ok=true; (4)
+        POST /api/overlay/generate page_size=card → 200. Данные договоров/историю не ломать.
     - agent: "testing"
       message: >
         ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО (1/1 тест, 100% success rate).
@@ -436,6 +451,25 @@ agent_communication:
         ✅ platform="linux" (корректно)
         
         Все критические проверки (mongo, fonts, assets, template, pdf) прошли успешно. Эндпоинт самодиагностики полностью функционален и готов к использованию в экране «Проверка системы». Backend API работает корректно.
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО backend, задачу «Фикс soffice.bin ... file:// URI профиля LibreOffice». Это регрессионная проверка на Linux (Windows-баг тут не воспроизвести). Базовый URL из frontend/.env (REACT_APP_BACKEND_URL) + /api. Проверки: (1) GET /api/fields → 200 (список полей договора). (2) POST /api/contracts/preview?format=pdf с минимальным набором полей (например: contract_number:'TEST-URI', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567') → 200, Content-Type application/pdf, тело начинается с %PDF, несколько страниц (pymupdf len(doc)>=1), в тексте первой страницы присутствует кириллица (например 'ДОГОВОР'). Это подтверждает, что конвертация DOCX→PDF через LibreOffice НЕ сломана после смены profile_uri на Path.as_uri(). (3) GET /api/health/diagnostics → 200; среди checks найди элемент с key='libreoffice': ok=true и detail начинается с 'OK' (диагностика теперь реально конвертирует DOCX→PDF); также pdf.ok=true; all_ok=true. (4) POST /api/overlay/generate {records:[{fio:'Тест'}], page_size:'card'} → 200 application/pdf (не задет фиксом). Договоры-данные и историю не изменяй деструктивно (preview не сохраняет). Другие задачи не тестируй.
+    - agent: "testing"
+      message: >
+        ✅ РЕГРЕССИОННОЕ ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО (4/4 теста, 100% success rate). ФИКС Path.as_uri() НЕ СЛОМАЛ РАБОЧИЙ LINUX-ПУТЬ.
+        
+        ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+        
+        (1) GET /api/fields → 200, возвращает 17 полей договора. ✅
+        
+        (2) POST /api/contracts/preview?format=pdf с минимальным набором полей {contract_number:'TEST-URI', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 77531 байт. Проверено через pymupdf: 4 страницы (len(doc)==4), первая страница содержит кириллицу ('ДОГОВОР' найден в тексте через pymupdf.get_text()). Конвертация DOCX→PDF через LibreOffice работает корректно с изолированным профилем (profile_uri = profile_dir.as_uri() формирует корректный file:///tmp/... URI на Linux). ✅
+        
+        (3) GET /api/health/diagnostics → 200, структура ответа корректна (checks, all_ok, is_desktop, platform). Элемент checks с key='libreoffice' имеет ok=true и detail='OK · /usr/bin/soffice' (реальная конвертация DOCX→PDF прошла успешно — диагностика теперь РЕАЛЬНО конвертирует тестовый DOCX→PDF, не просто проверяет наличие soffice). Элемент checks с key='pdf' имеет ok=true и detail='58771 байт'. all_ok=true (все проверки прошли). Усиленная диагностика работает корректно. ✅
+        
+        (4) POST /api/overlay/generate {records:[{fio:'Тест'}], page_size:'card'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 28629 байт. Overlay-печать не задета фиксом. ✅
+        
+        ЗАКЛЮЧЕНИЕ: Все backend API полностью функциональны. ФИКС Path.as_uri() корректно формирует file:///tmp/... URI на Linux (не сломал рабочий путь). Windows-баг (file://C:\...) будет проверен пользователем на экране «Проверка системы» после пересборки .exe. Регрессии не обнаружено.
+
 
 
 
