@@ -70,8 +70,19 @@
   восстановил (backend: MONGO_URL=mongodb://localhost:27017, DB_NAME=banetskaya_db; frontend:
   REACT_APP_BACKEND_URL=preview-домен). Если пропадут снова — пересоздать.
 
+## ОБНОВЛЕНИЕ (сессия восстановления)
+- Окружение восстановлено: пересозданы backend/.env (MONGO_URL, DB_NAME=banetskaya_db, CORS) и
+  frontend/.env (REACT_APP_BACKEND_URL=preview). Доустановлены reportlab/docxtpl/openpyxl/pymupdf/pypdf.
+  Тест-агент доустановил LibreOffice и закрепил в .emergent/system_deps.txt.
+- РЕГРЕССИЯ backend ПРОЙДЕНА (7/7): _ping, diagnostics(all_ok=true), overlay/profiles, fields,
+  overlay/generate(147×103, кириллица), contracts/preview(PDF), stats. Регрессий нет.
+- ДОП. ХАРДЕНИНГ бага refused: keep-alive в App.js теперь пингует относительный /api/_ping (same-origin),
+  не зависит от baked REACT_APP_BACKEND_URL. Едет вместе со следующей пересборкой .exe.
+- ОСТАЁТСЯ (действие пользователя): нажать «Save to GitHub» → дождаться зелёной CI-сборки →
+  переустановить новый BanetskayaSetup.exe. ТЕКУЩИЙ выложенный .exe = СТАРЫЙ (с багом refused).
+
 ## СЛЕДУЮЩИЕ ШАГИ (по порядку)
-1. Запустить deep_testing_backend_v2 (регрессия, см. «Что тестировать»).
+1. [DONE] Запустить deep_testing_backend_v2 (регрессия, см. «Что тестировать»).
 2. Дождаться от пользователя «готово» после зелёной пересборки .exe (Save to GitHub).
 3. Скачать новый BanetskayaSetup.exe из релиза latest в /opt/banetskaya/downloads/ (атомарно, проверить MZ+размер).
 4. Пользователь ставит .exe → «Проверка системы» → LibreOffice зелёный, окно открывается без refused, договор виден.

@@ -110,15 +110,18 @@ user_problem_statement: >
 backend:
   - task: "Фикс ERR_CONNECTION_REFUSED в десктоп-окне: льготный период idle-watchdog + HTTP-readiness перед открытием окна"
     implemented: true
-    working: "NA"
+    working: true
     file: "server.py, desktop_main.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
           comment: "БАГ (пользователь): установленный .exe при запуске показывал «отказано в подключении» в окне Edge. startup.log ЗДОРОВЫЙ (Mongo up, server up, окно открыто) — значит сервер стартовал, но соединение отвергалось. RCA: idle-watchdog (start_idle_watchdog(30)) убивал процесс, если за 30с не пришёл keep-alive /api/_ping; при ПЕРВОМ запуске Edge с чистым профилем + медленный холодный старт (в логе даже import server занял ~30с) первый пинг от UI приходил ПОЗЖЕ 30с → сервер уже мёртв → refused. ФИКС: (1) server.start_idle_watchdog(timeout=30, initial_grace=180): пока не пришёл ПЕРВЫЙ пинг — ждём до initial_grace секунд (не убиваем); после первого пинга — обычный timeout 30с (быстрый выход при закрытии окна). Флаг _GOT_FIRST_PING в keepalive_ping. (2) desktop_main вызывает start_idle_watchdog(30, 240). (3) desktop_main: перед открытием окна wait_http_ready('/api/app-config') подтверждает, что HTTP реально отвечает (не только TCP-порт открыт); используется НЕ /_ping, чтобы readiness-проба не засчиталась как первый keep-alive. ПРОВЕРИТЬ (регрессия на Linux, сам Windows-баг тут не воспроизвести): (1) GET /api/_ping → 200 {ok:true} (несколько раз). (2) GET /api/health/diagnostics → 200 all_ok=true. (3) GET /api/overlay/profiles → 200. (4) GET /api/fields → 200 и POST /api/contracts/preview?format=pdf → 200 валидный PDF (не задето). (5) Импорт server.py без ошибок (бэкенд поднят). ПРИМЕЧАНИЕ: idle-watchdog на web/VPS НЕ активируется (arm только из desktop_main), поэтому на облаке поведение не меняется."
+        - working: true
+          agent: "testing"
+          comment: "✅ РЕГРЕССИОННОЕ ТЕСТИРОВАНИЕ ПРОШЛО УСПЕШНО (7/7 тестов, 100% success rate). BACKEND ПОЛНОСТЬЮ РАБОЧИЙ БЕЗ РЕГРЕССИЙ. ВАЖНО: LibreOffice НЕ БЫЛ УСТАНОВЛЕН после восстановления окружения — установлен libreoffice-writer и libreoffice-core, добавлен в /app/.emergent/system_deps.txt для персистентности. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ: (1) GET /api/_ping → 200, {ok:true} — keepalive endpoint работает. (2) GET /api/health/diagnostics → 200, all_ok=true; ВСЕ 7 ПРОВЕРОК ПРОШЛИ: ✓ mongo: ok=true, detail='Подключение активно'; ✓ fonts: ok=true, detail='Шрифт AppSans зарегистрирован'; ✓ assets: ok=true, detail='/app/backend/assets/soobshenie_blank.png'; ✓ template: ok=true, detail='/app/backend/templates/contract_template.docx'; ✓ libreoffice: ok=true, detail='OK · /usr/bin/soffice' (LibreOffice 7.4.7.2 установлен и работает); ✓ pdf: ok=true, detail='58771 байт'; ✓ printers: ok=true, detail='Проверка доступна только в Windows-приложении'. (3) GET /api/overlay/profiles → 200, возвращает 1 профиль (авто-сид работает). (4) GET /api/fields → 200, возвращает 17 полей договора. (5) POST /api/overlay/generate {records:[{fio:'Иванов Иван Иванович',address:'г. Минск'}], page_size:'card', with_form:true} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер страницы РОВНО 416.69×291.97 pt (147×103 мм, допуск ±1.5pt выполнен, проверено через pymupdf doc[0].rect). Извлечён текст первой страницы через pymupdf.get_text() — кириллица присутствует ('Штамп', 'органа регистрации', 'СООБЩЕНИЕ', 'Гр.', 'зарегистрирован(а)', 'Иванов Иван Иванович', 'г. Минск'), шрифт AppSans работает корректно. (6) POST /api/contracts/preview?format=pdf с минимальным набором полей {contract_number:'TEST-001', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 53240 байт, 4 страницы (проверено через pymupdf len(doc)==4). Извлечён текст первой страницы — кириллица присутствует ('ДОГОВОР', 'найма жилого помещения', 'г. Минск', 'Белорусский государственный медицинский колледж', 'Тестов Тест Тестович', 'Республики Беларусь'), LibreOffice конвертация DOCX→PDF работает корректно. (7) GET /api/stats → 200, JSON с ВСЕМИ требуемыми ключами: total=0, drafts=0, this_month=0, datasets=0, recent=[]. Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Windows-специфичный баг ERR_CONNECTION_REFUSED здесь не воспроизводится (ожидаемо), но все связанные эндпоинты (/api/_ping, /api/health/diagnostics) работают корректно на Linux."
 
     implemented: true
     working: true
@@ -1079,3 +1082,52 @@ agent_communication:
         
         ВАЖНО: Все backend API полностью функциональны. Фикс шрифта AppSans работает: _FONTS_READY=True только при реальной регистрации TTF (Liberation Sans найден в /usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf), fallback на системные шрифты (Liberation Sans, Arial, Tahoma, Segoe UI, Calibri), AppSans-Bold создаётся как алиас на regular при отсутствии bold-версии. LibreOffice установлен и работает (convert_to_pdf с изолированным профилем -env:UserInstallation, ретрай, перебор кандидатов _soffice_candidates). Кириллица отображается корректно в обоих типах PDF (overlay и contract). Готово к финализации.
 
+
+    - agent: "main"
+      message: >
+        РЕГРЕССИЯ backend (Linux). Контекст: восстановил окружение в новом контейнере
+        (пересоздал backend/.env и frontend/.env, доустановил reportlab/docxtpl/openpyxl/pymupdf/pypdf,
+        сервисы подняты). Задача «Фикс ERR_CONNECTION_REFUSED в десктоп-окне» — это Windows-специфичный
+        баг, тут НЕ воспроизводится; проверяем только что backend не сломан. Протестируй ТОЛЬКО backend (/api):
+        1) GET /api/_ping → 200 {ok:true}.
+        2) GET /api/health/diagnostics → 200 JSON, поле all_ok=true, в checks присутствуют ключи
+           mongo/fonts/assets/template/libreoffice/pdf/printers (mongo/fonts/assets/template должны быть ok=true).
+        3) GET /api/overlay/profiles → 200 (массив профилей, есть хотя бы один).
+        4) GET /api/fields → 200 (список полей).
+        5) POST /api/overlay/generate {"records":[{"fio":"Иванов Иван Иванович","address":"г. Минск"}],
+           "page_size":"card","with_form":true} → 200 application/pdf, %PDF, страница 147×103 мм
+           (416.69×291.97 pt, проверь pymupdf), кириллица извлекается.
+        6) POST /api/contracts/preview?format=pdf с минимальным набором полей → 200, валидный PDF (%PDF).
+        7) GET /api/stats → 200 JSON.
+        Верни чёткий отчёт: что прошло/упало, и подтверждение отсутствия регрессии.
+
+    - agent: "testing"
+      message: >
+        ✅ РЕГРЕССИОННОЕ ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО (7/7 тестов, 100% success rate). BACKEND ПОЛНОСТЬЮ РАБОЧИЙ БЕЗ РЕГРЕССИЙ.
+        
+        🔧 КРИТИЧЕСКАЯ ПРОБЛЕМА ОБНАРУЖЕНА И ИСПРАВЛЕНА: LibreOffice НЕ БЫЛ УСТАНОВЛЕН после восстановления окружения. Установлен libreoffice-writer и libreoffice-core (версия 7.4.7.2), добавлен в /app/.emergent/system_deps.txt для персистентности после перезапуска контейнера.
+        
+        ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ ТЕСТИРОВАНИЯ:
+        
+        ✅ TEST 1: GET /api/_ping → 200, {ok:true} — keepalive endpoint работает корректно.
+        
+        ✅ TEST 2: GET /api/health/diagnostics → 200, all_ok=true. ВСЕ 7 ПРОВЕРОК ПРОШЛИ:
+          • mongo: ok=true, detail='Подключение активно' — MongoDB работает
+          • fonts: ok=true, detail='Шрифт AppSans зарегистрирован' — кириллица поддерживается
+          • assets: ok=true, detail='/app/backend/assets/soobshenie_blank.png' — скан бланка найден
+          • template: ok=true, detail='/app/backend/templates/contract_template.docx' — шаблон договора найден
+          • libreoffice: ok=true, detail='OK · /usr/bin/soffice' — LibreOffice 7.4.7.2 установлен и работает
+          • pdf: ok=true, detail='58771 байт' — генерация PDF бланка работает корректно
+          • printers: ok=true, detail='Проверка доступна только в Windows-приложении' — корректное информационное сообщение на Linux
+        
+        ✅ TEST 3: GET /api/overlay/profiles → 200, возвращает 1 профиль (авто-сид работает).
+        
+        ✅ TEST 4: GET /api/fields → 200, возвращает 17 полей договора.
+        
+        ✅ TEST 5: POST /api/overlay/generate {records:[{fio:'Иванов Иван Иванович',address:'г. Минск'}], page_size:'card', with_form:true} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 58979 байт. РАЗМЕР СТРАНИЦЫ РОВНО 416.69×291.97 pt (147×103 мм, допуск ±1.5pt выполнен, проверено через pymupdf doc[0].rect). КИРИЛЛИЦА ИЗВЛЕЧЕНА через pymupdf.get_text() (448 символов): 'Штамп', 'органа регистрации', 'СООБЩЕНИЕ', 'Гр.', 'зарегистрирован(а)', 'Иванов Иван Иванович', 'г. Минск' — шрифт AppSans работает корректно.
+        
+        ✅ TEST 6: POST /api/contracts/preview?format=pdf с минимальным набором полей {contract_number:'TEST-001', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 53240 байт, 4 страницы (проверено через pymupdf len(doc)==4). КИРИЛЛИЦА ИЗВЛЕЧЕНА через pymupdf.get_text(): 'ДОГОВОР', 'найма жилого помещения', 'г. Минск', 'Белорусский государственный медицинский колледж', 'Тестов Тест Тестович', 'Республики Беларусь' — LibreOffice конвертация DOCX→PDF работает корректно.
+        
+        ✅ TEST 7: GET /api/stats → 200, JSON с ВСЕМИ требуемыми ключами: total=0, drafts=0, this_month=0, datasets=0, recent=[].
+        
+        ЗАКЛЮЧЕНИЕ: Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Windows-специфичный баг ERR_CONNECTION_REFUSED здесь не воспроизводится (ожидаемо), но все связанные эндпоинты (/api/_ping, /api/health/diagnostics) работают корректно на Linux. Приложение готово к использованию.

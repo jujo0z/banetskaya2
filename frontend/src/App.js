@@ -19,8 +19,10 @@ import { IS_WEB, IS_DESKTOP } from "@/lib/env";
 function useDesktopKeepAlive() {
   useEffect(() => {
     if (!IS_DESKTOP) return;
-    const base = process.env.REACT_APP_BACKEND_URL || "";
-    const ping = () => fetch(`${base}/api/_ping`).catch(() => {});
+    // Same-origin ping: the desktop window is always served by the very local
+    // backend it must keep alive (127.0.0.1:8001), so a relative URL is the most
+    // reliable target and never depends on the build-time REACT_APP_BACKEND_URL.
+    const ping = () => fetch(`/api/_ping`).catch(() => {});
     ping();
     const id = setInterval(ping, 5000);
     return () => clearInterval(id);
