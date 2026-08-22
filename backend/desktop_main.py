@@ -17,8 +17,39 @@ from pathlib import Path
 HOST = "127.0.0.1"
 PORT = 8001
 MONGO_PORT = 27017
+LOCK_PORT = 8766  # loopback port used purely as a single-instance guard
 
 _MONGO_PROC = None
+_LOCK_SOCK = None  # keep the single-instance socket alive for the whole process
+
+
+def _port_in_use(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1.0)
+        return s.connect_ex((host, port)) == 0
+
+
+def acquire_single_instance() -> bool:
+    """Return True if we are the only running instance.
+
+    Binds a fixed loopback port WITHOUT address reuse — a second launch cannot
+    bind the same port and therefore knows another copy is already running.
+    This makes repeated clicks on the icon a no-op instead of spawning several
+    copies that fight over the MongoDB / server ports.
+    """
+    global _LOCK_SOCK
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind((HOST, LOCK_PORT))
+        s.listen(1)
+        _LOCK_SOCK = s
+        return True
+    except OSError:
+        try:
+            s.close()
+        except Exception:
+            pass
+        return False
 
 
 def base_dir() -> Path:
@@ -54,6 +85,12 @@ def wait_port(host: str, port: int, timeout: float = 40.0) -> bool:
 
 def start_mongo(base: Path, data_dir: Path, log_dir: Path):
     global _MONGO_PROC
+    # A previous copy (or a hard-killed run) may have left MongoDB running.
+    # Reuse it instead of starting a second mongod on the same dbpath (which
+    # would fail on the lock file).
+    if _port_in_use("127.0.0.1", MONGO_PORT):
+        print("[info] MongoDB already running on 27017 — reusing it")
+        return None
     # mongod may be bundled either inside the onefile temp (base) or next to the exe.
     candidates = [base / "mongodb" / "mongod.exe", app_root() / "mongodb" / "mongod.exe"]
     mongod = next((c for c in candidates if c.exists()), None)
@@ -125,11 +162,48 @@ def main():
     base = base_dir()
     data = app_data()
 
+    # Log startup so any launch failure can be diagnosed later.
+    try:
+        _log = open(data / "logs" / "startup.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = _log
+        sys.stderr = _log
+        print("\n===== launch", __import__("datetime").datetime.now().isoformat(), "=====")
+    except Exception:
+        pass
+
+    # Single-instance guard: if another copy is already running (or starting),
+    # do nothing so repeated icon clicks never spawn conflicting copies.
+    if not acquire_single_instance():
+        print("[info] another instance is already running — exiting this one")
+        return
+
     os.environ.setdefault("MONGO_URL", f"mongodb://127.0.0.1:{MONGO_PORT}")
     os.environ.setdefault("DB_NAME", "banetskaya_db")
     os.environ.setdefault("CORS_ORIGINS", "*")
     os.environ["SOFFICE_BIN"] = detect_soffice()
     os.environ["SUMATRA_BIN"] = detect_sumatra()
+
+    try:
+        _run()
+    except Exception as e:  # never die silently — record why
+        import traceback
+        print("[fatal] startup failed:", e)
+        traceback.print_exc()
+        stop_mongo()
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                f"Не удалось запустить приложение:\n{e}\n\nПодробности: %LOCALAPPDATA%\\Banetskaya\\logs\\startup.log",
+                "Banetskaya.by", 0x10,
+            )
+        except Exception:
+            pass
+
+
+def _run():
+    base = base_dir()
+    data = app_data()
 
     start_mongo(base, data / "data", data / "logs")
 
@@ -139,10 +213,13 @@ def main():
     # Let the in-app updater stop MongoDB and quit cleanly before the installer runs.
     server.set_shutdown_hook(lambda: (stop_mongo()))
 
-    def run_server():
-        uvicorn.run(server.app, host=HOST, port=PORT, log_level="warning")
+    # Only start our own server if the port is free (it should be — we are the
+    # single instance). Otherwise reuse whatever is already serving.
+    if not _port_in_use(HOST, PORT):
+        def run_server():
+            uvicorn.run(server.app, host=HOST, port=PORT, log_level="warning")
 
-    threading.Thread(target=run_server, daemon=True).start()
+        threading.Thread(target=run_server, daemon=True).start()
 
     if not wait_port(HOST, PORT, 60):
         print("[error] backend did not start in time")
