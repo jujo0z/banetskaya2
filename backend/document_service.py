@@ -540,8 +540,116 @@ def _overlay_bg_path():
     return p if p.exists() else None
 
 
+def _draw_soobshenie_form(c, zone_w, zone_h, zone_top):
+    """Draw a clean, typed СООБЩЕНИЕ form (vector) matching the paper blank 1:1,
+    so «Полная печать» prints a crisp document on plain white paper instead of a
+    photo scan. Coordinates are in percent from the TOP-LEFT of the 147x103 zone,
+    matching SOOBSHENIE_LAYOUT so the data lands on the right lines.
+    """
+    def PX(xp):
+        return xp / 100.0 * zone_w
+
+    def PY(yp):
+        return zone_top - yp / 100.0 * zone_h
+
+    def text(xp, yp, s, size=8, bold=False):
+        c.setFont(_font(bold), size)
+        c.drawString(PX(xp), PY(yp), s)
+
+    def center(xp, yp, s, size=5.2, bold=False):
+        c.setFont(_font(bold), size)
+        c.drawCentredString(PX(xp), PY(yp), s)
+
+    def rule(xp1, xp2, yp):
+        # underline rule slightly below the text baseline
+        y = PY(yp) - 1.2
+        c.setLineWidth(0.4)
+        c.setStrokeColorRGB(0.15, 0.15, 0.2)
+        c.line(PX(xp1), y, PX(xp2), y)
+
+    c.setFillColorRGB(0.1, 0.1, 0.15)
+
+    # --- Штамп block (top-left) ---
+    text(12, 5.5, "Штамп", 8)
+    text(8.5, 8.8, "органа регистрации", 8)
+    # right: наименование органа регистрации
+    rule(55, 93, 9.0)
+    center(74, 12.2, "(наименование органа регистрации)", 5.2)
+    # date line: «__» ____ 20__ г.
+    text(6, 15.5, "«", 8)
+    rule(7.8, 12.5, 15.5)
+    text(12.6, 15.5, "»", 8)
+    rule(13.8, 25.5, 15.5)
+    text(26.0, 15.5, "20", 8)
+    rule(29.0, 33.5, 15.5)
+    text(34.0, 15.5, "г.", 8)
+    # № line
+    text(6, 20.0, "№", 8)
+    rule(9.5, 24.0, 20.0)
+
+    # --- Title ---
+    center(50, 25.2, "СООБЩЕНИЕ", 13, bold=True)
+
+    # --- Citizen ---
+    text(6, 28.5, "Гр.", 8)
+    rule(11.5, 93, 28.5)
+    center(45, 32.0, "(фамилия, собственное имя, отчество, год и место рождения)", 5.2)
+    rule(6, 93, 36.5)
+    rule(6, 93, 42.0)
+
+    # --- Registration ---
+    text(6, 45.0, "зарегистрирован(а) по месту пребывания", 8)
+    rule(43, 93, 45.0)
+    rule(6, 93, 51.0)
+    center(45, 54.0, "(адрес)", 5.2)
+
+    # --- Identity document ---
+    text(6, 57.5, "Документ, удостоверяющий личность: паспорт, вид на жительство", 8)
+    rule(78, 93, 57.5)
+    text(6, 61.0, "серия", 8)
+    rule(11.5, 21.0, 61.0)
+    text(21.5, 61.0, ", №", 8)
+    rule(24.5, 46.0, 61.0)
+    text(46.5, 61.0, ", дата выдачи «", 8)
+    rule(60.5, 66.5, 61.0)
+    text(66.8, 61.0, "»", 8)
+    rule(67.8, 80.0, 61.0)
+    text(85.5, 61.0, "20", 8)
+    rule(88.0, 92.5, 61.0)
+    text(93.0, 61.0, "г.", 8)
+    text(6, 65.8, "кем выдан", 8)
+    rule(16.0, 93, 65.8)
+    center(48, 68.6, "(наименование органа внутренних дел)", 5.2)
+
+    # --- Term ---
+    text(6, 72.5, "с «", 8)
+    rule(9.8, 16.0, 72.5)
+    text(16.2, 72.5, "»", 8)
+    rule(17.2, 33.0, 72.5)
+    text(33.3, 72.5, "20", 8)
+    rule(35.3, 40.0, 72.5)
+    text(40.3, 72.5, "г. по «", 8)
+    rule(44.0, 50.0, 72.5)
+    text(50.2, 72.5, "»", 8)
+    rule(51.2, 68.0, 72.5)
+    text(68.3, 72.5, "20", 8)
+    rule(70.0, 74.5, 72.5)
+    text(74.8, 72.5, "г.", 8)
+
+    # --- Signature ---
+    text(6, 79.0, "Начальник", 8)
+    rule(17, 55, 79.0)
+    rule(60, 90, 79.0)
+    center(36, 81.6, "(наименование органа регистрации)", 5.0)
+    center(75, 81.6, "(подпись)", 5.0)
+    text(6, 85.5, "М.П.", 8)
+
+    # reset for data drawing
+    c.setFillColorRGB(0.05, 0.05, 0.12)
+
+
 def build_overlay(records, layout=None, blank_mm=SOOBSHENIE_PAGE_MM, page_size="card",
-                  dx_mm=0.0, dy_mm=0.0, with_background=False):
+                  dx_mm=0.0, dy_mm=0.0, with_background=False, with_form=False):
     """Generate a multi-page PDF where only the field VALUES are drawn at exact
     positions, sized to the physical blank. Printed on top of a pre-printed form.
 
@@ -586,6 +694,8 @@ def build_overlay(records, layout=None, blank_mm=SOOBSHENIE_PAGE_MM, page_size="
         if bg is not None:
             c.drawImage(bg, 0, zone_top - zone_h, width=zone_w, height=zone_h,
                         preserveAspectRatio=False, mask=None)
+        if with_form:
+            _draw_soobshenie_form(c, zone_w, zone_h, zone_top)
         # On A4 draw a faint placement guide so the pre-printed card can be
         # positioned in the top-left corner (harmless when testing on plain A4).
         if str(page_size).lower() == "a4" and bg is None:

@@ -103,7 +103,7 @@ export default function FullPrint() {
     toast("Поля очищены");
   };
 
-  const opts = () => ({ layout, dx_mm: dx, dy_mm: dy, pageSize: "card", withBackground: true });
+  const opts = () => ({ layout, dx_mm: dx, dy_mm: dy, pageSize: "card", withForm: true });
 
   const doPreview = async () => {
     try {

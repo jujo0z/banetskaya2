@@ -787,6 +787,7 @@ class OverlayGenerateRequest(BaseModel):
     dx_mm: float = 0.0
     dy_mm: float = 0.0
     with_background: bool = False
+    with_form: bool = False
     page_size: str = "card"  # "card" (147x103) | "a4"
 
 
@@ -839,6 +840,7 @@ async def generate_overlay(req: OverlayGenerateRequest):
             dx_mm=req.dx_mm,
             dy_mm=req.dy_mm,
             with_background=req.with_background,
+            with_form=req.with_form,
         )
     except Exception as e:
         logger.exception("overlay generation failed")
@@ -879,6 +881,7 @@ async def overlay_print_silent(req: OverlayPrintRequest):
             dx_mm=req.dx_mm,
             dy_mm=req.dy_mm,
             with_background=req.with_background,
+            with_form=req.with_form,
         )
         docsvc.print_pdf_silent(data, req.printer_name)
     except HTTPException:
