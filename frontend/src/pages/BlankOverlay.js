@@ -122,6 +122,7 @@ export default function BlankOverlay() {
   const [dy, setDy] = useState(0);
   const [rotate, setRotate] = useState(0);
   const [pageSize, setPageSize] = useState("card");
+  const [a4Position, setA4Position] = useState("top-left");
   const [selected, setSelected] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -452,7 +453,7 @@ export default function BlankOverlay() {
   // ---- print actions ----
   const doPreview = async () => {
     try {
-      const url = await overlayPdfUrl([values], { layout, dx_mm: dx, dy_mm: dy, rotate, withBackground: true });
+      const url = await overlayPdfUrl([values], { layout, dx_mm: dx, dy_mm: dy, pageSize, rotate, a4Position, withBackground: true });
       setPreviewUrl(url);
       setPreviewOpen(true);
     } catch (e) {
@@ -462,7 +463,7 @@ export default function BlankOverlay() {
   const doPrint = async () => {
     if (!checkRequired()) return;
     try {
-      await openOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize, rotate });
+      await openOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize, rotate, a4Position });
       toast("PDF открыт в новой вкладке — печатайте «Фактический размер» (100%)");
     } catch (e) {
       toast.error("Ошибка печати");
@@ -473,9 +474,13 @@ export default function BlankOverlay() {
     setPrinting(true);
     try {
       const res = await printOverlaySilent([values], {
-        layout, dx_mm: dx, dy_mm: dy, pageSize: "card", rotate, printerName: selectedPrinter,
+        layout, dx_mm: dx, dy_mm: dy, pageSize, rotate, a4Position, printerName: selectedPrinter,
       });
-      toast.success(`Отправлено на печать (147×103 мм): ${res.printer}`);
+      toast.success(
+        pageSize === "a4"
+          ? `Отправлено на печать (лист A4, бланк в углу): ${res.printer}`
+          : `Отправлено на печать (147×103 мм): ${res.printer}`
+      );
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Ошибка печати");
     } finally {
@@ -484,7 +489,7 @@ export default function BlankOverlay() {
   };
   const doDownload = async () => {
     try {
-      await downloadOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize, rotate });
+      await downloadOverlayPdf([values], { layout, dx_mm: dx, dy_mm: dy, pageSize, rotate, a4Position });
     } catch (e) {
       toast.error("Ошибка скачивания");
     }
@@ -657,7 +662,7 @@ export default function BlankOverlay() {
                 data-testid="paper-card"
               >
                 <div className="font-semibold">147×103 мм</div>
-                <div className="text-[11px] text-muted-foreground">рекомендуется · точно по бланку</div>
+                <div className="text-[11px] text-muted-foreground">если принтер умеет малый формат / A6</div>
               </button>
               <button
                 type="button"
@@ -668,16 +673,58 @@ export default function BlankOverlay() {
                 data-testid="paper-a4"
               >
                 <div className="font-semibold">Лист A4</div>
-                <div className="text-[11px] text-muted-foreground">запасной вариант · бланк в углу</div>
+                <div className="text-[11px] text-muted-foreground">для обычных A4-принтеров · рекомендуется</div>
               </button>
             </div>
-            <div className="mt-3 flex gap-2 text-[11px] text-muted-foreground bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
-              <Info className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-              <span>
-                Вставляете готовый бланк? Выбирайте <b>147×103&nbsp;мм</b>, в драйвере задайте такой же
-                размер (или A6), печать через <b>обходной/ручной лоток</b>, масштаб <b>100%</b>.
-              </span>
-            </div>
+            {pageSize === "a4" ? (
+              <>
+                <div className="mt-3 flex gap-2 text-[11px] text-muted-foreground bg-emerald-500/10 border border-emerald-500/20 rounded-md p-2">
+                  <Info className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <span>
+                    Ваш принтер печатает только A4? Это нормально. Данные лягут в выбранный угол листа
+                    в реальном размере <b>147×103&nbsp;мм</b> и НЕ растянутся. Положите готовый бланк в{" "}
+                    <b>тот&nbsp;же угол</b> листа A4 и печатайте <b>в 100%</b> (без «по размеру страницы» / «вписать»).
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <div className="text-xs font-semibold mb-2">Где на листе A4 лежит бланк</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { key: "top-left", label: "Сверху слева" },
+                      { key: "top-center", label: "Сверху по центру" },
+                      { key: "top-right", label: "Сверху справа" },
+                      { key: "center", label: "По центру листа" },
+                    ].map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => setA4Position(p.key)}
+                        className={`rounded-md border px-3 py-2 text-sm text-left transition ${
+                          a4Position === p.key ? "border-[#E11D48] bg-[#E11D48]/10 font-semibold" : "border-white/10 hover:border-white/30"
+                        }`}
+                        data-testid={`a4pos-${p.key}`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    Совет: у большинства принтеров ручной лоток прижимает бумагу к левому краю — тогда
+                    подходит <b>«Сверху слева»</b>. Если бумага центрируется — <b>«Сверху по центру»</b>.
+                    Проверьте «Пробным листом» и при небольшом сдвиге подправьте ползунками ниже.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <div className="mt-3 flex gap-2 text-[11px] text-muted-foreground bg-amber-500/10 border border-amber-500/20 rounded-md p-2">
+                <Info className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <span>
+                  Этот режим подойдёт, только если принтер умеет малый формат: в драйвере задайте
+                  размер <b>147×103&nbsp;мм</b> (или A6), печать через <b>обходной/ручной лоток</b>,
+                  масштаб <b>100%</b>. Обычные A4-принтеры растянут страницу — тогда выберите «Лист&nbsp;A4».
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Rotation */}
@@ -689,6 +736,12 @@ export default function BlankOverlay() {
               Если данные уезжают вбок — меняйте поворот и проверяйте пробным листом. Бланк вертикально
               (узкой стороной вперёд) — обычно нужно <b>90°</b> или <b>270°</b>.
             </p>
+            {pageSize === "a4" && (
+              <p className="text-[11px] text-amber-400/90 mb-3">
+                В режиме «Лист A4» поворот не используется: положите бланк на лист{" "}
+                <b>горизонтально</b> (широкой стороной 147&nbsp;мм вдоль верхнего края) в выбранный угол.
+              </p>
+            )}
             <div className="grid grid-cols-4 gap-2">
               {[0, 90, 180, 270].map((r) => (
                 <button
