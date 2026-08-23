@@ -6,7 +6,7 @@ Tests all critical backend endpoints to ensure no regressions.
 import requests
 import sys
 
-BASE_URL = "https://458f6721-bd99-4a83-b342-480b43225dfd.preview.emergentagent.com/api"
+BASE_URL = "https://multi-agent-review-4.preview.emergentagent.com/api"
 
 def test_ping():
     """Test 1: GET /api/_ping → 200, {"ok": true}"""
