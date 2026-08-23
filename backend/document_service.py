@@ -1078,10 +1078,15 @@ _FORM_BG_CACHE = None
 def render_pdf_first_page_png(pdf_bytes: bytes, scale: float = 2.0) -> bytes:
     """Render the FIRST page of a PDF to PNG (used for on-screen previews that
     must display reliably everywhere, even where inline PDF is blocked)."""
+    return render_pdf_page_png(pdf_bytes, 0, scale)
+
+
+def render_pdf_page_png(pdf_bytes: bytes, index: int = 0, scale: float = 2.0) -> bytes:
+    """Render a specific page (by index, clamped) of a PDF to PNG."""
     import pymupdf
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    page = doc[0]
-    pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+    i = max(0, min(int(index or 0), len(doc) - 1))
+    pix = doc[i].get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
     png = pix.tobytes("png")
     doc.close()
     return png
@@ -1733,6 +1738,307 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
         chunk = people[start:start + ppl_per_sheet]
         draw_page(c, chunk, is_back=False)   # лицо
         draw_page(c, chunk, is_back=True)    # оборот
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ==========================================================================
+#  ФОРМА 24 — «Талон миграционного учёта к адресному листку прибытия» («П»)
+#  Та же геометрия, что и Форма 19 (карта 105×145, сетка 2×2, лицо+оборот).
+# ==========================================================================
+FORMA24_FIELDS = [
+    {"group": "Идентификация", "fields": [
+        {"key": "top_date", "label": "Дата вверху (над бланком)"},
+        {"key": "surname", "label": "1. Фамилия"},
+        {"key": "first_name", "label": "2. Собственное имя"},
+        {"key": "patronymic", "label": "3. Отчество"},
+        {"key": "birth_day", "label": "4. Дата рождения — день"},
+        {"key": "birth_month", "label": "4. Месяц (словом)"},
+        {"key": "birth_year", "label": "4. Год"},
+        {"key": "sex", "label": "6. Пол (1=муж, 2=жен)"},
+        {"key": "nationality", "label": "7. Национальность"},
+        {"key": "citizenship", "label": "8. Гражданство"},
+    ]},
+    {"group": "5. Место рождения", "fields": [
+        {"key": "bp_obl", "label": "обл. (край, республика)"},
+        {"key": "bp_raion", "label": "район"},
+        {"key": "bp_city", "label": "город (пгт)"},
+        {"key": "bp_village", "label": "село (деревня)"},
+    ]},
+    {"group": "9. Место жительства", "fields": [
+        {"key": "res_obl", "label": "обл. (республика)"},
+        {"key": "res_raion", "label": "район"},
+        {"key": "res_city", "label": "город (пгт)"},
+        {"key": "res_village", "label": "село (деревня)"},
+    ]},
+    {"group": "10. Откуда прибыл и когда", "fields": [
+        {"key": "from_obl", "label": "обл. (край, республика)"},
+        {"key": "from_raion", "label": "район"},
+        {"key": "from_city", "label": "город (пгт)"},
+        {"key": "from_village", "label": "село (деревня)"},
+        {"key": "arrival_date", "label": "дата прибытия"},
+        {"key": "lived_since", "label": "проживал там с"},
+    ]},
+    {"group": "11. Цель приезда", "fields": [
+        {"key": "purpose_choice", "label": "Цель (1=на работу, 2=на обучение)"},
+        {"key": "other_purpose", "label": "другая цель (указать)"},
+        {"key": "term", "label": "на какой срок"},
+    ]},
+    {"group": "Оборот", "fields": [
+        {"key": "prev_work", "label": "12. Где и кем работал по прежнему месту"},
+        {"key": "education", "label": "13. Образование (1..7)"},
+        {"key": "marital", "label": "14. Семейное положение (1..4)"},
+        {"key": "spouse_together", "label": "14. Прибыл с супругой(ом) (5=да, 6=нет)"},
+        {"key": "children_count", "label": "15. Детей до 14 лет (сколько)"},
+    ]},
+]
+FORMA24_FIELD_KEYS = [f["key"] for g in FORMA24_FIELDS for f in g["fields"]]
+
+
+def forma24_from_contract(fields: dict) -> dict:
+    return forma19_from_contract(fields)
+
+
+def _ys(top, raw, total):
+    k = total / float(sum(raw))
+    ys = [top]
+    for h in raw:
+        ys.append(ys[-1] + h * k)
+    return ys
+
+
+def _draw_forma24_front(c, zw, zh, rec):
+    X, Y, hline, vline, lbl, cap, val, cval, shade = _f19_helpers(c, zw, zh)
+    G = _g
+    L, R, T = 2.0, 103.0, 2.0
+    LX, BX1, BX2, PB = 30.0, 18.0, 48.0, 17.0
+
+    def cb(a, b):
+        return (a + b) / 2.0 + 0.9
+
+    def underline(x, ybase, text, on, size=6.0):
+        lbl(x, ybase, text, size)
+        if on:
+            w = c.stringWidth(text, _font(False), size) / MM
+            hline(x, x + w, ybase + 1.1, 0.6)
+
+    raw = [1.7, 1.05, 1.05, 1.05, 1.15, 0.95, 0.95, 0.95, 0.95,
+           1.1, 1.1, 0.95, 0.95, 0.95, 0.95, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 1.1, 1.0, 1.0]
+    y = _ys(2.0, raw, 141.0)
+    B = y[-1]
+
+    # заливки
+    shade(L, y[1], LX, y[5])
+    shade(L, y[5], BX1, y[9]); shade(BX1, y[5], BX2, y[9])
+    shade(L, y[9], BX1, y[10]); shade(58, y[9], 85, y[10])
+    shade(L, y[10], BX1, y[11])
+    shade(L, y[11], BX1, y[15]); shade(BX1, y[11], BX2, y[15])
+    shade(L, y[15], BX1, y[21]); shade(BX1, y[15], BX2, y[21])
+    shade(L, y[22], 38, y[23]); shade(L, y[23], 38, y[24])
+
+    hline(L, R, T, 0.9); hline(L, R, B, 0.9); vline(L, T, B, 0.9); vline(R, T, B, 0.9)
+    lbl(82, 1.3, "Форма 24", 6.0)
+    val(4, 1.5, G(rec, "top_date"), 6.5)
+
+    # header
+    hline(L, R, y[1]); vline(PB, T, y[1])
+    lbl(5.5, cb(T, y[1]) + 1.2, "П", 12, bold=True)
+    cval((PB + R) / 2, cb(T, y[1]) - 0.6, "ТАЛОН МИГРАЦИОННОГО УЧЕТА", 7.2, bold=True)
+    cval((PB + R) / 2, cb(T, y[1]) + 2.6, "К АДРЕСНОМУ ЛИСТКУ ПРИБЫТИЯ", 7.2, bold=True)
+
+    # 1..3
+    for idx, (lab, key) in enumerate([("1. Фамилия", "surname"), ("2. Собственное имя", "first_name"), ("3. Отчество", "patronymic")]):
+        yb = y[idx + 2]
+        hline(L, R, yb)
+        lbl(4, cb(y[idx + 1], yb), lab, 5.8)
+        val(LX + 2, cb(y[idx + 1], yb), G(rec, key), 7.5)
+    vline(LX, y[1], y[5])
+    # 4 дата
+    hline(L, R, y[5]); vline(52, y[4], y[5]); vline(80, y[4], y[5])
+    lbl(4, cb(y[4], y[5]), "4. Дата рождения", 5.8)
+    val(LX + 2, cb(y[4], y[5]), G(rec, "birth_day"), 7.5)
+    cval(66, cb(y[4], y[5]), G(rec, "birth_month"), 7.5)
+    cval(91.5, cb(y[4], y[5]), G(rec, "birth_year"), 7.5)
+
+    # 5 место рождения
+    vline(BX1, y[5], y[9]); vline(BX2, y[5], y[9])
+    for i in (6, 7, 8):
+        hline(BX1, R, y[i])
+    hline(L, R, y[9])
+    lbl(4, cb(y[5], y[9]) - 1.6, "5. Место", 6.0)
+    lbl(4, cb(y[5], y[9]) + 1.6, "рождения", 6.0)
+    for i, (s, k) in enumerate([("обл. (край, республика)", "bp_obl"), ("район", "bp_raion"), ("город (пгт)", "bp_city"), ("село (деревня)", "bp_village")]):
+        yb = cb(y[5 + i], y[6 + i])
+        lbl(BX1 + 1.5, yb, s, 5.4); val(BX2 + 2, yb, G(rec, k), 7.0)
+
+    # 6 пол | 7 национальность
+    hline(L, R, y[10]); vline(30, y[9], y[10]); vline(58, y[9], y[10]); vline(85, y[9], y[10])
+    yb = cb(y[9], y[10])
+    lbl(4, yb, "6. Пол", 5.6)
+    sv = G(rec, "sex").lower()
+    underline(31, yb, "муж.-1", sv in ("1", "м", "муж", "муж.", "мужской"), 5.6)
+    underline(45, yb, "жен.-2", sv in ("2", "ж", "жен", "жен.", "женский"), 5.6)
+    lbl(59, yb, "7. Национ.", 5.6); val(86, yb, G(rec, "nationality"), 6.5)
+    # 8 гражданство
+    hline(L, R, y[11]); vline(BX1, y[10], y[11])
+    lbl(4, cb(y[10], y[11]), "8. Граждан.", 5.8); val(BX1 + 2, cb(y[10], y[11]), G(rec, "citizenship"), 7.0)
+
+    # 9 место жительства
+    vline(BX1, y[11], y[15]); vline(BX2, y[11], y[15])
+    for i in (12, 13, 14):
+        hline(BX1, R, y[i])
+    hline(L, R, y[15])
+    lbl(4, cb(y[11], y[15]) - 1.6, "9. Место", 6.0)
+    lbl(4, cb(y[11], y[15]) + 1.6, "жительства", 6.0)
+    for i, (s, k) in enumerate([("обл. (республика)", "res_obl"), ("район", "res_raion"), ("город (пгт)", "res_city"), ("село (деревня)", "res_village")]):
+        yb = cb(y[11 + i], y[12 + i])
+        lbl(BX1 + 1.5, yb, s, 5.4); val(BX2 + 2, yb, G(rec, k), 7.0)
+
+    # 10 откуда прибыл
+    vline(BX1, y[15], y[21]); vline(BX2, y[15], y[21])
+    for i in (16, 17, 18, 19, 20):
+        hline(BX1, R, y[i])
+    hline(L, R, y[21])
+    lbl(4, cb(y[15], y[21]) - 1.6, "10. Отку-", 6.0)
+    lbl(4, cb(y[15], y[21]) + 1.6, "да прибыл", 6.0)
+    for i, (s, k) in enumerate([("обл. (край, республика)", "from_obl"), ("район", "from_raion"), ("город (пгт)", "from_city"), ("село (деревня)", "from_village"), ("дата прибытия", "arrival_date"), ("проживал там с", "lived_since")]):
+        yb = cb(y[15 + i], y[16 + i])
+        lbl(BX1 + 1.5, yb, s, 5.4); val(BX2 + 2, yb, G(rec, k), 7.0)
+
+    # 11 цель приезда
+    hline(L, R, y[22]); vline(48, y[21], y[22]); vline(76, y[21], y[22])
+    yb = cb(y[21], y[22])
+    lbl(4, yb, "11. Цель приезда", 5.6)
+    pc = G(rec, "purpose_choice").lower()
+    underline(49, yb, "на работу-1", pc in ("1",) or "работ" in pc, 5.6)
+    underline(77, yb, "на обучение-2", pc in ("2",) or ("обуч" in pc or "учеб" in pc), 5.6)
+    hline(L, R, y[23]); lbl(4, cb(y[22], y[23]), "другая цель (указать)", 5.8); val(40, cb(y[22], y[23]), G(rec, "other_purpose"), 7.0)
+    lbl(4, cb(y[23], y[24]), "на какой срок", 5.8); val(40, cb(y[23], y[24]), G(rec, "term"), 7.0)
+
+
+def _draw_forma24_back(c, zw, zh, rec):
+    X, Y, hline, vline, lbl, cap, val, cval, shade = _f19_helpers(c, zw, zh)
+    G = _g
+    L, R, T = 2.0, 103.0, 2.0
+
+    def cb(a, b):
+        return (a + b) / 2.0 + 0.9
+
+    def underline(x, ybase, text, on, size=5.6):
+        lbl(x, ybase, text, size)
+        if on:
+            w = c.stringWidth(text, _font(False), size) / MM
+            hline(x, x + w, ybase + 1.1, 0.6)
+
+    raw = [1.0, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+           1.0, 0.9, 1.0, 1.0, 1.0, 1.0, 1.0, 0.9, 1.0, 1.0, 1.0, 0.85]
+    y = _ys(2.0, raw, 141.0)
+    B = y[-1]
+
+    shade(L, T, 55, y[1])
+    shade(L, y[5], R, y[6])              # 13 подчеркнуть строка label? handled below
+    shade(L, y[9], R, y[10])
+    shade(L, y[13], R, y[14])
+    shade(L, y[17], R, y[18])
+    shade(L, y[19], R, y[20])
+    shade(L, y[21], R, B)
+
+    hline(L, R, T, 0.9); hline(L, R, B, 0.9); vline(L, T, B, 0.9); vline(R, T, B, 0.9)
+
+    # 12 где и кем работал
+    hline(L, R, y[1])
+    lbl(4, cb(T, y[1]), "12. Где и кем работал по прежнему месту жительства", 5.8)
+    hline(L, R, y[2])
+    cap(52, cb(y[1], y[2]) + 0.3, "наименование предприятия; если не работает — пенсионер, учащийся и т.п.", 3.9)
+    val(6, cb(y[2], y[3]), G(rec, "prev_work"), 7.0)
+    hline(L, R, y[4])
+
+    # 13 образование
+    hline(L, R, y[5])
+    lbl(4, cb(y[4], y[5]), "13. Образование (подчеркнуть):", 5.8)
+    ed = G(rec, "education").strip()
+    hline(L, R, y[6]); hline(L, R, y[7])
+    r1 = cb(y[4], y[5]); r2 = cb(y[5], y[6]); r3 = cb(y[6], y[7])
+    underline(50, r1, "высшее-1", ed == "1"); underline(74, r1, "среднее спец.-2", ed == "2")
+    underline(4, r2, "проф.-техническое-3", ed == "3"); underline(42, r2, "общее среднее-4", ed == "4"); underline(72, r2, "общее базовое-5", ed == "5")
+    underline(4, r3, "общее начальное-6", ed == "6"); underline(44, r3, "не имеет начального-7", ed == "7")
+
+    # 14 семейное положение
+    hline(L, R, y[8]); lbl(4, cb(y[7], y[8]), "14. Семейное положение (подчеркнуть):", 5.8)
+    mv = G(rec, "marital").strip()
+    r4 = cb(y[7], y[8])
+    underline(62, r4, "состоит в браке-1", mv == "1")
+    hline(L, R, y[9]); r5 = cb(y[8], y[9])
+    underline(4, r5, "никогда не состоял(а)-2", mv == "2"); underline(48, r5, "вдовец(а)-3", mv == "3"); underline(72, r5, "разведен(а)-4", mv == "4")
+    hline(L, R, y[10]); r6 = cb(y[9], y[10])
+    sp = G(rec, "spouse_together").strip()
+    lbl(4, r6, "Если в браке, прибыл с супругой(ом):", 5.4)
+    underline(66, r6, "да-5", sp == "5"); underline(80, r6, "нет-6", sp == "6")
+
+    # 15 дети
+    hline(L, R, y[11]); vline(60, y[10], y[11])
+    lbl(4, cb(y[10], y[11]), "15. Вместе с ним (ней) прибыли дети до 14 лет", 5.4)
+    lbl(62, cb(y[10], y[11]), "сколько", 5.4); val(82, cb(y[10], y[11]), G(rec, "children_count"), 7.0)
+    hline(L, R, y[12]); cap(52, cb(y[11], y[12]) + 0.2, "поименно дети вносятся в талон только одного из родителей", 3.9)
+    # таблица шапка
+    hline(L, R, y[13]); vline(62, y[12], y[17]); vline(82, y[12], y[17])
+    cval(32, cb(y[12], y[13]), "Фамилия, собственное имя, отчество", 4.8)
+    cval(72, cb(y[12], y[13]), "Пол", 4.8); cval(92, cb(y[12], y[13]) - 1.4, "Дата", 4.6); cval(92, cb(y[12], y[13]) + 1.6, "рождения", 4.6)
+    for i in (14, 15, 16):
+        hline(L, R, y[i])
+    hline(L, R, y[17])
+
+    # 16 талон составлен
+    hline(L, R, y[18]); vline(55, y[17], y[18]); vline(75, y[17], y[18])
+    lbl(4, cb(y[17], y[18]), "16. Талон составлен", 5.8)
+    lbl(80, cb(y[17], y[18]), "20", 5.8); hline(85, 93, cb(y[17], y[18])); lbl(94, cb(y[17], y[18]), "г.", 5.8)
+    hline(L, R, y[19]); vline(48, y[18], y[19]); lbl(4, cb(y[18], y[19]), "Подпись должностного лица", 5.8)
+
+    # 17 сведения проверил
+    hline(L, R, y[20]); lbl(4, cb(y[19], y[20]), "17. Сведения проверил и регистрацию оформил", 5.8)
+    vline(52, y[20], B); lbl(20, cb(y[20], y[21]), "20", 5.8); hline(25, 34, cb(y[20], y[21])); lbl(35, cb(y[20], y[21]), "г.", 5.8)
+    hline(L, R, y[21]); cap(27, cb(y[21], B) + 0.3, "дата", 4.4); cap(78, cb(y[21], B) + 0.3, "подпись", 4.4)
+
+
+def build_forma24(people, duplex_flip="long", draw_guides=True):
+    """PDF Формы 24: как build_forma19, но с отрисовкой талона."""
+    from reportlab.pdfgen import canvas
+    _ensure_fonts()
+    zw = FORMA19_MM[0] * MM
+    zh = FORMA19_MM[1] * MM
+    pw, ph = 210 * MM, 297 * MM
+    top_margin = (ph - 2 * zh) / 2.0
+    side_margin = (pw - 2 * zw) / 2.0
+    people = list(people or []) or [{}]
+    duplex_flip = (duplex_flip or "long").lower()
+
+    def origin(col, row):
+        return side_margin + col * zw, ph - (top_margin + row * zh + zh)
+
+    CELLS = [(0, 0), (1, 0), (0, 1), (1, 1)]
+
+    def page(c, chunk, back):
+        order = [1, 0] if (back and duplex_flip == "short") else [0, 1]
+        cp = {CELLS[0]: order[0], CELLS[1]: order[0], CELLS[2]: order[1], CELLS[3]: order[1]}
+        for (col, row), pidx in cp.items():
+            if pidx >= len(chunk):
+                continue
+            x0, y0 = origin(col, row)
+            c.saveState(); c.translate(x0, y0)
+            if draw_guides:
+                c.setStrokeColorRGB(0.75, 0.75, 0.82); c.setLineWidth(0.3); c.setDash(2, 2)
+                c.rect(0, 0, zw, zh, stroke=1, fill=0); c.setDash()
+            (_draw_forma24_back if back else _draw_forma24_front)(c, zw, zh, chunk[pidx])
+            c.restoreState()
+        c.showPage()
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(pw, ph))
+    for s in range(0, len(people), 2):
+        chunk = people[s:s + 2]
+        page(c, chunk, False)
+        page(c, chunk, True)
     c.save()
     buf.seek(0)
     return buf.getvalue()

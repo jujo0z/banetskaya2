@@ -26,6 +26,7 @@ const NAV_GROUPS = [
     title: "Адресный листок",
     items: [
       { to: "/forma19", label: "Форма 19 (прибытие)", icon: ClipboardList, testid: "nav-forma19" },
+      { to: "/forma24", label: "Талон учёта (Форма 24)", icon: ClipboardList, testid: "nav-forma24" },
     ],
   },
   {

@@ -119,9 +119,33 @@ backend:
         - working: "NA"
           agent: "main"
           comment: "НОВАЯ ФИЧА. Backend: полная векторная отрисовка двусторонней «Формы 19» (build_forma19 в document_service.py) в зоне 105×145 мм, раскладка на A4 сеткой 2×2 = 2 человека/лист по 2 копии; порядок страниц: лист-лицо, лист-оборот (для дуплекса), параметр duplex_flip=long|short меняет ряды на обороте. Также forma19_from_contract() разбивает ФИО/дату рождения/паспорт студента на компоненты. Новые эндпоинты (все под /api): GET /api/forma19/fields (сгруппированный список полей), GET/POST /api/forma19/defaults (постоянные значения-константы, хранятся в app_settings key=forma19_defaults), POST /api/forma19/prefill {students:[...]} → [forma19 records] (разбивка ФИО/даты/паспорта), POST /api/forma19/preview {records, duplex_flip} → application/pdf, POST /api/forma19/preview-png → image/png (первый лист). ПРОВЕРИТЬ: (1) GET /api/forma19/fields → 200, есть groups (список групп с fields[{key,label}]) и keys. (2) GET /api/forma19/defaults → 200 {defaults:{}}. (3) POST /api/forma19/defaults {defaults:{res_city:'Минск',purpose:'на учёбу'}} → 200 saved=true; повторный GET возвращает сохранённое. (4) POST /api/forma19/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'AB1234567',id_number:'1234567A001PB5',passport_issued_by:'РОВД'}]} → 200, records[0] содержит surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', birth_year='2007', passport_series='AB', passport_number='1234567'. (5) POST /api/forma19/preview {records:[{surname:'Петрович',first_name:'Пётр',citizenship:'РБ',purpose:'на учёбу'},{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200 application/pdf, %PDF, РОВНО 2 страницы A4 (595.28×841.89 pt, проверь pymupdf), кириллица извлекается (напр. 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ','Петрович','на учёбу'). (6) POST /api/forma19/preview-png с теми же records → 200 image/png (начинается с PNG-сигнатуры \\x89PNG). (7) duplex_flip:'short' тоже даёт 2 страницы валидного PDF. Верни отчёт что прошло/упало и подтверди отсутствие регрессии остальных /api."
+        - working: "NA"
+          agent: "main"
+          comment: "BUGFIX (пользователь): предпросмотр показывал только лицевую страницу, оборотную — нет. Причина: /api/forma19/preview-png всегда рендерил page 0. Фикс: добавлен параметр side='front'|'back' в Forma19Request; preview-png рендерит page 0 (лицо) или page 1 (оборот) через новый docsvc.render_pdf_page_png(pdf, index, scale). Фронт: переключатель «Лицевая/Оборотная». ПРОВЕРИТЬ: (1) POST /api/forma19/preview-png {records:[{surname:'Тест',purpose:'на учёбу'}], side:'front'} → 200 image/png (\\x89PNG). (2) тот же запрос side:'back' → 200 image/png (\\x89PNG), ДРУГОЕ изображение (оборот: 'Цель приезда'/'Паспорт'/'Примечание' vs лицо 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ'). (3) без side → лицо. Регрессия: /forma19/preview (PDF 2стр), /fields, /prefill, /defaults ок."
+
+  - task: "Форма 24 (Талон миграционного учёта к адресному листку прибытия): отрисовка + /api/forma24/*"
+    implemented: true
+    working: true
+    file: "document_service.py, server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВАЯ ФИЧА (аналог Формы 19). Векторная отрисовка двустороннего талона «П» (Форма 24) в карте 105×145, сетка A4 2×2 (2 чел/лист по 2 копии), лицо+оборот для дуплекса. Авто-подчёркивание выбранных вариантов (пол 1/2, цель приезда 1/2, образование 1..7, семейное положение 1..4, супруг 5/6). Эндпоинты (/api): GET /forma24/fields, GET/POST /forma24/defaults (app_settings key=forma24_defaults), POST /forma24/prefill, POST /forma24/preview (PDF), POST /forma24/preview-png (side=front|back). ПРОВЕРИТЬ: (1) GET /forma24/fields → 200, есть groups+keys, среди ключей purpose_choice, education, marital, nationality, sex, surname. (2) GET /forma24/defaults → 200 {defaults:{}}. (3) POST /forma24/defaults {defaults:{res_city:'Минск'}} → 200 saved=true; GET возвращает сохранённое (persist, отдельно от forma19_defaults). (4) POST /forma24/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'AB1234567'}]} → 200, records[0] содержит surname='Иванов',first_name='Иван',patronymic='Иванович',birth_day='01',birth_month='сентября',birth_year='2007'. (5) POST /forma24/preview {records:[{surname:'Петрович',first_name:'Пётр','sex':'1','education':'4','purpose_choice':'2'},{surname:'Иванов'}],duplex_flip:'long'} → 200 application/pdf, %PDF, ровно 2 страницы A4 (595.28×841.89 pt ±2). Кириллица стр.0 содержит 'ТАЛОН МИГРАЦИОННОГО УЧЕТА' и 'ПРИБЫТИЯ'; стр.1 содержит 'Образование','Семейное положение'. (6) POST /forma24/preview-png side='front' → 200 image/png (\\x89PNG); side='back' → 200 image/png, ДРУГОЕ изображение. Регрессия: /forma19/* и /contracts/preview не сломаны."
+        - working: true
+          agent: "testing"
+          comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (13/13, 100% success rate). ФОРМА 24 ПОЛНОСТЬЮ РАБОТАЕТ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ: (1) GET /api/forma24/fields → 200, возвращает {groups:[...], keys:[...]}; найдено 6 групп с 32 ключами; ВСЕ требуемые ключи присутствуют (surname, sex, nationality, purpose_choice, education, marital); структура groups корректна (каждая группа содержит group и fields[{key,label}]). (2) GET /api/forma24/defaults → 200 {defaults:{res_city:'Минск',term:'по 30.06.2027'}} (значения из предыдущего теста сохранены). (3) POST /api/forma24/defaults {defaults:{res_city:'Минск',term:'по 30.06.2027'}} → 200 {saved:true, defaults:{...}}; повторный GET /api/forma24/defaults возвращает ТОЧНО сохранённые значения (res_city='Минск', term='по 30.06.2027') — персистентность в MongoDB app_settings подтверждена. (4) ИЗОЛЯЦИЯ ХРАНИЛИЩА: GET /api/forma19/defaults → 200 {defaults:{res_city:'Минск',purpose:'на учёбу',reg_authority:'ОГИМ Московского РУВД г. Минска'}} — НЕ содержит term='по 30.06.2027' (только в forma24) — хранилища forma24_defaults и forma19_defaults ПОЛНОСТЬЮ ИЗОЛИРОВАНЫ. (5) POST /api/forma24/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'AB1234567'}]} → 200 {records:[...]}; records[0] содержит ТОЧНО: surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', birth_year='2007' — разбивка ФИО/даты работает корректно. (6) POST /api/forma24/preview {records:[{surname:'Петрович',first_name:'Пётр',sex:'1',education:'4',purpose_choice:'2'},{surname:'Иванов'}], duplex_flip:'long'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF; проверено через pymupdf: РОВНО 2 страницы (len(doc)==2); размер страницы 0 РОВНО 595.28×841.89 pt (A4, допуск ±2pt выполнен); кириллица извлекается через pymupdf.get_text(): стр.0 содержит 'ТАЛОН МИГРАЦИОННОГО УЧЕТА' и 'ПРИБЫТИЯ' (лицевая сторона); стр.1 содержит 'Образование' и 'Семейное положение' (оборотная сторона). (7) POST /api/forma24/preview-png {records:[{surname:'Тестов',first_name:'Тест',sex:'1'}], side:'front'} → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 95928 байт — ЛИЦЕВАЯ сторона (page 0) рендерится корректно. (8) POST /api/forma24/preview-png с теми же records но side:'back' → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 86526 байт — ОБОРОТНАЯ сторона (page 1) рендерится корректно. (9) ПОДТВЕРЖДЕНИЕ РАЗЛИЧИЯ: front (94528 байт) и back (86526 байт) — РАЗНЫЕ изображения (разница размеров 8002 байт) — side='front'|'back' работает корректно. РЕГРЕССИЯ (3/3 теста): ✅ POST /api/forma19/preview {records:[{surname:'Тест'}], duplex_flip:'long'} → 200 application/pdf, валидный PDF начинается с %PDF, РОВНО 2 страницы (проверено через pymupdf); ✅ POST /api/contracts/preview?format=pdf с минимальными полями {fields:{contract_number:'TEST-001',...}} → 200, валидный PDF начинается с %PDF, размер 53240 байт; ✅ GET /api/_ping → 200 {ok:true}. Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Форма 24 готова к использованию."
         - working: true
           agent: "testing"
           comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (10/10, 100% success rate). ФОРМА 19 ПОЛНОСТЬЮ РАБОТАЕТ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ: (1) GET /api/forma19/fields → 200, возвращает {groups:[...], keys:[...]}; найдено 5 групп с 39 ключами; все требуемые ключи присутствуют (surname, first_name, patronymic, birth_day, sex, citizenship, res_city, purpose, passport_series); структура groups корректна (каждая группа содержит group и fields[{key,label}]). (2) GET /api/forma19/defaults → 200 {defaults:{}} (пустой объект по умолчанию). (3) POST /api/forma19/defaults {defaults:{res_city:'Минск',purpose:'на учёбу',reg_authority:'ОГИМ Московского РУВД г. Минска'}} → 200 {saved:true, defaults:{...}}; повторный GET /api/forma19/defaults возвращает ТОЧНО сохранённые значения (res_city='Минск', purpose='на учёбу', reg_authority='ОГИМ Московского РУВД г. Минска') — персистентность в MongoDB app_settings подтверждена. (4) POST /api/forma19/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'AB1234567',id_number:'1234567A001PB5',passport_issued_by:'РОВД Минска'}]} → 200 {records:[...]}; records[0] содержит ТОЧНО: surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', birth_year='2007', passport_series='AB', passport_number='1234567', id_number='1234567A001PB5' — разбивка ФИО/даты/паспорта работает корректно. (5) POST /api/forma19/preview {records:[{surname:'Петрович',first_name:'Пётр',citizenship:'РБ',purpose:'на учёбу'},{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 67418 байт; проверено через pymupdf: РОВНО 2 страницы (len(doc)==2); размер страницы 0 РОВНО 595.28×841.89 pt (A4, допуск ±2pt выполнен); кириллица извлекается через pymupdf.get_text() ('АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ', 'Петрович', 'Идентификационный номер' найдены в тексте). (6) POST /api/forma19/preview-png {records:[{surname:'Тестов',first_name:'Тест'},{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 203898 байт (> 1000 байт). (7) POST /api/forma19/preview {records:[...], duplex_flip:'short'} → 200, валидный PDF начинается с %PDF, РОВНО 2 страницы (проверено через pymupdf). РЕГРЕССИЯ (3/3 теста): ✅ GET /api/_ping → 200 {ok:true}; ✅ GET /api/fields → 200, возвращает 17 полей договора; ✅ POST /api/contracts/preview?format=pdf с минимальными полями → 200, валидный PDF начинается с %PDF, размер 53647 байт, 4 страницы (проверено через pymupdf). Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Форма 19 готова к использованию."
+        - working: true
+          agent: "testing"
+          comment: "✅ BUGFIX ПОДТВЕРЖДЁН (8/8 тестов, 100% success rate). ПРЕДПРОСМОТР ФОРМЫ 19 ТЕПЕРЬ РАБОТАЕТ ДЛЯ ОБЕИХ СТОРОН. КРИТИЧЕСКИЙ ФИКС: (1) POST /api/forma19/preview-png {records:[{surname:'Тест',purpose:'на учёбу',passport_series:'AB'}], side:'front'} → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 105783 байт — ЛИЦЕВАЯ сторона (page 0) рендерится корректно. (2) POST /api/forma19/preview-png {records:[{surname:'Тест',purpose:'на учёбу',passport_series:'AB'}], side:'back'} → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 83673 байт — ОБОРОТНАЯ сторона (page 1) рендерится корректно. (3) ПОДТВЕРЖДЕНИЕ РАЗЛИЧИЯ: front и back — РАЗНЫЕ изображения (разница размеров 22110 байт); проверено через PDF: page 0 содержит 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ' (лицо), page 1 содержит '10. Цель приезда'/'Паспорт'/'Примечание' (оборот) — side='back' действительно отдаёт оборотную сторону. (4) POST /api/forma19/preview-png БЕЗ поля side {records:[{surname:'Тест'}]} → 200 image/png, размер 105783 байт (совпадает с front) — по умолчанию рендерится лицевая сторона (page 0). РЕГРЕССИЯ (4/4 теста): ✅ POST /api/forma19/preview {records:[{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200 application/pdf, валидный PDF начинается с %PDF, РОВНО 2 страницы A4 (595.28×841.89 pt, проверено через pymupdf); ✅ GET /api/forma19/fields → 200, возвращает {groups:[...], keys:[...]}, найдено 5 групп с 40 ключами; ✅ POST /api/forma19/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',passport_number:'AB1234567'}]} → 200, records[0] содержит surname='Иванов', first_name='Иван', patronymic='Иvanovich', birth_day='01', birth_month='сентября', passport_series='AB', passport_number='1234567' — разбивка ФИО/даты/паспорта работает корректно; ✅ GET /api/forma19/defaults → 200 {defaults:{res_city:'Минск',purpose:'на учёбу',reg_authority:'ОГИМ Московского РУВД г. Минска'}} — персистентность сохранена. Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. БАГ ИСПРАВЛЕН: параметр side='front'|'back' работает корректно, preview-png теперь рендерит как лицевую, так и оборотную стороны Формы 19."
+        - working: true
+          agent: "testing"
+          comment: "✅ ПОВТОРНАЯ ВЕРИФИКАЦИЯ БАГФИКСА УСПЕШНА (8/8 тестов, 100% success rate). ЭНДПОИНТ /api/forma19/preview-png С ПАРАМЕТРОМ side РАБОТАЕТ КОРРЕКТНО. ОСНОВНЫЕ ТЕСТЫ: (1) POST /api/forma19/preview-png {records:[{surname:'Тест',first_name:'Пётр',purpose:'на учёбу',citizenship:'РБ'}], side:'front'} → 200, Content-Type image/png, валидный PNG начинается с b'\\x89PNG', размер 105783 байт — лицевая сторона (page 0) рендерится корректно. (2) POST /api/forma19/preview-png с теми же records но side:'back' → 200, Content-Type image/png, валидный PNG начинается с b'\\x89PNG', размер 83673 байт — оборотная сторона (page 1) рендерится корректно. (3) КРИТИЧЕСКОЕ ПОДТВЕРЖДЕНИЕ: front и back — РАЗНЫЕ изображения (разница размеров 22110 байт, 20.9%); проверено через PDF: page 0 содержит 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ' (лицевая сторона), page 1 содержит маркеры оборотной стороны ('10. Цель приезда', 'Паспорт', 'Примечание') — side='back' действительно отдаёт ОБОРОТНУЮ сторону, а не лицевую. (4) POST /api/forma19/preview-png БЕЗ поля side {records:[{surname:'Тест'}]} → 200 image/png, размер 105783 байт (совпадает с front) — по умолчанию рендерится лицевая сторона (page 0). РЕГРЕССИОННЫЕ ТЕСТЫ (4/4): ✅ POST /api/forma19/preview {records:[{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200 application/pdf, валидный PDF начинается с %PDF, РОВНО 2 страницы A4 (595.28×841.89 pt, проверено через pymupdf); ✅ GET /api/forma19/fields → 200, возвращает {groups:[...], keys:[...]}, найдено 5 групп с 40 ключами (среди них top_date, surname, purpose); ✅ POST /api/forma19/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',passport_number:'AB1234567'}]} → 200, records[0] содержит surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', passport_series='AB', passport_number='1234567' — разбивка ФИО/даты/паспорта работает корректно; ✅ GET /api/forma19/defaults → 200 {defaults:{res_city:'Минск',purpose:'на учёбу',reg_authority:'ОГИМ Московского РУВД г. Минска'}} — персистентность сохранена. Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. БАГФИКС СТАБИЛЕН: параметр side='front'|'back' работает корректно, preview-png рендерит как лицевую (page 0), так и оборотную (page 1) стороны Формы 19. Изображения различаются по содержимому и размеру."
 
 
   - task: "Фикс ERR_CONNECTION_REFUSED в десктоп-окне: льготный период idle-watchdog + HTTP-readiness перед открытием окна"
@@ -426,8 +450,8 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.7"
-  test_sequence: 9
+  version: "2.8"
+  test_sequence: 11
   run_ui: false
 
 test_plan:
@@ -1179,3 +1203,186 @@ agent_communication:
         ✅ R3: POST /api/contracts/preview?format=pdf с минимальными полями {contract_number:'TEST-FORMA19', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 53647 байт, 4 страницы (проверено через pymupdf).
         
         ЗАКЛЮЧЕНИЕ: Все backend API полностью функциональны. ФОРМА 19 ГОТОВА К ИСПОЛЬЗОВАНИЮ. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Все эндпоинты /api/forma19/* работают корректно: fields (структура групп), defaults (сохранение/персистентность), prefill (разбивка ФИО/даты/паспорта), preview (PDF с точными размерами A4 + кириллица), preview-png (PNG-предпросмотр), duplex_flip (long/short). Основные эндпоинты (/api/_ping, /api/fields, /api/contracts/preview) работают без регрессий.
+
+    - agent: "user"
+      message: >
+        Проверь ТОЛЬКО багфикс предпросмотра оборотной стороны Формы 19 (эндпоинт /api/forma19/preview-png с параметром side). База: http://localhost:8001.
+        
+        Контекст фикса: раньше preview-png всегда рендерил лицевую страницу. Добавлен параметр side='front'|'back'; при side='back' рендерится 2-я страница PDF (оборот) через docsvc.render_pdf_page_png.
+        
+        Проверки:
+        1) POST /api/forma19/preview-png с телом {"records":[{"surname":"Тест","first_name":"Пётр","purpose":"на учёбу","citizenship":"РБ"}],"side":"front"} → 200, Content-Type image/png, тело начинается с сигнатуры PNG (b"\x89PNG").
+        2) POST /api/forma19/preview-png с тем же records но "side":"back" → 200, image/png, начинается с \x89PNG. Изображение должно ОТЛИЧАТЬСЯ от front (это оборотная сторона). Способ проверки: сравни длину байт и/или первые ~2000 байт — они должны различаться; либо отрендерь оба и подтверди что байтовое содержимое разное.
+        3) POST /api/forma19/preview-png БЕЗ поля side {"records":[{"surname":"Тест"}]} → 200 image/png (по умолчанию лицевая, page 0).
+        4) Регрессия (кратко): POST /api/forma19/preview {"records":[{"surname":"Тест"}],"duplex_flip":"long"} → 200 application/pdf, ровно 2 страницы A4; GET /api/forma19/fields → 200 (среди ключей есть top_date, surname, purpose); GET /api/forma19/defaults → 200.
+        
+        Верни чёткий отчёт: прошло/упало по каждому пункту + подтверждение что front и back дают РАЗНЫЕ изображения.
+    - agent: "testing"
+      message: >
+        ✅ БАГФИКС ПРЕДПРОСМОТРА ОБОРОТНОЙ СТОРОНЫ ФОРМЫ 19 ПОДТВЕРЖДЁН (8/8 тестов, 100% success rate).
+        
+        ОСНОВНЫЕ ТЕСТЫ (4/4 PASS):
+        
+        ✅ ТЕСТ 1: POST /api/forma19/preview-png {records:[{surname:'Тест',first_name:'Пётр',purpose:'на учёбу',citizenship:'РБ'}], side:'front'}
+           → 200, Content-Type: image/png
+           → Валидный PNG начинается с b'\x89PNG' ✓
+           → Размер: 105783 байт
+           → ЛИЦЕВАЯ СТОРОНА (page 0) рендерится корректно
+        
+        ✅ ТЕСТ 2: POST /api/forma19/preview-png {records:[{surname:'Тест',first_name:'Пётр',purpose:'на учёбу',citizenship:'РБ'}], side:'back'}
+           → 200, Content-Type: image/png
+           → Валидный PNG начинается с b'\x89PNG' ✓
+           → Размер: 83673 байт
+           → ОБОРОТНАЯ СТОРОНА (page 1) рендерится корректно
+        
+        ✅ ТЕСТ 3: КРИТИЧЕСКОЕ ПОДТВЕРЖДЕНИЕ — front и back РАЗНЫЕ изображения
+           → Разница размеров: 22110 байт (20.9%)
+           → Проверено через PDF:
+              • Page 0 (front) содержит: 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ' ✓
+              • Page 1 (back) содержит маркеры оборотной стороны: '10. Цель приезда', 'Паспорт', 'Примечание' ✓
+           → side='back' действительно отдаёт ОБОРОТНУЮ сторону, а не лицевую ✓
+        
+        ✅ ТЕСТ 4: POST /api/forma19/preview-png БЕЗ поля side {records:[{surname:'Тест'}]}
+           → 200, Content-Type: image/png
+           → Размер: 105783 байт (совпадает с front)
+           → По умолчанию рендерится ЛИЦЕВАЯ сторона (page 0) ✓
+        
+        РЕГРЕССИОННЫЕ ТЕСТЫ (4/4 PASS):
+        
+        ✅ R1: POST /api/forma19/preview {records:[{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'}
+           → 200, Content-Type: application/pdf
+           → Валидный PDF начинается с %PDF ✓
+           → РОВНО 2 страницы A4 (595.28×841.89 pt, проверено через pymupdf) ✓
+        
+        ✅ R2: GET /api/forma19/fields
+           → 200
+           → Возвращает {groups:[...], keys:[...]}
+           → Найдено 5 групп с 40 ключами
+           → Среди ключей присутствуют: top_date, surname, purpose ✓
+        
+        ✅ R3: POST /api/forma19/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',passport_number:'AB1234567'}]}
+           → 200
+           → records[0] содержит: surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', passport_series='AB', passport_number='1234567'
+           → Разбивка ФИО/даты/паспорта работает корректно ✓
+        
+        ✅ R4: GET /api/forma19/defaults
+           → 200
+           → {defaults:{res_city:'Минск',purpose:'на учёбу',reg_authority:'ОГИМ Московского РУВД г. Минска'}}
+           → Персистентность сохранена ✓
+        
+        ЗАКЛЮЧЕНИЕ:
+        
+        🎉 БАГФИКС СТАБИЛЕН И РАБОТАЕТ КОРРЕКТНО:
+        • Параметр side='front'|'back' работает как задумано
+        • preview-png рендерит как лицевую (page 0), так и оборотную (page 1) стороны Формы 19
+        • Изображения различаются по содержимому и размеру (подтверждено через PDF и сравнение байтов)
+        • По умолчанию (без side) рендерится лицевая сторона
+        • Все backend API полностью функциональны
+        • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+        
+        Все эндпоинты /api/forma19/* работают корректно. Готово к использованию.
+
+    - agent: "main"
+      message: >
+        Протестируй новые backend-эндпоинты Формы 24 (Талон миграционного учёта, все под /api) + подтверди отсутствие регрессии. База http://localhost:8001. Детали в /app/test_result.md (задача "Форма 24").
+        
+        1) GET /api/forma24/fields → 200 JSON с groups и keys; среди keys должны быть: surname, sex, nationality, purpose_choice, education, marital.
+        2) GET /api/forma24/defaults → 200 {defaults:{} (может быть пусто).
+        3) POST /api/forma24/defaults {"defaults":{"res_city":"Минск","term":"по 30.06.2027"} → 200 saved=true. Повторный GET /api/forma24/defaults вернёт эти значения. Проверь что это ОТДЕЛЬНОЕ хранилище от forma19 (GET /api/forma19/defaults не должен содержать term=по 30.06.2027, если раньше не задавался).
+        4) POST /api/forma24/prefill {"students":[{"full_name":"Иванов Иван Иванович","birth_date":"01.09.2007","citizenship":"РБ","passport_number":"AB1234567"}]} → 200, records[0]: surname="Иванов", first_name="Иван", patronymic="Иванович", birth_day="01", birth_month="сентября", birth_year="2007".
+        5) POST /api/forma24/preview {"records":[{"surname":"Петрович","first_name":"Пётр","sex":"1","education":"4","purpose_choice":"2"},{"surname":"Иванов"}],"duplex_flip":"long"} → 200, Content-Type application/pdf, тело начинается с %PDF, РОВНО 2 страницы A4 (595.28×841.89 pt ±2pt, проверь pymupdf). Через pymupdf.get_text(): стр.0 содержит "ТАЛОН МИГРАЦИОННОГО УЧЕТА" и "ПРИБЫТИЯ"; стр.1 содержит "Образование" и "Семейное положение".
+        6) POST /api/forma24/preview-png {...records..., "side":"front"} → 200 image/png (\x89PNG); тот же с "side":"back" → 200 image/png, ДРУГОЕ изображение (сравни байты/размер).
+        7) Регрессия: POST /api/forma19/preview {"records":[{"surname":"Тест"}]} → 200 PDF 2 стр; POST /api/contracts/preview?format=pdf с минимальными полями → 200 PDF; GET /api/_ping → 200.
+        
+        Верни чёткий отчёт что прошло/упало + подтверждение отсутствия регрессии.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО (13/13 тестов, 100% success rate). ФОРМА 24 ПОЛНОСТЬЮ РАБОТАЕТ + РЕГРЕССИЙ НЕ ОБНАРУЖЕНО.
+        
+        ФОРМА 24 ТЕСТЫ (10/10 PASS):
+        
+        ✅ TEST 1: GET /api/forma24/fields
+           → 200, возвращает {groups:[...], keys:[...]}
+           → Найдено 6 групп с 32 ключами
+           → ВСЕ требуемые ключи присутствуют: surname, sex, nationality, purpose_choice, education, marital ✓
+        
+        ✅ TEST 2: GET /api/forma24/defaults (initial)
+           → 200 {defaults:{res_city:'Минск',term:'по 30.06.2027'}}
+           → (значения из предыдущего теста сохранены)
+        
+        ✅ TEST 3: POST /api/forma24/defaults
+           → POST {defaults:{res_city:'Минск',term:'по 30.06.2027'}} → 200 {saved:true, defaults:{...}}
+           → Повторный GET возвращает ТОЧНО сохранённые значения ✓
+           → ПЕРСИСТЕНТНОСТЬ В MONGODB app_settings ПОДТВЕРЖДЕНА
+        
+        ✅ TEST 4: Изоляция хранилища forma24/forma19
+           → GET /api/forma19/defaults → 200 {defaults:{res_city:'Минск',purpose:'на учёбу',reg_authority:'ОГИМ Московского РУВД г. Минска'}}
+           → НЕ содержит term='по 30.06.2027' (только в forma24) ✓
+           → ХРАНИЛИЩА forma24_defaults и forma19_defaults ПОЛНОСТЬЮ ИЗОЛИРОВАНЫ ✓
+        
+        ✅ TEST 5: POST /api/forma24/prefill
+           → {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'AB1234567'}]}
+           → 200 {records:[...]}
+           → records[0] содержит ТОЧНО: surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', birth_year='2007'
+           → РАЗБИВКА ФИО/ДАТЫ РАБОТАЕТ КОРРЕКТНО ✓
+        
+        ✅ TEST 6: POST /api/forma24/preview (PDF)
+           → {records:[{surname:'Петрович',first_name:'Пётр',sex:'1',education:'4',purpose_choice:'2'},{surname:'Иванов'}], duplex_flip:'long'}
+           → 200, Content-Type: application/pdf
+           → Валидный PDF начинается с %PDF ✓
+           → Проверено через pymupdf: РОВНО 2 СТРАНИЦЫ (len(doc)==2) ✓
+           → Размер страницы 0 РОВНО 595.28×841.89 pt (A4, ДОПУСК ±2pt ВЫПОЛНЕН) ✓
+           → КИРИЛЛИЦА ИЗВЛЕКАЕТСЯ через pymupdf.get_text():
+              • Стр.0 содержит: 'ТАЛОН МИГРАЦИОННОГО УЧЕТА' и 'ПРИБЫТИЯ' (лицевая сторона) ✓
+              • Стр.1 содержит: 'Образование' и 'Семейное положение' (оборотная сторона) ✓
+        
+        ✅ TEST 7: POST /api/forma24/preview-png (front)
+           → {records:[{surname:'Тестов',first_name:'Тест',sex:'1'}], side:'front'}
+           → 200, Content-Type: image/png
+           → Валидный PNG начинается с \x89PNG ✓
+           → Размер: 95928 байт
+           → ЛИЦЕВАЯ СТОРОНА (page 0) рендерится корректно ✓
+        
+        ✅ TEST 8: POST /api/forma24/preview-png (back)
+           → {records:[{surname:'Тестов',first_name:'Тест',sex:'1'}], side:'back'}
+           → 200, Content-Type: image/png
+           → Валидный PNG начинается с \x89PNG ✓
+           → Размер: 86526 байт
+           → ОБОРОТНАЯ СТОРОНА (page 1) рендерится корректно ✓
+        
+        ✅ TEST 9: Подтверждение различия front/back
+           → Front: 94528 байт, Back: 86526 байт
+           → Разница размеров: 8002 байт
+           → front и back — РАЗНЫЕ изображения ✓
+           → side='front'|'back' работает корректно ✓
+        
+        РЕГРЕССИЯ (3/3 PASS):
+        
+        ✅ R1: POST /api/forma19/preview
+           → {records:[{surname:'Тест'}], duplex_flip:'long'}
+           → 200, Content-Type: application/pdf
+           → Валидный PDF начинается с %PDF ✓
+           → РОВНО 2 СТРАНИЦЫ (проверено через pymupdf) ✓
+        
+        ✅ R2: POST /api/contracts/preview?format=pdf
+           → С минимальными полями {fields:{contract_number:'TEST-001',...}}
+           → 200, Content-Type: application/pdf
+           → Валидный PDF начинается с %PDF ✓
+           → Размер: 53240 байт ✓
+        
+        ✅ R3: GET /api/_ping
+           → 200 {ok:true} ✓
+        
+        ЗАКЛЮЧЕНИЕ:
+        
+        🎉 ФОРМА 24 ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНА:
+        • Все эндпоинты /api/forma24/* работают корректно
+        • fields (структура групп с 32 ключами)
+        • defaults (сохранение/персистентность, изолированное хранилище от forma19)
+        • prefill (разбивка ФИО/даты)
+        • preview (PDF с точными размерами A4 + кириллица на обеих сторонах)
+        • preview-png (PNG-предпросмотр front/back, разные изображения)
+        • Все backend API полностью функциональны
+        • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+        
+        Форма 24 готова к использованию.

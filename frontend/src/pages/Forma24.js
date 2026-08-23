@@ -19,14 +19,14 @@ import {
   Wand2,
 } from "lucide-react";
 import {
-  forma19Fields,
-  getForma19Defaults,
-  saveForma19Defaults,
-  forma19Prefill,
+  forma24Fields,
+  getForma24Defaults,
+  saveForma24Defaults,
+  forma24Prefill,
   mapStudents,
-  forma19PreviewPngUrl,
-  openForma19Pdf,
-  downloadForma19Pdf,
+  forma24PreviewPngUrl,
+  openForma24Pdf,
+  downloadForma24Pdf,
   uploadExcel,
 } from "@/lib/apiClient";
 
@@ -37,7 +37,7 @@ const recordLabel = (r, i) => {
 
 // Форма 19 — «Адресный листок прибытия». Полная векторная печать на A4,
 // сетка 2×2 = 2 человека на лист, по 2 копии; лицо + оборот для дуплекса.
-export default function Forma19() {
+export default function Forma24() {
   const [groups, setGroups] = useState([]);
   const [defaults, setDefaults] = useState({});
   const [records, setRecords] = useState([{}]);
@@ -66,19 +66,19 @@ export default function Forma19() {
   useEffect(() => {
     (async () => {
       try {
-        const [f, d] = await Promise.all([forma19Fields(), getForma19Defaults()]);
+        const [f, d] = await Promise.all([forma24Fields(), getForma24Defaults()]);
         setGroups(f.groups || []);
         setDefaults(d || {});
         const prefillList = location.state?.prefillList || null;
         if (Array.isArray(prefillList) && prefillList.length) {
-          const recs = await forma19Prefill(prefillList);
+          const recs = await forma24Prefill(prefillList);
           setRecords(recs.map((r) => ({ ...(d || {}), ...r })));
           toast.success(`Подставлено записей: ${recs.length}`);
         } else {
           setRecords([{ ...(d || {}) }]);
         }
       } catch (e) {
-        toast.error("Не удалось загрузить поля Формы 19");
+        toast.error("Не удалось загрузить поля Формы 24");
       } finally {
         setLoading(false);
       }
@@ -93,7 +93,7 @@ export default function Forma19() {
     try {
       const ds = await uploadExcel(file);
       const students = await mapStudents(ds.rows || [], ds.mapping || {});
-      const recs = await forma19Prefill(students);
+      const recs = await forma24Prefill(students);
       if (!recs.length) {
         toast.error("В файле не найдено студентов");
       } else {
@@ -123,7 +123,7 @@ export default function Forma19() {
   const doSaveDefaults = async () => {
     setSavingDefaults(true);
     try {
-      await saveForma19Defaults(stripEmpty(defaults));
+      await saveForma24Defaults(stripEmpty(defaults));
       applyDefaultsToAll();
       toast.success("Постоянные значения сохранены и применены");
     } catch (e) {
@@ -164,7 +164,7 @@ export default function Forma19() {
     if (loading) return;
     setPreviewBusy(true);
     try {
-      const url = await forma19PreviewPngUrl(records, duplexFlip, previewSide);
+      const url = await forma24PreviewPngUrl(records, duplexFlip, previewSide);
       if (prevUrlRef.current) window.URL.revokeObjectURL(prevUrlRef.current);
       prevUrlRef.current = url;
       setPreviewUrl(url);
@@ -188,7 +188,7 @@ export default function Forma19() {
 
   const doOpen = async () => {
     try {
-      await openForma19Pdf(records, duplexFlip);
+      await openForma24Pdf(records, duplexFlip);
       toast("PDF открыт — печатайте «Фактический размер» (100%), двусторонняя печать");
     } catch (e) {
       toast.error("Ошибка открытия PDF");
@@ -196,7 +196,7 @@ export default function Forma19() {
   };
   const doDownload = async () => {
     try {
-      await downloadForma19Pdf(records, duplexFlip);
+      await downloadForma24Pdf(records, duplexFlip);
     } catch (e) {
       toast.error("Ошибка скачивания");
     }
@@ -207,13 +207,13 @@ export default function Forma19() {
   }
 
   return (
-    <div className="p-6 lg:p-8 space-y-6" data-testid="forma19-page">
+    <div className="p-6 lg:p-8 space-y-6" data-testid="forma24-page">
       <div>
         <h1 className="font-heading text-3xl font-bold tracking-tight flex items-center gap-3">
-          <ClipboardList className="h-8 w-8 text-[#E11D48]" /> Адресный листок (Форма 19)
+          <ClipboardList className="h-8 w-8 text-[#E11D48]" /> Талон учёта (Форма 24)
         </h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-          Печать «Адресного листка прибытия» на чистой бумаге A4 — бланк рисуется заново + данные.
+          Печать «Талона миграционного учёта к адресному листку прибытия» (Форма 24) на чистой бумаге A4 — бланк рисуется заново + данные.
           На каждом листе <b>2 человека, по 2 копии</b> (сетка 2×2). Первый лист — лицевые
           стороны, второй — обороты, для двусторонней печати. Автозаполнение из Excel со студентами.
         </p>
@@ -233,14 +233,14 @@ export default function Forma19() {
               accept=".xlsx,.xlsm"
               onChange={onUpload}
               className="hidden"
-              data-testid="f19-file-input"
+              data-testid="f24-file-input"
             />
             <Button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
               variant="outline"
               className="w-full"
-              data-testid="f19-upload-btn"
+              data-testid="f24-upload-btn"
             >
               <Upload className="h-4 w-4 mr-2" />
               {uploading ? "Загрузка…" : "Выбрать .xlsx файл"}
@@ -252,12 +252,12 @@ export default function Forma19() {
           </div>
 
           {/* Постоянные значения (constants) */}
-          <div className="rounded-lg border border-[#E11D48]/30 bg-[#E11D48]/5 p-4 space-y-2" data-testid="f19-defaults-box">
+          <div className="rounded-lg border border-[#E11D48]/30 bg-[#E11D48]/5 p-4 space-y-2" data-testid="f24-defaults-box">
             <button
               type="button"
               onClick={() => setShowDefaults((s) => !s)}
               className="flex w-full items-center justify-between text-sm font-semibold"
-              data-testid="f19-defaults-toggle"
+              data-testid="f24-defaults-toggle"
             >
               <span className="flex items-center gap-2">
                 <Wand2 className="h-4 w-4 text-[#E11D48]" /> Постоянные значения
@@ -283,7 +283,7 @@ export default function Forma19() {
                             value={defaults[f.key] || ""}
                             onChange={(e) => setDefaultVal(f.key, e.target.value)}
                             className="h-8 text-sm"
-                            data-testid={`f19-default-${f.key}`}
+                            data-testid={`f24-default-${f.key}`}
                           />
                         </div>
                       ))}
@@ -296,7 +296,7 @@ export default function Forma19() {
               onClick={doSaveDefaults}
               disabled={savingDefaults}
               className="w-full bg-[#E11D48] hover:bg-[#BE123C]"
-              data-testid="f19-save-defaults"
+              data-testid="f24-save-defaults"
             >
               <Save className="h-4 w-4 mr-2" />
               {savingDefaults ? "Сохранение…" : "Сохранить и применить ко всем"}
@@ -315,7 +315,7 @@ export default function Forma19() {
                 className={`rounded-md border px-3 py-2 text-sm text-left transition ${
                   duplexFlip === "long" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
                 }`}
-                data-testid="f19-flip-long"
+                data-testid="f24-flip-long"
               >
                 <div className="font-semibold">По длинному краю</div>
                 <div className="text-[11px] text-muted-foreground">обычная (по умолчанию)</div>
@@ -326,7 +326,7 @@ export default function Forma19() {
                 className={`rounded-md border px-3 py-2 text-sm text-left transition ${
                   duplexFlip === "short" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
                 }`}
-                data-testid="f19-flip-short"
+                data-testid="f24-flip-short"
               >
                 <div className="font-semibold">По короткому краю</div>
                 <div className="text-[11px] text-muted-foreground">если оборот не совпал</div>
@@ -339,10 +339,10 @@ export default function Forma19() {
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={doOpen} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="f19-open">
+            <Button onClick={doOpen} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="f24-open">
               <Printer className="h-4 w-4 mr-2" /> Открыть/Печать
             </Button>
-            <Button onClick={doDownload} variant="outline" data-testid="f19-download">
+            <Button onClick={doDownload} variant="outline" data-testid="f24-download">
               <Download className="h-4 w-4 mr-2" /> Скачать PDF
             </Button>
           </div>
@@ -351,7 +351,7 @@ export default function Forma19() {
           <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold">Люди ({records.length})</div>
-              <Button size="sm" variant="outline" onClick={addRecord} data-testid="f19-add-record">
+              <Button size="sm" variant="outline" onClick={addRecord} data-testid="f24-add-record">
                 <Plus className="h-4 w-4 mr-1" /> Добавить
               </Button>
             </div>
@@ -359,24 +359,24 @@ export default function Forma19() {
               {records.map((r, idx) => {
                 const open = idx === activeIdx;
                 return (
-                  <div key={idx} className="rounded-md border border-white/10 bg-black/20" data-testid={`f19-record-${idx}`}>
+                  <div key={idx} className="rounded-md border border-white/10 bg-black/20" data-testid={`f24-record-${idx}`}>
                     <div className="flex items-center gap-1 px-2 py-1.5">
                       <button
                         type="button"
                         onClick={() => setActiveIdx(open ? -1 : idx)}
                         className="flex items-center gap-2 flex-1 min-w-0 text-left text-sm"
-                        data-testid={`f19-record-toggle-${idx}`}
+                        data-testid={`f24-record-toggle-${idx}`}
                       >
                         <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
                         <span className="truncate">{recordLabel(r, idx)}</span>
                       </button>
-                      <button type="button" title="Дублировать" onClick={() => duplicateRecord(idx)} className="p-1.5 text-muted-foreground hover:text-white" data-testid={`f19-record-dup-${idx}`}>
+                      <button type="button" title="Дублировать" onClick={() => duplicateRecord(idx)} className="p-1.5 text-muted-foreground hover:text-white" data-testid={`f24-record-dup-${idx}`}>
                         <Copy className="h-3.5 w-3.5" />
                       </button>
                       <button type="button" title="Очистить" onClick={() => clearRecordAt(idx)} className="p-1.5 text-muted-foreground hover:text-white">
                         <Eraser className="h-3.5 w-3.5" />
                       </button>
-                      <button type="button" title="Удалить" onClick={() => removeRecord(idx)} className="p-1.5 text-muted-foreground hover:text-[#E11D48]" data-testid={`f19-record-del-${idx}`}>
+                      <button type="button" title="Удалить" onClick={() => removeRecord(idx)} className="p-1.5 text-muted-foreground hover:text-[#E11D48]" data-testid={`f24-record-del-${idx}`}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -393,7 +393,7 @@ export default function Forma19() {
                                     value={r[f.key] || ""}
                                     onChange={(e) => setRecordVal(idx, f.key, e.target.value)}
                                     className="h-8 text-sm"
-                                    data-testid={`f19-input-${idx}-${f.key}`}
+                                    data-testid={`f24-input-${idx}-${f.key}`}
                                   />
                                 </div>
                               ))}
@@ -421,7 +421,7 @@ export default function Forma19() {
                   type="button"
                   onClick={() => setPreviewSide("front")}
                   className={`px-3 py-1.5 text-xs transition ${previewSide === "front" ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`}
-                  data-testid="f19-side-front"
+                  data-testid="f24-side-front"
                 >
                   Лицевая
                 </button>
@@ -429,19 +429,19 @@ export default function Forma19() {
                   type="button"
                   onClick={() => setPreviewSide("back")}
                   className={`px-3 py-1.5 text-xs transition ${previewSide === "back" ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`}
-                  data-testid="f19-side-back"
+                  data-testid="f24-side-back"
                 >
                   Оборотная
                 </button>
               </div>
-              <Button size="sm" variant="ghost" onClick={refreshPreview} disabled={previewBusy} data-testid="f19-refresh-preview">
+              <Button size="sm" variant="ghost" onClick={refreshPreview} disabled={previewBusy} data-testid="f24-refresh-preview">
                 <RefreshCw className={`h-4 w-4 mr-1 ${previewBusy ? "animate-spin" : ""}`} /> Обновить
               </Button>
             </div>
           </div>
           <div className="rounded-lg border border-white/10 bg-white overflow-hidden shadow-2xl flex items-center justify-center" style={{ height: "80vh" }}>
             {previewUrl ? (
-              <img src={previewUrl} alt="Предпросмотр Формы 19" className="max-w-full max-h-full object-contain" data-testid="forma19-preview" />
+              <img src={previewUrl} alt="Предпросмотр Формы 24" className="max-w-full max-h-full object-contain" data-testid="forma24-preview" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-muted-foreground">
                 Формирование предпросмотра…

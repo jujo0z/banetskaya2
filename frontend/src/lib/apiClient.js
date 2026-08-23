@@ -402,10 +402,10 @@ export async function mapStudents(rows, mapping) {
   return data.students || [];
 }
 
-export async function forma19PreviewPngUrl(records, duplexFlip = "long") {
+export async function forma19PreviewPngUrl(records, duplexFlip = "long", side = "front") {
   const res = await api.post(
     "/forma19/preview-png",
-    { records, duplex_flip: duplexFlip },
+    { records, duplex_flip: duplexFlip, side },
     { responseType: "blob" }
   );
   return window.URL.createObjectURL(res.data);
@@ -428,4 +428,34 @@ export async function downloadForma19Pdf(records, duplexFlip = "long") {
     { responseType: "blob" }
   );
   downloadBlob(res.data, "forma19.pdf");
+}
+
+// ======================= ФОРМА 24 — Талон миграционного учёта =======================
+export async function forma24Fields() {
+  const { data } = await api.get("/forma24/fields");
+  return data;
+}
+export async function getForma24Defaults() {
+  const { data } = await api.get("/forma24/defaults");
+  return data.defaults || {};
+}
+export async function saveForma24Defaults(defaults) {
+  const { data } = await api.post("/forma24/defaults", { defaults });
+  return data;
+}
+export async function forma24Prefill(students) {
+  const { data } = await api.post("/forma24/prefill", { students });
+  return data.records || [];
+}
+export async function forma24PreviewPngUrl(records, duplexFlip = "long", side = "front") {
+  const res = await api.post("/forma24/preview-png", { records, duplex_flip: duplexFlip, side }, { responseType: "blob" });
+  return window.URL.createObjectURL(res.data);
+}
+export async function openForma24Pdf(records, duplexFlip = "long") {
+  const res = await api.post("/forma24/preview", { records, duplex_flip: duplexFlip }, { responseType: "blob" });
+  window.open(window.URL.createObjectURL(res.data), "_blank");
+}
+export async function downloadForma24Pdf(records, duplexFlip = "long") {
+  const res = await api.post("/forma24/preview", { records, duplex_flip: duplexFlip }, { responseType: "blob" });
+  downloadBlob(res.data, "forma24.pdf");
 }

@@ -1405,6 +1405,7 @@ async def updates_apply(req: ApplyUpdateRequest):
 class Forma19Request(BaseModel):
     records: List[Dict[str, Any]] = []      # список людей (поля FORMA19)
     duplex_flip: str = "long"               # "long" | "short"
+    side: str = "front"                     # предпросмотр: "front" | "back"
 
 
 @api_router.get("/forma19/fields")
@@ -1470,15 +1471,78 @@ async def forma19_preview(req: Forma19Request):
 
 @api_router.post("/forma19/preview-png")
 async def forma19_preview_png(req: Forma19Request):
-    """Первый лист как PNG — надёжный предпросмотр в браузере."""
+    """Лист как PNG — надёжный предпросмотр. side='front' → стр.1 (лицо),
+    side='back' → стр.2 (оборот)."""
     try:
         pdf = _build_forma19_pdf(req)
-        png = docsvc.render_pdf_first_page_png(pdf, scale=2.0)
+        page_index = 1 if str(req.side or "front").lower() == "back" else 0
+        png = docsvc.render_pdf_page_png(pdf, page_index, scale=2.0)
     except Exception as e:
         logger.exception("forma19 preview failed")
         raise HTTPException(status_code=500, detail=f"Ошибка предпросмотра: {e}")
     return Response(content=png, media_type="image/png",
                     headers={"Cache-Control": "no-store"})
+
+
+
+# ======================= ФОРМА 24 — Талон миграционного учёта =======================
+class Forma24Request(BaseModel):
+    records: List[Dict[str, Any]] = []
+    duplex_flip: str = "long"
+    side: str = "front"
+
+
+@api_router.get("/forma24/fields")
+async def forma24_fields():
+    return {"groups": docsvc.FORMA24_FIELDS, "keys": docsvc.FORMA24_FIELD_KEYS}
+
+
+@api_router.get("/forma24/defaults")
+async def forma24_get_defaults():
+    doc = await db.app_settings.find_one({"key": "forma24_defaults"}, {"_id": 0})
+    return {"defaults": (doc or {}).get("value", {})}
+
+
+@api_router.post("/forma24/defaults")
+async def forma24_save_defaults(payload: Forma19Defaults):
+    await db.app_settings.update_one(
+        {"key": "forma24_defaults"},
+        {"$set": {"key": "forma24_defaults", "value": payload.defaults}},
+        upsert=True,
+    )
+    return {"saved": True, "defaults": payload.defaults}
+
+
+@api_router.post("/forma24/prefill")
+async def forma24_prefill(payload: Forma19Prefill):
+    return {"records": [docsvc.forma24_from_contract(s) for s in payload.students]}
+
+
+def _build_forma24_pdf(req: "Forma24Request") -> bytes:
+    return docsvc.build_forma24(people=req.records, duplex_flip=req.duplex_flip)
+
+
+@api_router.post("/forma24/preview")
+async def forma24_preview(req: Forma24Request):
+    try:
+        data = _build_forma24_pdf(req)
+    except Exception as e:
+        logger.exception("forma24 generation failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
+    return StreamingResponse(io.BytesIO(data), media_type="application/pdf",
+                             headers={"Content-Disposition": "inline; filename=forma24.pdf"})
+
+
+@api_router.post("/forma24/preview-png")
+async def forma24_preview_png(req: Forma24Request):
+    try:
+        pdf = _build_forma24_pdf(req)
+        idx = 1 if str(req.side or "front").lower() == "back" else 0
+        png = docsvc.render_pdf_page_png(pdf, idx, scale=2.0)
+    except Exception as e:
+        logger.exception("forma24 preview failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка предпросмотра: {e}")
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 
