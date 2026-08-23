@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, ConfigDict, BeforeValidator
 from openpyxl import load_workbook, Workbook
 
 import document_service as docsvc
+import master_data as masterdata
 
 # Sample Excel columns (header -> example value) matching the contract template.
 SAMPLE_COLUMNS = [
@@ -1544,6 +1545,100 @@ async def forma24_preview_png(req: Forma24Request):
         raise HTTPException(status_code=500, detail=f"Ошибка предпросмотра: {e}")
     return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
 
+
+
+@api_router.get("/master-template")
+async def master_template():
+    """Скачать единый Excel-шаблон «Данные» (все документы, пробная строка)."""
+    data = masterdata.build_master_xlsx()
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=banetskaya_dannye.xlsx"},
+    )
+
+
+@api_router.post("/master-upload")
+async def master_upload(file: UploadFile = File(...)):
+    """Загрузить заполненный единый шаблон -> строки + готовые записи по всем документам."""
+    if not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Поддерживаются только файлы .xlsx")
+    content = await file.read()
+    try:
+        people = masterdata.parse_master_xlsx(content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Не удалось прочитать файл: {e}")
+    if not people:
+        raise HTTPException(status_code=400, detail="В файле нет данных (заполните строки с 3-й)")
+    return {
+        "count": len(people),
+        "master": people,
+        "contracts": [masterdata.master_to_contract(m) for m in people],
+        "forma19": [masterdata.master_to_forma19(m) for m in people],
+        "forma24": [masterdata.master_to_forma24(m) for m in people],
+        "soobshenie": [masterdata.master_to_soobshenie(m) for m in people],
+    }
+
+
+class PackageRequest(BaseModel):
+    people: List[Dict[str, Any]] = []      # строки-«люди» из единого шаблона
+    duplex_flip: str = "long"
+    include: Dict[str, bool] = {}           # {contract, forma19, forma24, soobshenie}
+
+
+def _pkg_on(include: Dict[str, bool], key: str) -> bool:
+    if not include:
+        return True
+    return bool(include.get(key, True))
+
+
+async def _build_package_pdf(req: "PackageRequest") -> bytes:
+    tpl = await _active_tpl()
+    inc = req.include or {}
+    parts: List[bytes] = []
+    for m in (req.people or []):
+        if _pkg_on(inc, "contract"):
+            cfields = masterdata.master_to_contract(m)
+            docx = docsvc.render_docx(cfields, tpl)
+            parts.append(docsvc.convert_to_pdf(docx))
+        want19 = _pkg_on(inc, "forma19")
+        want24 = _pkg_on(inc, "forma24")
+        if want19 and want24:
+            # обе формы на одном листе (верх — Ф-19, низ — Ф-24), лицо+оборот
+            parts.append(docsvc.build_forma_combined(
+                masterdata.master_to_forma19(m), masterdata.master_to_forma24(m),
+                duplex_flip=req.duplex_flip))
+        elif want19:
+            parts.append(docsvc.build_forma19(
+                [masterdata.master_to_forma19(m)], duplex_flip=req.duplex_flip))
+        elif want24:
+            parts.append(docsvc.build_forma24(
+                [masterdata.master_to_forma24(m)], duplex_flip=req.duplex_flip))
+        if _pkg_on(inc, "soobshenie"):
+            parts.append(docsvc.build_overlay(
+                [masterdata.master_to_soobshenie(m)],
+                layout=docsvc.SOOBSHENIE_LAYOUT, page_size="a4", with_form=True))
+    if not parts:
+        raise HTTPException(status_code=400, detail="Нет документов для пакета")
+    return docsvc.merge_pdfs(parts)
+
+
+@api_router.post("/package")
+async def build_package(req: PackageRequest):
+    """Полный пакет документов (PDF): по каждому человеку — договор, лист Формы 19
+    (2 копии, лицо+оборот), лист Формы 24 (2 копии) и лист «Сообщение»."""
+    if not req.people:
+        raise HTTPException(status_code=400, detail="Нет данных (загрузите Excel-шаблон)")
+    try:
+        pdf = await _build_package_pdf(req)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("package generation failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка формирования пакета: {e}")
+    return StreamingResponse(
+        io.BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=paket_dokumentov.pdf"})
 
 
 app.include_router(api_router)

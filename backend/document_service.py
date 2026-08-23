@@ -2093,3 +2093,59 @@ def build_forma24(people, duplex_flip="long", draw_guides=True):
     c.save()
     buf.seek(0)
     return buf.getvalue()
+
+
+
+def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True):
+    """Один A4-лист: верхний ряд — Форма 19 (2 копии), нижний ряд — Форма 24
+    (2 копии). Лицо + оборот для двусторонней печати. Один формат карты 105×145.
+    Экономит бумагу: обе формы на одном листе вместо двух."""
+    from reportlab.pdfgen import canvas
+
+    _ensure_fonts()
+    zw = FORMA19_MM[0] * MM
+    zh = FORMA19_MM[1] * MM
+    pw, ph = 210 * MM, 297 * MM
+    top_margin = (ph - 2 * zh) / 2.0
+    side_margin = (pw - 2 * zw) / 2.0
+    duplex_flip = (duplex_flip or "long").lower()
+    rec19 = rec19 or {}
+    rec24 = rec24 or {}
+
+    def origin(col, row):
+        return side_margin + col * zw, ph - (top_margin + row * zh + zh)
+
+    def draw_card(c, col, row, which, back):
+        x0, y0 = origin(col, row)
+        c.saveState()
+        c.translate(x0, y0)
+        if draw_guides:
+            c.setStrokeColorRGB(0.75, 0.75, 0.82)
+            c.setLineWidth(0.3)
+            c.setDash(2, 2)
+            c.rect(0, 0, zw, zh, stroke=1, fill=0)
+            c.setDash()
+        if which == 19:
+            (_draw_forma19_back if back else _draw_forma19_front)(c, zw, zh, rec19)
+        else:
+            (_draw_forma24_back if back else _draw_forma24_front)(c, zw, zh, rec24)
+        c.restoreState()
+
+    def page(c, back):
+        # верхний ряд / нижний ряд — какая форма где
+        top, bottom = 19, 24
+        if back and duplex_flip == "short":
+            top, bottom = 24, 19   # при перевороте по короткому краю ряды меняются
+        draw_card(c, 0, 0, top, back)
+        draw_card(c, 1, 0, top, back)
+        draw_card(c, 0, 1, bottom, back)
+        draw_card(c, 1, 1, bottom, back)
+        c.showPage()
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(pw, ph))
+    page(c, False)   # лицо
+    page(c, True)    # оборот
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()

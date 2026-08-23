@@ -404,6 +404,97 @@ backend:
           agent: "main"
           comment: "Новый эндпоинт для ссылки на установщик Windows. GET /api/app-config → {windows_download_url:''} по умолчанию. POST /api/app-config {windows_download_url:'https://...'} → {saved:true, windows_download_url:'...'}, сохраняется в app_settings key=app_config (upsert), читается обратно через GET. Пустая строка также сохраняется. Проверить GET(default)→POST(set)→GET(persisted)→POST(clear)→GET(empty)."
 
+
+  - task: "Единый Excel-шаблон и полный пакет документов: GET /api/master-template, POST /api/master-upload, POST /api/package"
+    implemented: true
+    working: true
+    file: "server.py, master_data.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "user"
+          comment: "НОВАЯ ФИЧА (запрос пользователя): единый Excel-шаблон для всех документов + полный пакет документов в PDF. (1) GET /api/master-template → скачать .xlsx с листами 'Данные' (заголовки во 2-й строке, пробные данные в 3-й) и 'Инструкция'. (2) POST /api/master-upload → загрузить заполненный .xlsx, получить JSON с массивами master, contracts, forma19, forma24, soobshenie. (3) POST /api/package {people:[...], duplex_flip:'long'} → полный пакет PDF (договор 4 стр + объединённый лист Ф19+Ф24 2 стр + сообщение 1 стр = 7 стр на человека). (4) POST /api/package с include:{contract:false, forma19:true, forma24:true, soobshenie:false} → только Ф19+Ф24 (2 стр). (5) Регресс: GET /api/fields, POST /api/forma24/preview. НЕ трогать данные договоров/историю."
+        - working: true
+          agent: "testing"
+          comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (6/6, 100% success rate). НОВЫЕ ЭНДПОИНТЫ ПОЛНОСТЬЮ РАБОТАЮТ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+        
+        ✅ TEST 1: GET /api/master-template
+           → 200, Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+           → Excel размер: 9251 байт
+           → Листы: ['Данные', 'Инструкция'] ✓
+           → Лист 'Данные' строка 2 (заголовки): ['ФИО (полностью)', 'Дата рождения (ДД.ММ.ГГГГ)', 'Пол (1-муж, 2-жен)'] ✓
+           → Лист 'Данные' строка 3 (пробные данные): ['Иванов Иван Иванович', '15.03.2004', '1'] ✓
+           → Структура Excel корректна (проверено через openpyxl) ✓
+        
+        ✅ TEST 2: POST /api/master-upload
+           → Загружен тот же скачанный .xlsx
+           → 200, Content-Type: application/json
+           → Response keys: ['count', 'master', 'contracts', 'forma19', 'forma24', 'soobshenie'] ✓
+           → count: 1 (>= 1) ✓
+           → Все массивы непустые (len >= 1) ✓
+           → forma24[0] содержит:
+              • surname='Иванов' ✓
+              • first_name='Иван' ✓
+              • birth_month='марта' ✓
+              • sex='1' ✓
+           → contracts[0] содержит:
+              • full_name='Иванов Иван Иванович' ✓
+              • registration_address='пр-т Дзержинского, 85, ком. 302/2' (непустой, склеенный адрес) ✓
+           → soobshenie[0] содержит:
+              • fio (присутствует) ✓
+              • date_day (присутствует) ✓
+              • passport_series='MP' ✓
+           → Парсинг и преобразование данных работают корректно ✓
+        
+        ✅ TEST 3: POST /api/package (полный пакет)
+           → {people:[master[0]], duplex_flip:'long'}
+           → 200, Content-Type: application/pdf
+           → PDF размер: 183279 байт
+           → Валидный PDF начинается с %PDF ✓
+           → Проверено через pymupdf: РОВНО 7 СТРАНИЦ для 1 человека ✓
+           → Страница 0 содержит: 'ДОГОВОР' ✓
+           → Страница 4 содержит ОБА текста:
+              • 'Форма № 19' (АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ) ✓
+              • 'Форма 24' (ТАЛОН МИГРАЦИОННОГО) ✓
+              • Обе формы на одном листе (верхний ряд Ф19, нижний Ф24) ✓
+           → Страница 6 содержит: 'СООБЩЕНИЕ' ✓
+           → Структура пакета: Договор (4 стр) + Ф19+Ф24 объединённые (2 стр лицо+оборот) + Сообщение (1 стр) = 7 стр ✓
+        
+        ✅ TEST 4: POST /api/package (частичный пакет)
+           → {people:[master[0]], duplex_flip:'long', include:{contract:false, forma19:true, forma24:true, soobshenie:false}}
+           → 200, Content-Type: application/pdf
+           → PDF размер: 72762 байт
+           → Валидный PDF начинается с %PDF ✓
+           → Проверено через pymupdf: РОВНО 2 СТРАНИЦЫ ✓
+           → Только объединённый лист Ф19+Ф24 (лицо и оборот) ✓
+           → Параметр include работает корректно (исключены contract и soobshenie) ✓
+        
+        РЕГРЕССИЯ (2/2 PASS):
+        
+        ✅ R1: GET /api/fields
+           → 200, JSON с ключом 'fields' ✓
+           → fields: массив из 17 элементов ✓
+        
+        ✅ R2: POST /api/forma24/preview
+           → {records:[{surname:'Тест'}], duplex_flip:'long'}
+           → 200, Content-Type: application/pdf
+           → Валидный PDF начинается с %PDF ✓
+           → Размер: 63719 байт ✓
+        
+        ЗАКЛЮЧЕНИЕ:
+        
+        🎉 ЕДИНЫЙ EXCEL-ШАБЛОН И ПОЛНЫЙ ПАКЕТ ДОКУМЕНТОВ ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНЫ:
+        • GET /api/master-template возвращает корректный Excel с листами 'Данные' и 'Инструкция'
+        • POST /api/master-upload парсит Excel и возвращает все необходимые массивы (master, contracts, forma19, forma24, soobshenie)
+        • POST /api/package генерирует полный пакет документов (7 страниц на человека: договор 4 стр + объединённый лист Ф19+Ф24 2 стр + сообщение 1 стр)
+        • POST /api/package с параметром include позволяет выбирать документы (частичный пакет работает корректно)
+        • Все backend API полностью функциональны
+        • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+        
+        Новая фича готова к использованию."
+
 frontend:
   - task: "Desktop vs Web entry-gate logic (window.__IS_DESKTOP__ flag detection)"
     implemented: true
@@ -450,13 +541,14 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.8"
-  test_sequence: 11
+  version: "2.10"
+  test_sequence: 13
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Форма 19 (Адресный листок прибытия): векторная отрисовка + эндпоинты /api/forma19/*"
+    - "Единый Excel-шаблон: GET /api/master-template + POST /api/master-upload"
+    - "Полный пакет документов: POST /api/package (договор + Ф19+Ф24 на одном листе + сообщение)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -464,12 +556,20 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: >
-        НОВЫЙ ПРОГОН. Протестируй ТОЛЬКО backend, задачу «Фикс soffice.bin ... file:// URI профиля
-        LibreOffice». Регрессия на Linux (Windows-баг тут не воспроизвести). 4 проверки: (1) GET
-        /api/fields 200; (2) POST /api/contracts/preview?format=pdf с минимальными полями → 200
-        валидный PDF с кириллицей (pymupdf, несколько страниц); (3) GET /api/health/diagnostics →
-        checks[key=libreoffice].ok=true и detail начинается с 'OK', pdf.ok=true, all_ok=true; (4)
-        POST /api/overlay/generate page_size=card → 200. Данные договоров/историю не ломать.
+        НОВЫЙ ПРОГОН — протестируй ТОЛЬКО backend, новые фичи «единый Excel-шаблон» и «полный пакет».
+        Проверки: (1) GET /api/master-template → 200, валидный .xlsx (openpyxl загружается, есть лист
+        "Данные" и "Инструкция", в строке 3 листа "Данные" есть пробные данные). (2) POST
+        /api/master-upload с этим же скачанным файлом (multipart) → 200, count>=1, и присутствуют
+        ключи master, contracts, forma19, forma24, soobshenie; проверь что forma24[0] содержит
+        surname/first_name/birth_month(словом)/sex, contracts[0] содержит full_name и
+        registration_address (склеенный адрес), soobshenie[0] содержит fio/date_day/passport_series.
+        (3) POST /api/package с телом {"people": <master из шага 2>, "duplex_flip":"long"} → 200,
+        Content-Type application/pdf, валидный PDF (pymupdf) с 7 страницами для 1 человека:
+        договор (стр.0-3), объединённый лист Ф19+Ф24 лицо (стр.4) и оборот (стр.5), сообщение (стр.6).
+        На стр.4 в тексте должны встречаться и "Форма № 19", и "Форма 24" (обе формы на одном листе).
+        (4) POST /api/package с include {"contract":false,"forma19":true,"forma24":true,"soobshenie":false}
+        → 200 PDF ровно 2 страницы. Существующие эндпоинты (contracts, forma19/24 preview) не ломать.
+        LibreOffice установлен (soffice есть). Данные договоров/историю не трогать.
     - agent: "testing"
       message: >
         ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО (1/1 тест, 100% success rate).
@@ -547,6 +647,62 @@ agent_communication:
         РЕГРЕССИЯ: GET /api/sample-template работает, существующий pytest suite проходит.
         
         Все backend API полностью функциональны. Готово к финализации.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ НОВЫХ ФИЧЕЙ ЗАВЕРШЕНО УСПЕШНО (6/6 тестов, 100% success rate).
+        
+        ПРОТЕСТИРОВАНЫ НОВЫЕ ЭНДПОИНТЫ:
+        
+        1️⃣ GET /api/master-template (единый Excel-шаблон):
+           ✅ Возвращает валидный .xlsx (9251 байт)
+           ✅ Содержит листы "Данные" и "Инструкция"
+           ✅ Строка 2 листа "Данные" содержит заголовки колонок (например "ФИО (полностью)")
+           ✅ Строка 3 листа "Данные" содержит пробные данные (например "Иванов Иван Иванович")
+           ✅ Структура проверена через openpyxl
+        
+        2️⃣ POST /api/master-upload (загрузка и парсинг Excel):
+           ✅ Принимает тот же скачанный .xlsx как multipart form-data
+           ✅ Возвращает JSON с count >= 1
+           ✅ Присутствуют все массивы: master, contracts, forma19, forma24, soobshenie (все непустые)
+           ✅ forma24[0] содержит: surname="Иванов", first_name="Иван", birth_month="марта", sex="1"
+           ✅ contracts[0] содержит: full_name="Иванов Иван Иванович", registration_address="пр-т Дзержинского, 85, ком. 302/2" (непустой склеенный адрес)
+           ✅ soobshenie[0] содержит: fio, date_day, passport_series="MP"
+        
+        3️⃣ POST /api/package (полный пакет документов):
+           ✅ Принимает JSON {people:[...], duplex_flip:"long"}
+           ✅ Возвращает валидный PDF (183279 байт)
+           ✅ РОВНО 7 СТРАНИЦ для одного человека (проверено через pymupdf)
+           ✅ Страница 0 содержит "ДОГОВОР" (договор найма, 4 страницы)
+           ✅ Страница 4 содержит ОБА текста "Форма № 19" И "Форма 24" (обе формы на одном листе — верхний ряд Ф19, нижний Ф24)
+           ✅ Страница 6 содержит "СООБЩЕНИЕ" (бланк регистрации)
+           ✅ Структура пакета: Договор (4 стр) + Объединённый лист Ф19+Ф24 (2 стр лицо+оборот) + Сообщение (1 стр) = 7 стр
+        
+        4️⃣ POST /api/package (частичный пакет с параметром include):
+           ✅ Принимает JSON {people:[...], duplex_flip:"long", include:{contract:false, forma19:true, forma24:true, soobshenie:false}}
+           ✅ Возвращает валидный PDF (72762 байт)
+           ✅ РОВНО 2 СТРАНИЦЫ (только объединённый лист Ф19+Ф24 лицо и оборот)
+           ✅ Параметр include работает корректно (исключены contract и soobshenie)
+        
+        5️⃣ РЕГРЕССИЯ: GET /api/fields
+           ✅ Возвращает 200 с JSON {fields:[...]}
+           ✅ Массив fields содержит 17 элементов
+        
+        6️⃣ РЕГРЕССИЯ: POST /api/forma24/preview
+           ✅ Возвращает 200 с валидным PDF (63719 байт)
+           ✅ Форма 24 не сломана
+        
+        ЗАКЛЮЧЕНИЕ:
+        
+        🎉 ЕДИНЫЙ EXCEL-ШАБЛОН И ПОЛНЫЙ ПАКЕТ ДОКУМЕНТОВ ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНЫ:
+        • Единый шаблон позволяет заполнить данные для всех документов в одном Excel-файле
+        • Парсинг корректно разбивает данные на компоненты для каждого типа документа
+        • Полный пакет генерирует все документы в одном PDF (договор + формы 19+24 на одном листе + сообщение)
+        • Параметр include позволяет выбирать нужные документы
+        • Все backend API полностью функциональны
+        • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+        
+        Новая фича готова к использованию. Данные договоров/история не затронуты.
+
 
 
 agent_communication:

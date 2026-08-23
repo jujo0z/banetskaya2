@@ -23,11 +23,13 @@ import {
   getForma19Defaults,
   saveForma19Defaults,
   forma19Prefill,
-  mapStudents,
   forma19PreviewPngUrl,
   openForma19Pdf,
   downloadForma19Pdf,
-  uploadExcel,
+  masterUpload,
+  downloadMasterTemplate,
+  openPackagePdf,
+  downloadPackagePdf,
 } from "@/lib/apiClient";
 
 const recordLabel = (r, i) => {
@@ -50,6 +52,8 @@ export default function Forma19() {
   const [previewSide, setPreviewSide] = useState("front");
   const [uploading, setUploading] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
+  const [masterRows, setMasterRows] = useState([]);
+  const [packageBusy, setPackageBusy] = useState(false);
 
   const location = useLocation();
   const fileRef = useRef(null);
@@ -85,27 +89,53 @@ export default function Forma19() {
     })();
   }, []);
 
-  // ---- Excel upload -> autofill ----
+  // ---- Excel upload -> autofill (единый шаблон «Данные») ----
   const onUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
-      const ds = await uploadExcel(file);
-      const students = await mapStudents(ds.rows || [], ds.mapping || {});
-      const recs = await forma19Prefill(students);
+      const data = await masterUpload(file);
+      const recs = data.forma19 || [];
       if (!recs.length) {
-        toast.error("В файле не найдено студентов");
+        toast.error("В файле не найдено данных");
       } else {
         setRecords(recs.map((r) => ({ ...defaults, ...r })));
+        setMasterRows(data.master || []);
         setActiveIdx(0);
-        toast.success(`Загружено студентов: ${recs.length} — данные подставлены`);
+        toast.success(`Загружено: ${recs.length} — данные подставлены`);
       }
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Ошибка загрузки Excel");
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const onDownloadTemplate = async () => {
+    try {
+      await downloadMasterTemplate();
+      toast.success("Шаблон Excel скачан");
+    } catch {
+      toast.error("Не удалось скачать шаблон");
+    }
+  };
+
+  const onPackage = async (mode) => {
+    if (!masterRows.length) {
+      toast.error("Сначала загрузите Excel-шаблон «Данные»");
+      return;
+    }
+    setPackageBusy(true);
+    try {
+      if (mode === "download") await downloadPackagePdf(masterRows, duplexFlip);
+      else await openPackagePdf(masterRows, duplexFlip);
+      toast.success("Полный пакет сформирован");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Ошибка формирования пакета");
+    } finally {
+      setPackageBusy(false);
     }
   };
 
@@ -245,11 +275,52 @@ export default function Forma19() {
               <Upload className="h-4 w-4 mr-2" />
               {uploading ? "Загрузка…" : "Выбрать .xlsx файл"}
             </Button>
+            <Button
+              onClick={onDownloadTemplate}
+              variant="ghost"
+              className="w-full text-[#E11D48] hover:text-[#E11D48]"
+              data-testid="f19-download-template-btn"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Скачать шаблон Excel
+            </Button>
             <p className="text-[11px] text-muted-foreground">
-              ФИО, дата рождения, паспорт и ИИН разбиваются по полям автоматически. Остальное —
-              из постоянных значений или вручную.
+              Единый шаблон «Данные»: одна строка = один человек = все документы (договор,
+              сообщение, Форма 19 и 24). Первая строка уже заполнена примером.
             </p>
           </div>
+
+          {/* Полный пакет документов */}
+          <div className="rounded-lg border border-[#E11D48]/30 bg-gradient-to-br from-[#E11D48]/10 to-transparent p-4 space-y-2" data-testid="f19-package-box">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <ClipboardList className="h-4 w-4 text-[#E11D48]" /> Полный пакет документов
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Один PDF по каждому человеку: договор, лист «Форма 19 + Форма 24» (по 2 копии,
+              обе формы на одном листе) и лист «Сообщение».
+              {masterRows.length > 0 ? ` Загружено человек: ${masterRows.length}.` : " Сначала загрузите Excel-шаблон."}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => onPackage("open")}
+                disabled={packageBusy || !masterRows.length}
+                className="flex-1 bg-[#E11D48] hover:bg-[#be123c] text-white"
+                data-testid="f19-package-open-btn"
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                {packageBusy ? "Формирование…" : "Открыть пакет"}
+              </Button>
+              <Button
+                onClick={() => onPackage("download")}
+                disabled={packageBusy || !masterRows.length}
+                variant="outline"
+                data-testid="f19-package-download-btn"
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
 
           {/* Постоянные значения (constants) */}
           <div className="rounded-lg border border-[#E11D48]/30 bg-[#E11D48]/5 p-4 space-y-2" data-testid="f19-defaults-box">

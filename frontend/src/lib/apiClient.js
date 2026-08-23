@@ -29,6 +29,21 @@ export async function uploadExcel(file) {
   return data;
 }
 
+// ---- Единый Excel-шаблон «Данные» (все документы) ----
+export async function downloadMasterTemplate() {
+  const res = await api.get("/master-template", { responseType: "blob" });
+  downloadBlob(res.data, "banetskaya_dannye.xlsx");
+}
+
+export async function masterUpload(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post("/master-upload", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data; // { count, master, contracts, forma19, forma24, soobshenie }
+}
+
 export async function saveContract(fields, status = "final") {
   const { data } = await api.post("/contracts", { fields, status });
   return data;
@@ -458,4 +473,14 @@ export async function openForma24Pdf(records, duplexFlip = "long") {
 export async function downloadForma24Pdf(records, duplexFlip = "long") {
   const res = await api.post("/forma24/preview", { records, duplex_flip: duplexFlip }, { responseType: "blob" });
   downloadBlob(res.data, "forma24.pdf");
+}
+
+// ---- Полный пакет документов (договор + Ф19 + Ф24 + сообщение) ----
+export async function openPackagePdf(people, duplexFlip = "long", include = {}) {
+  const res = await api.post("/package", { people, duplex_flip: duplexFlip, include }, { responseType: "blob" });
+  window.open(window.URL.createObjectURL(res.data), "_blank");
+}
+export async function downloadPackagePdf(people, duplexFlip = "long", include = {}) {
+  const res = await api.post("/package", { people, duplex_flip: duplexFlip, include }, { responseType: "blob" });
+  downloadBlob(res.data, "paket_dokumentov.pdf");
 }
