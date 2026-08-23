@@ -1196,6 +1196,24 @@ def run_diagnostics():
 
 FORMA19_MM = (105.0, 145.0)  # физический размер одного листка, мм
 
+# Безопасные поля листа: блок карт вписывается 1:1 без автоподгонки/обрезки
+# принтера. Поля симметричны — это КЛЮЧЕВО для совмещения лицевой и оборотной
+# сторон при двусторонней печати (дуплексе).
+FORMA_MARGIN_X = 5.0 * MM
+FORMA_MARGIN_Y = 6.0 * MM
+
+
+def _fit_grid(pw, ph, zw, zh, cols, rows):
+    """Вписать сетку cols×rows карт zw×zh в лист pw×ph с безопасными полями.
+    Возвращает (scale, sw, sh, side_margin, top_margin); блок центрирован."""
+    sx = (pw - 2 * FORMA_MARGIN_X) / (cols * zw)
+    sy = (ph - 2 * FORMA_MARGIN_Y) / (rows * zh)
+    scale = min(sx, sy, 1.0)
+    sw, sh = zw * scale, zh * scale
+    side_margin = (pw - cols * sw) / 2.0
+    top_margin = (ph - rows * sh) / 2.0
+    return scale, sw, sh, side_margin, top_margin
+
 # Поля формы, сгруппированные для UI (порядок = порядок ввода).
 FORMA19_FIELDS = [
     {"group": "Идентификация", "fields": [
@@ -1682,8 +1700,7 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
     zh = FORMA19_MM[1] * MM   # 145
     pw, ph = 210 * MM, 297 * MM
     cols, rows = 2, 2
-    top_margin = (ph - rows * zh) / 2.0
-    side_margin = (pw - cols * zw) / 2.0
+    scale, sw, sh, side_margin, top_margin = _fit_grid(pw, ph, zw, zh, cols, rows)
 
     people = list(people or [])
     if not people:
@@ -1692,9 +1709,9 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
     duplex_flip = (duplex_flip or "long").lower()
 
     def cell_origin(col, row):
-        x0 = side_margin + col * zw
-        y_top = top_margin + row * zh
-        y0 = ph - (y_top + zh)
+        x0 = side_margin + col * sw
+        y_top = top_margin + row * sh
+        y0 = ph - (y_top + sh)
         return x0, y0
 
     # позиции ячеек: 0=TL,1=TR (верхний ряд), 2=BL,3=BR (нижний ряд)
@@ -1719,6 +1736,7 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
             x0, y0 = cell_origin(col, row)
             c.saveState()
             c.translate(x0, y0)
+            c.scale(scale, scale)
             if draw_guides:
                 c.setStrokeColorRGB(0.75, 0.75, 0.82)
                 c.setLineWidth(0.3)
@@ -2059,13 +2077,12 @@ def build_forma24(people, duplex_flip="long", draw_guides=True):
     zw = FORMA19_MM[0] * MM
     zh = FORMA19_MM[1] * MM
     pw, ph = 210 * MM, 297 * MM
-    top_margin = (ph - 2 * zh) / 2.0
-    side_margin = (pw - 2 * zw) / 2.0
+    scale, sw, sh, side_margin, top_margin = _fit_grid(pw, ph, zw, zh, 2, 2)
     people = list(people or []) or [{}]
     duplex_flip = (duplex_flip or "long").lower()
 
     def origin(col, row):
-        return side_margin + col * zw, ph - (top_margin + row * zh + zh)
+        return side_margin + col * sw, ph - (top_margin + row * sh + sh)
 
     CELLS = [(0, 0), (1, 0), (0, 1), (1, 1)]
 
@@ -2076,7 +2093,7 @@ def build_forma24(people, duplex_flip="long", draw_guides=True):
             if pidx >= len(chunk):
                 continue
             x0, y0 = origin(col, row)
-            c.saveState(); c.translate(x0, y0)
+            c.saveState(); c.translate(x0, y0); c.scale(scale, scale)
             if draw_guides:
                 c.setStrokeColorRGB(0.75, 0.75, 0.82); c.setLineWidth(0.3); c.setDash(2, 2)
                 c.rect(0, 0, zw, zh, stroke=1, fill=0); c.setDash()
@@ -2106,19 +2123,19 @@ def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True):
     zw = FORMA19_MM[0] * MM
     zh = FORMA19_MM[1] * MM
     pw, ph = 210 * MM, 297 * MM
-    top_margin = (ph - 2 * zh) / 2.0
-    side_margin = (pw - 2 * zw) / 2.0
+    scale, sw, sh, side_margin, top_margin = _fit_grid(pw, ph, zw, zh, 2, 2)
     duplex_flip = (duplex_flip or "long").lower()
     rec19 = rec19 or {}
     rec24 = rec24 or {}
 
     def origin(col, row):
-        return side_margin + col * zw, ph - (top_margin + row * zh + zh)
+        return side_margin + col * sw, ph - (top_margin + row * sh + sh)
 
     def draw_card(c, col, row, which, back):
         x0, y0 = origin(col, row)
         c.saveState()
         c.translate(x0, y0)
+        c.scale(scale, scale)
         if draw_guides:
             c.setStrokeColorRGB(0.75, 0.75, 0.82)
             c.setLineWidth(0.3)
