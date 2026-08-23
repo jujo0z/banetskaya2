@@ -286,6 +286,12 @@ export async function openOverlayTestSheet(dx = 0, dy = 0, pageSize = "card", ro
   window.open(url, "_blank");
 }
 
+export async function openCarrierFrame(a4Position = "top-left") {
+  const res = await api.get("/overlay/carrier-frame", { params: { a4_position: a4Position }, responseType: "blob" });
+  const url = window.URL.createObjectURL(res.data);
+  window.open(url, "_blank");
+}
+
 // ---------- Silent printing (desktop app only) ----------
 export async function getPrinters() {
   const { data } = await api.get("/printers");

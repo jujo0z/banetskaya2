@@ -36,6 +36,7 @@ import {
   openOverlayPdf,
   downloadOverlayPdf,
   openOverlayTestSheet,
+  openCarrierFrame,
   getPrinters,
   printOverlaySilent,
   getRegProfile,
@@ -49,6 +50,9 @@ import { IS_DESKTOP } from "@/lib/env";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const BG_URL = `${BACKEND_URL}/api/overlay/background`;
+// Флаг: раздел «Печать на бланке» временно отключён (в доработке).
+// Чтобы вернуть — поставьте false. Весь код раздела ниже сохранён.
+const OVERLAY_FEATURE_DISABLED = true;
 // Обязательные поля бланка «СООБЩЕНИЕ» (проверяются перед печатью).
 export const REQUIRED_KEYS = [
   "fio", "address",
@@ -502,6 +506,42 @@ export default function BlankOverlay() {
       toast.error("Ошибка пробного листа");
     }
   };
+  const doCarrierFrame = async () => {
+    try {
+      await openCarrierFrame(a4Position);
+      toast("Рамка-держатель открыта — печатайте A4 в масштабе 100%");
+    } catch (e) {
+      toast.error("Ошибка печати рамки");
+    }
+  };
+
+  if (OVERLAY_FEATURE_DISABLED) {
+    return (
+      <div data-testid="blank-overlay-page">
+        <div className="mb-6">
+          <h1 className="font-heading text-4xl font-bold flex items-center gap-3">
+            <Stamp className="h-8 w-8 text-[#E11D48]" /> Печать на бланке
+          </h1>
+        </div>
+        <div
+          className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center max-w-2xl mx-auto mt-10"
+          data-testid="overlay-disabled-stub"
+        >
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-[#E11D48]/10">
+            <Stamp className="h-8 w-8 text-[#E11D48]" />
+          </div>
+          <h2 className="text-2xl font-bold mb-3">Раздел временно недоступен</h2>
+          <p className="text-muted-foreground leading-relaxed">
+            Печать данных поверх готового бланка сейчас в доработке — мы улучшаем точность
+            попадания на линии бланка. Пока раздел отключён.
+          </p>
+          <p className="text-muted-foreground leading-relaxed mt-3">
+            Остальные функции работают как обычно: договоры найма, история, экспорт DOCX/PDF.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return <div className="text-muted-foreground">Загрузка редактора…</div>;
@@ -713,6 +753,17 @@ export default function BlankOverlay() {
                     подходит <b>«Сверху слева»</b>. Если бумага центрируется — <b>«Сверху по центру»</b>.
                     Проверьте «Пробным листом» и при небольшом сдвиге подправьте ползунками ниже.
                   </p>
+
+                  <div className="mt-3 rounded-md border border-[#E11D48]/30 bg-[#E11D48]/5 p-3">
+                    <div className="text-xs font-semibold mb-1">Бланк «гуляет» по листу? Сделайте держатель</div>
+                    <p className="text-[11px] text-muted-foreground mb-2">
+                      Напечатайте рамку на A4, наклейте бланк точно по уголкам скотчем — и печатайте данные
+                      на этот же лист. Бланк всегда в одном месте, смещений не будет.
+                    </p>
+                    <Button variant="outline" size="sm" className="w-full" onClick={doCarrierFrame} data-testid="btn-carrier-frame">
+                      <Printer className="h-4 w-4 mr-2" /> Печать рамки-держателя (A4, 100%)
+                    </Button>
+                  </div>
                 </div>
               </>
             ) : (

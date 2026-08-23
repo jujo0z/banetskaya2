@@ -1098,6 +1098,18 @@ async def overlay_test_sheet(dx: float = 0.0, dy: float = 0.0, page_size: str = 
     )
 
 
+@api_router.get("/overlay/carrier-frame")
+async def overlay_carrier_frame(a4_position: str = "top-left"):
+    """A4 sheet with an empty 147x103 outline (+ corner marks) to tape the
+    pre-printed blank into, for repeatable registration."""
+    data = docsvc.build_carrier_frame(a4_position=a4_position)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=carrier_frame.pdf"},
+    )
+
+
 @api_router.get("/overlay/background")
 async def overlay_background():
     """Scanned blank image used as the editor backdrop."""

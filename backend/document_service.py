@@ -848,6 +848,78 @@ def build_overlay(records, layout=None, blank_mm=SOOBSHENIE_PAGE_MM, page_size="
     return buf.getvalue()
 
 
+def build_carrier_frame(a4_position="top-left", blank_mm=SOOBSHENIE_PAGE_MM):
+    """A4 "carrier" sheet with an EMPTY 147x103 outline (+ corner marks) at the
+    chosen position. Print it once at 100%, tape the pre-printed СООБЩЕНИЕ blank
+    inside the outline, then run that carrier through the printer for the data
+    overlay (A4 mode, same a4_position). This fixes the blank in the exact same
+    spot every time, so the data never lands "in a different place"."""
+    from reportlab.pdfgen import canvas
+
+    _ensure_fonts()
+    zone_w = blank_mm[0] * MM
+    zone_h = blank_mm[1] * MM
+    pw, ph = 210 * MM, 297 * MM
+
+    pos = a4_position if a4_position in _A4_POSITIONS else "top-left"
+    if pos == "top-left":
+        ox, oy = 0.0, ph - zone_h
+    elif pos == "top-center":
+        ox, oy = (pw - zone_w) / 2.0, ph - zone_h
+    elif pos == "top-right":
+        ox, oy = pw - zone_w, ph - zone_h
+    else:  # center
+        ox, oy = (pw - zone_w) / 2.0, (ph - zone_h) / 2.0
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(pw, ph))
+
+    # outline of the blank
+    c.setStrokeColorRGB(0.55, 0.55, 0.62)
+    c.setLineWidth(0.7)
+    c.setDash(4, 3)
+    c.rect(ox, oy, zone_w, zone_h, stroke=1, fill=0)
+    c.setDash()
+
+    # solid corner L-marks for precise taping
+    m = 8 * MM
+    c.setStrokeColorRGB(0.1, 0.1, 0.15)
+    c.setLineWidth(1.1)
+    corners = [
+        (ox, oy),                       # bottom-left
+        (ox + zone_w, oy),              # bottom-right
+        (ox, oy + zone_h),              # top-left
+        (ox + zone_w, oy + zone_h),     # top-right
+    ]
+    for i, (cx, cy) in enumerate(corners):
+        sx = 1 if i in (0, 2) else -1   # inward x direction
+        sy = 1 if i in (0, 1) else -1   # inward y direction
+        c.line(cx, cy, cx + sx * m, cy)
+        c.line(cx, cy, cx, cy + sy * m)
+
+    # instructions inside the frame
+    c.setFillColorRGB(0.35, 0.35, 0.42)
+    c.setFont(_font(True), 11)
+    c.drawCentredString(ox + zone_w / 2.0, oy + zone_h / 2.0 + 6,
+                        "Приклейте бланк «СООБЩЕНИЕ» сюда")
+    c.setFont(_font(False), 8)
+    c.drawCentredString(ox + zone_w / 2.0, oy + zone_h / 2.0 - 8,
+                        "147 × 103 мм · по уголкам · печать 100%")
+
+    # header note
+    c.setFillColorRGB(0.1, 0.1, 0.15)
+    c.setFont(_font(False), 8)
+    c.drawString(12 * MM, ph - 12 * MM,
+                 "Лист-держатель. Печатать в масштабе 100% (Фактический размер). "
+                 "Наклейте бланк точно по уголкам, затем печатайте данные в режиме «Лист A4».")
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+
 def build_full_sheets(records, layout=None, orientation="portrait", per_sheet=0,
                       draw_guides=True):
     """Full-document print: draw complete СООБЩЕНИЕ forms (typed form + data)
