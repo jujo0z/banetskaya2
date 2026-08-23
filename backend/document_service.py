@@ -1179,3 +1179,544 @@ def run_diagnostics():
         })
 
     return checks
+
+
+
+# ==========================================================================
+#  ФОРМА 19 — «Адресный листок прибытия» (полная векторная отрисовка)
+#  Печать на чистом листе A4: зона формы 105×145 мм, сетка 2×2 (2 человека
+#  на лист, по 2 копии каждому). Лист-лицо и лист-оборот чередуются для
+#  двусторонней печати.
+# ==========================================================================
+
+FORMA19_MM = (105.0, 145.0)  # физический размер одного листка, мм
+
+# Поля формы, сгруппированные для UI (порядок = порядок ввода).
+FORMA19_FIELDS = [
+    {"group": "Идентификация", "fields": [
+        {"key": "id_number", "label": "Идентификационный номер (13 цифр)"},
+        {"key": "surname", "label": "1. Фамилия"},
+        {"key": "first_name", "label": "2. Собственное имя"},
+        {"key": "patronymic", "label": "3. Отчество"},
+        {"key": "birth_day", "label": "4. Дата рождения — день"},
+        {"key": "birth_month", "label": "4. Дата рождения — месяц (словом)"},
+        {"key": "birth_year", "label": "4. Дата рождения — год"},
+        {"key": "sex", "label": "6. Пол (М/Ж)"},
+        {"key": "citizenship", "label": "7. Гражданство"},
+    ]},
+    {"group": "5. Место рождения", "fields": [
+        {"key": "bp_obl", "label": "обл. (республика)"},
+        {"key": "bp_raion", "label": "район"},
+        {"key": "bp_city", "label": "город (пгт)"},
+        {"key": "bp_village", "label": "село (деревня)"},
+    ]},
+    {"group": "8. Место жительства", "fields": [
+        {"key": "res_obl", "label": "обл. (республика)"},
+        {"key": "res_raion", "label": "район"},
+        {"key": "res_city", "label": "город (пгт)"},
+        {"key": "res_village", "label": "село (деревня)"},
+        {"key": "res_street", "label": "улица"},
+        {"key": "res_house", "label": "дом"},
+        {"key": "res_korpus", "label": "корпус"},
+        {"key": "res_apartment", "label": "квартира"},
+        {"key": "reg_authority", "label": "Орган, оформивший регистрацию"},
+    ]},
+    {"group": "9. Откуда прибыл и когда", "fields": [
+        {"key": "from_obl", "label": "обл. (республика)"},
+        {"key": "from_raion", "label": "район"},
+        {"key": "from_city", "label": "город (пгт)"},
+        {"key": "from_village", "label": "село (деревня)"},
+        {"key": "arrival_date", "label": "дата прибытия"},
+        {"key": "moved_street", "label": "Переехал с улицы"},
+        {"key": "moved_house", "label": "дом"},
+        {"key": "moved_korpus", "label": "корпус"},
+        {"key": "moved_apartment", "label": "квартира"},
+        {"key": "name_changed_from", "label": "Изменил ФИО с"},
+        {"key": "other_reasons", "label": "Другие причины"},
+    ]},
+    {"group": "Оборотная сторона", "fields": [
+        {"key": "purpose", "label": "10. Цель приезда"},
+        {"key": "purpose_term", "label": "10. Срок (по ...)"},
+        {"key": "employment", "label": "11. Где и кем работает"},
+        {"key": "passport_series", "label": "12. Паспорт: серия"},
+        {"key": "passport_number", "label": "12. Паспорт: номер"},
+        {"key": "passport_issued", "label": "12. Паспорт: кем выдан"},
+    ]},
+]
+
+FORMA19_FIELD_KEYS = [f["key"] for g in FORMA19_FIELDS for f in g["fields"]]
+
+
+def forma19_from_contract(fields: dict) -> dict:
+    """Пред-заполнение полей Формы 19 из данных договора (student dict).
+    Разбивает ФИО, дату рождения и паспорт на компоненты."""
+    fields = fields or {}
+    rec = {}
+    # ИИН -> идентификационный номер
+    rec["id_number"] = str(fields.get("id_number") or "").strip()
+    # ФИО -> фамилия / имя / отчество
+    fio = str(fields.get("full_name") or "").strip()
+    parts = fio.split()
+    if len(parts) >= 1:
+        rec["surname"] = parts[0]
+    if len(parts) >= 2:
+        rec["first_name"] = parts[1]
+    if len(parts) >= 3:
+        rec["patronymic"] = " ".join(parts[2:])
+    # Дата рождения -> день / месяц / год
+    bd = str(fields.get("birth_date") or "").strip()
+    d, m, y = _split_ru_date(bd)
+    if d:
+        rec["birth_day"] = d
+    if m:
+        rec["birth_month"] = m
+    if y:
+        rec["birth_year"] = y
+    # Гражданство
+    if fields.get("citizenship"):
+        rec["citizenship"] = str(fields["citizenship"]).strip()
+    # Паспорт -> серия + номер
+    pas = str(fields.get("passport_number") or "").strip()
+    ser, num = _split_passport(pas)
+    if ser:
+        rec["passport_series"] = ser
+    if num:
+        rec["passport_number"] = num
+    if fields.get("passport_issued_by"):
+        rec["passport_issued"] = str(fields["passport_issued_by"]).strip()
+    return {k: v for k, v in rec.items() if v}
+
+
+_RU_MONTHS = {
+    "01": "января", "02": "февраля", "03": "марта", "04": "апреля",
+    "05": "мая", "06": "июня", "07": "июля", "08": "августа",
+    "09": "сентября", "10": "октября", "11": "ноября", "12": "декабря",
+}
+
+
+def _split_ru_date(s: str):
+    """'01.01.2008' | '2008-01-01' | '1 января 2008' -> (day, month_word, year)."""
+    s = (s or "").strip()
+    if not s:
+        return "", "", ""
+    import re
+    m = re.match(r"^\s*(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})\s*$", s)
+    if m:
+        d, mo, y = m.group(1), m.group(2), m.group(3)
+        return d.zfill(2), _RU_MONTHS.get(mo.zfill(2), mo), y
+    m = re.match(r"^\s*(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\s*$", s)
+    if m:
+        y, mo, d = m.group(1), m.group(2), m.group(3)
+        return d.zfill(2), _RU_MONTHS.get(mo.zfill(2), mo), y
+    # уже словами — оставить как есть в поле дня
+    return s, "", ""
+
+
+def _split_passport(s: str):
+    """'AB1234567' | 'AB 1234567' -> ('AB', '1234567')."""
+    import re
+    s = (s or "").strip().replace(" ", "")
+    m = re.match(r"^([A-Za-zА-Яа-я]{1,3})\s*(\d{5,})$", s)
+    if m:
+        return m.group(1).upper(), m.group(2)
+    return "", s
+
+
+def _f19_helpers(c, zw, zh):
+    """Рисующие замыкания в системе координат зоны (mm от верх-лев)."""
+    DARK = (0.10, 0.10, 0.16)
+    GREY = (0.36, 0.36, 0.42)
+    INK = (0.03, 0.06, 0.32)
+    SHADE = (0.90, 0.90, 0.91)
+
+    def X(mm):
+        return mm * MM
+
+    def Y(mm_top):
+        return zh - mm_top * MM
+
+    def hline(x1, x2, ytop, w=0.5):
+        c.setLineWidth(w)
+        c.setStrokeColorRGB(*DARK)
+        c.line(X(x1), Y(ytop), X(x2), Y(ytop))
+
+    def vline(x, y1, y2, w=0.5):
+        c.setLineWidth(w)
+        c.setStrokeColorRGB(*DARK)
+        c.line(X(x), Y(y1), X(x), Y(y2))
+
+    def shade(x1, yt1, x2, yt2):
+        c.setFillColorRGB(*SHADE)
+        c.rect(X(x1), Y(yt2), X(x2) - X(x1), Y(yt1) - Y(yt2), fill=1, stroke=0)
+
+    def lbl(x, ybase, s, size=6.0, bold=False):
+        c.setFillColorRGB(*DARK)
+        c.setFont(_font(bold), size)
+        c.drawString(X(x), Y(ybase), s)
+
+    def cap(cx, ybase, s, size=4.2):
+        c.setFillColorRGB(*GREY)
+        c.setFont(_font(False), size)
+        c.drawCentredString(X(cx), Y(ybase), s)
+
+    def val(x, ybase, s, size=7.5, bold=True):
+        if s is None or str(s) == "":
+            return
+        c.setFillColorRGB(*INK)
+        c.setFont(_font(bold), size)
+        c.drawString(X(x), Y(ybase), str(s))
+
+    def cval(cx, ybase, s, size=7.5, bold=True):
+        if s is None or str(s) == "":
+            return
+        c.setFillColorRGB(*INK)
+        c.setFont(_font(bold), size)
+        c.drawCentredString(X(cx), Y(ybase), str(s))
+
+    return X, Y, hline, vline, lbl, cap, val, cval, shade
+
+
+def _g(rec, key):
+    return str((rec or {}).get(key) or "")
+
+
+def _draw_forma19_front(c, zw, zh, rec):
+    """ЛИЦЕВАЯ сторона Формы 19 (поля 1–9). Габарит: 2..103 × 2..143 мм."""
+    X, Y, hline, vline, lbl, cap, val, cval, shade = _f19_helpers(c, zw, zh)
+    G = _g
+    L, R, T, B = 2.0, 103.0, 2.0, 143.0
+    LX = 30.0    # верхние строки: label|значение
+    BX1 = 18.0   # блок: правый край label-колонки
+    BX2 = 48.0   # блок: правый край под-label-колонки (начало значения)
+    PG = 43.0    # 6.Пол значение | 7.Гражданство
+    GV = 66.0    # 7.Гражданство: начало значения
+    PB = 17.0    # «П» бокс
+
+    # --- серые заливки label-ячеек ---
+    shade(L, 11.5, LX, 38.2)            # Идентиф. номер + строки 1-4
+    shade(L, 38.2, BX2, 58.9)           # блок 5 (label + под-label)
+    shade(L, 58.9, BX1, 64.6)           # 6. Пол
+    shade(PG, 58.9, GV, 64.6)           # 7. Гражданство
+    shade(L, 64.6, BX1, 92.9)           # блок 8 (левая колонка)
+    shade(BX1, 64.6, BX2, 88.0)         # блок 8 (под-label обл..улица)
+    shade(L, 101.0, BX1, 124.0)         # блок 9 (левая колонка)
+    shade(BX1, 101.0, BX2, 124.0)       # блок 9 (под-label)
+    shade(L, 138.25, 25.0, 143.0)       # Другие причины
+
+    # --- внешняя рамка ---
+    hline(L, R, T, 0.9)
+    hline(L, R, B, 0.9)
+    vline(L, T, B, 0.9)
+    vline(R, T, B, 0.9)
+
+    lbl(82, 1.3, "Форма № 19", 6.0)
+
+    # --- заголовок ---
+    hline(L, R, 11.5)
+    vline(PB, T, 11.5)
+    lbl(6.0, 9.0, "П", 12, bold=True)
+    cval((PB + R) / 2, 8.8, "АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ", 9.5, bold=True)
+
+    # --- идентификационный номер (14 ячеек) ---
+    hline(L, R, 16.9)
+    vline(LX, 11.5, 38.2)
+    lbl(4, 15.2, "Идентификационный номер", 5.6)
+    ncell = 14
+    cw = (R - LX) / ncell
+    for i in range(1, ncell):
+        vline(LX + i * cw, 11.5, 16.9, 0.4)
+    idn = G(rec, "id_number")
+    for i, ch in enumerate(idn[:ncell]):
+        cval(LX + (i + 0.5) * cw, 15.6, ch, 7.5)
+
+    # --- 1..3 ---
+    def srow(yb, label, key):
+        hline(L, R, yb)
+        lbl(4, yb - 1.6, label, 5.8)
+        val(LX + 2, yb - 1.6, G(rec, key), 7.5)
+
+    srow(22.5, "1. Фамилия", "surname")
+    srow(28.2, "2. Собственное имя", "first_name")
+    srow(32.7, "3. Отчество", "patronymic")
+
+    # --- 4. дата рождения ---
+    hline(L, R, 38.2)
+    lbl(4, 36.6, "4. Дата рождения", 5.8)
+    val(LX + 2, 36.6, G(rec, "birth_day"), 7.5)
+    cval(62, 36.6, G(rec, "birth_month"), 7.5)
+    val(88, 36.6, G(rec, "birth_year"), 7.5)
+
+    # --- 5. место рождения ---
+    b5 = [38.2, 44.1, 49.5, 54.4, 58.9]
+    for yb in b5[1:]:
+        hline(L, R, yb)
+    vline(BX1, 38.2, 58.9)
+    vline(BX2, 38.2, 58.9)
+    lbl(4, 47.0, "5. Место", 6.0)
+    lbl(4, 50.5, "рождения", 6.0)
+    sub5 = ["обл. (край, республика)", "район", "город (пгт)", "село (деревня)"]
+    k5 = ["bp_obl", "bp_raion", "bp_city", "bp_village"]
+    for i, (s, k) in enumerate(zip(sub5, k5)):
+        yb = b5[i + 1] - 1.5
+        lbl(BX1 + 1.5, yb, s, 5.4)
+        val(BX2 + 2, yb, G(rec, k), 7.0)
+
+    # --- 6. пол | 7. гражданство ---
+    hline(L, R, 64.6)
+    vline(BX1, 58.9, 64.6)
+    vline(PG, 58.9, 64.6)
+    vline(GV, 58.9, 64.6)
+    lbl(4, 63.0, "6. Пол", 6.0)
+    cval((BX1 + PG) / 2, 63.0, G(rec, "sex"), 7.5)
+    lbl(PG + 2, 63.0, "7. Гражданство", 6.0)
+    val(GV + 2, 63.0, G(rec, "citizenship"), 7.5)
+
+    # --- 8. место жительства ---
+    b8 = [64.6, 70.2, 75.1, 79.6, 83.2, 88.0]
+    for yb in b8[1:]:
+        hline(L, R, yb)
+    hline(L, R, 92.9)
+    vline(BX1, 64.6, 92.9)
+    vline(BX2, 64.6, 88.0)
+    lbl(4, 76.5, "8. Место", 6.0)
+    lbl(4, 80.0, "жительства", 6.0)
+    sub8 = ["обл. (республика)", "район", "город (пгт)", "село (деревня)", "улица"]
+    k8 = ["res_obl", "res_raion", "res_city", "res_village", "res_street"]
+    for i, (s, k) in enumerate(zip(sub8, k8)):
+        yb = b8[i + 1] - 1.5
+        lbl(BX1 + 1.5, yb, s, 5.4)
+        val(BX2 + 2, yb, G(rec, k), 7.0)
+    # дом / корпус / квартира
+    vline(45, 88.0, 92.9)
+    vline(75, 88.0, 92.9)
+    lbl(BX1 + 2, 91.4, "дом", 5.6)
+    val(29, 91.4, G(rec, "res_house"), 7.0)
+    lbl(47, 91.4, "корпус", 5.6)
+    val(61, 91.4, G(rec, "res_korpus"), 7.0)
+    lbl(77, 91.4, "квартира", 5.6)
+    val(92, 91.4, G(rec, "res_apartment"), 7.0)
+
+    # --- орган регистрации ---
+    hline(L, R, 101.0)
+    val(6, 98.8, G(rec, "reg_authority"), 7.0)
+    cap(52, 100.4, "указать орган, оформивший регистрацию", 4.4)
+
+    # --- 9. откуда прибыл ---
+    b9 = [101.0, 106.1, 110.6, 115.2, 119.6, 124.0]
+    for yb in b9[1:]:
+        hline(L, R, yb)
+    vline(BX1, 101.0, 124.0)
+    vline(BX2, 101.0, 124.0)
+    lbl(4, 110.0, "9. Откуда", 6.0)
+    lbl(4, 113.5, "прибыл и", 6.0)
+    lbl(4, 117.0, "когда", 6.0)
+    sub9 = ["обл. (край, республика)", "район", "город (пгт)", "село (деревня)", "дата прибытия"]
+    k9 = ["from_obl", "from_raion", "from_city", "from_village", "arrival_date"]
+    for i, (s, k) in enumerate(zip(sub9, k9)):
+        yb = b9[i + 1] - 1.5
+        lbl(BX1 + 1.5, yb, s, 5.4)
+        val(BX2 + 2, yb, G(rec, k), 7.0)
+
+    # --- переехал / изменил / другие ---
+    hline(L, R, 128.75)
+    lbl(4, 127.2, "Переехал в том же населённом пункте с улицы", 6.0)
+    val(72, 127.2, G(rec, "moved_street"), 7.0)
+    hline(L, R, 133.5)
+    vline(30, 128.75, 133.5)
+    vline(62, 128.75, 133.5)
+    lbl(4, 132.0, "дом", 6.0)
+    val(14, 132.0, G(rec, "moved_house"), 7.0)
+    lbl(33, 132.0, "корпус", 6.0)
+    val(46, 132.0, G(rec, "moved_korpus"), 7.0)
+    lbl(65, 132.0, "квартира", 6.0)
+    val(85, 132.0, G(rec, "moved_apartment"), 7.0)
+    hline(L, R, 138.25)
+    lbl(4, 136.7, "Изменил фамилию, собственное имя или отчество с", 6.0)
+    val(80, 136.7, G(rec, "name_changed_from"), 7.0)
+    cap(82, 140.5, "указать прежние данные", 4.4)
+    lbl(4, 141.5, "Другие причины", 6.0)
+    val(27, 141.5, G(rec, "other_reasons"), 7.0)
+
+
+def _draw_forma19_back(c, zw, zh, rec):
+    """ОБОРОТНАЯ сторона Формы 19 (поля 10–15). Габарит идентичен лицевой."""
+    X, Y, hline, vline, lbl, cap, val, cval, shade = _f19_helpers(c, zw, zh)
+    G = _g
+    L, R, T, B = 2.0, 103.0, 2.0, 143.0
+
+    # --- серые заливки ---
+    shade(L, T, 27.0, 8.2)              # 10 label
+    shade(L, 8.2, R, 11.7)             # caption
+    shade(L, 15.1, 40.0, 21.0)         # 11 label
+    shade(L, 21.0, R, 24.3)           # caption
+    shade(L, 30.8, 40.0, 41.3)         # 12 label
+    shade(44.7, 30.8, 51.8, 41.3)      # «номер»
+    shade(85.0, 30.8, R, 41.3)         # «выдан»
+    shade(L, 41.3, R, 44.7)           # caption
+    shade(L, 59.0, R, 68.3)           # шапка таблицы
+    shade(L, 112.2, 52.0, 119.1)       # 14 label
+    shade(L, 119.1, 48.0, 125.3)       # подпись label
+    shade(L, 125.3, R, 131.4)         # 15 label
+    shade(L, 136.1, R, 143.0)         # дата/подпись
+
+    # --- внешняя рамка ---
+    hline(L, R, T, 0.9)
+    hline(L, R, B, 0.9)
+    vline(L, T, B, 0.9)
+    vline(R, T, B, 0.9)
+
+    # --- 10. цель приезда ---
+    hline(L, R, 8.2)
+    vline(27.0, T, 8.2)
+    lbl(4, 6.6, "10. Цель приезда", 6.0)
+    val(29, 6.6, G(rec, "purpose"), 7.5)
+    hline(L, R, 11.7)
+    cap(52, 10.6, "на работу, учебу, к месту жительства и т.п. и на какой срок", 4.4)
+    hline(L, R, 15.1)
+    val(6, 13.8, G(rec, "purpose_term"), 7.5)
+
+    # --- 11. где и кем работает ---
+    hline(L, R, 21.0)
+    vline(40.0, 15.1, 21.0)
+    lbl(4, 19.4, "11. Где и кем работает", 6.0)
+    val(42, 19.4, G(rec, "employment"), 7.5)
+    hline(L, R, 24.3)
+    cap(52, 23.2, "если не работает, то указать: пенсионер, учащийся, иждивенец и т.п.", 4.4)
+    hline(L, R, 30.8)
+
+    # --- 12. паспорт ---
+    hline(L, R, 41.3)
+    vline(32.7, 30.8, 41.3)
+    vline(44.7, 30.8, 41.3)
+    vline(51.8, 30.8, 41.3)
+    vline(85.0, 30.8, 41.3)
+    lbl(4, 35.0, "12. Паспорт, вид на", 6.0)
+    lbl(4, 38.5, "жительство, серия", 6.0)
+    val(35, 37.0, G(rec, "passport_series"), 7.5)
+    lbl(45.5, 37.0, "номер", 5.6)
+    val(53, 37.0, G(rec, "passport_number"), 7.0)
+    lbl(87, 37.0, "выдан", 6.0)
+    hline(L, R, 44.7)
+    cap(52, 43.6, "наименование органа внутренних дел", 4.4)
+    hline(L, R, 50.6)
+    val(6, 48.8, G(rec, "passport_issued"), 7.0)
+    lbl(80, 48.8, "20", 6.0)
+    hline(85, 93, 48.8)
+    lbl(94, 48.8, "г.", 6.0)
+
+    # --- 13. дети до 14 лет ---
+    hline(L, R, 59.0)
+    lbl(4, 54.0, "13. Вместе с ним (ней) прибыли дети до 14 лет, не имеющие", 5.8)
+    lbl(4, 57.5, "паспортов, видов на жительство:", 5.8)
+    hline(L, R, 68.3)
+    vline(75, 59.0, 104.5)
+    vline(86, 59.0, 104.5)
+    cval((L + 75) / 2, 64.6, "Фамилия, собственное имя, отчество", 5.4)
+    cval((75 + 86) / 2, 64.6, "Пол", 5.4)
+    cval((86 + R) / 2, 63.0, "Дата", 5.4)
+    cval((86 + R) / 2, 66.4, "рождения", 5.4)
+    for yb in [72.83, 77.35, 81.88, 86.4, 90.93, 95.45, 99.98, 104.5]:
+        hline(L, R, yb)
+
+    # --- примечание ---
+    hline(L, R, 112.2)
+    lbl(4, 109.6, "Примечание:", 5.8, bold=True)
+    lbl(23, 109.6, "Дети вносятся в адресный листок прибытия только одного из родителей.", 5.4)
+
+    # --- 14. листок составлен ---
+    hline(L, R, 119.1)
+    vline(52, 112.2, 119.1)
+    vline(72, 112.2, 119.1)
+    lbl(4, 117.2, "14. Листок составлен", 6.0)
+    lbl(80, 117.2, "20", 6.0)
+    hline(85, 93, 117.2)
+    lbl(94, 117.2, "г.", 6.0)
+    hline(L, R, 125.3)
+    vline(48, 119.1, 125.3)
+    lbl(4, 123.4, "Подпись должностного лица", 6.0)
+
+    # --- 15. сведения проверил ---
+    hline(L, R, 131.4)
+    lbl(4, 129.5, "15. Сведения проверил и регистрацию оформил", 6.0)
+    vline(52, 131.4, 143.0)
+    lbl(20, 135.0, "20", 6.0)
+    hline(25, 34, 135.0)
+    lbl(35, 135.0, "г.", 6.0)
+    hline(L, R, 136.1)
+    cap(27, 140.2, "дата", 4.6)
+    cap(78, 140.2, "подпись", 4.6)
+
+
+
+def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides=True):
+    """PDF Формы 19: A4-сетка 2×2. per_sheet = сколько ЧЕЛОВЕК на лист (по 2 копии).
+    Порядок страниц: лист1-лицо, лист1-оборот, лист2-лицо, лист2-оборот … —
+    для двусторонней печати каждый физический лист = 2 подряд идущие страницы PDF.
+    duplex_flip: 'long' (переворот по длинному краю) | 'short' (по короткому).
+    """
+    from reportlab.pdfgen import canvas
+
+    _ensure_fonts()
+    zw = FORMA19_MM[0] * MM   # 105
+    zh = FORMA19_MM[1] * MM   # 145
+    pw, ph = 210 * MM, 297 * MM
+    cols, rows = 2, 2
+    top_margin = (ph - rows * zh) / 2.0
+    side_margin = (pw - cols * zw) / 2.0
+
+    people = list(people or [])
+    if not people:
+        people = [{}]
+    ppl_per_sheet = 2  # фиксировано: 2 человека (2×2 = по 2 копии)
+    duplex_flip = (duplex_flip or "long").lower()
+
+    def cell_origin(col, row):
+        x0 = side_margin + col * zw
+        y_top = top_margin + row * zh
+        y0 = ph - (y_top + zh)
+        return x0, y0
+
+    # позиции ячеек: 0=TL,1=TR (верхний ряд), 2=BL,3=BR (нижний ряд)
+    CELLS = [(0, 0), (1, 0), (0, 1), (1, 1)]
+
+    def draw_page(c, sheet_people, is_back):
+        # какому человеку какие 2 ячейки достаются
+        # лицо: person0 -> верх (0,1); person1 -> низ (2,3)
+        # оборот long: так же; оборот short: ряды меняются местами
+        order = [0, 1]
+        if is_back and duplex_flip == "short":
+            order = [1, 0]
+        cell_person = {}
+        cell_person[CELLS[0]] = order[0]
+        cell_person[CELLS[1]] = order[0]
+        cell_person[CELLS[2]] = order[1]
+        cell_person[CELLS[3]] = order[1]
+        for (col, row), pidx in cell_person.items():
+            if pidx >= len(sheet_people):
+                continue
+            rec = sheet_people[pidx]
+            x0, y0 = cell_origin(col, row)
+            c.saveState()
+            c.translate(x0, y0)
+            if draw_guides:
+                c.setStrokeColorRGB(0.75, 0.75, 0.82)
+                c.setLineWidth(0.3)
+                c.setDash(2, 2)
+                c.rect(0, 0, zw, zh, stroke=1, fill=0)
+                c.setDash()
+            if is_back:
+                _draw_forma19_back(c, zw, zh, rec)
+            else:
+                _draw_forma19_front(c, zw, zh, rec)
+            c.restoreState()
+        c.showPage()
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(pw, ph))
+    for start in range(0, len(people), ppl_per_sheet):
+        chunk = people[start:start + ppl_per_sheet]
+        draw_page(c, chunk, is_back=False)   # лицо
+        draw_page(c, chunk, is_back=True)    # оборот
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()

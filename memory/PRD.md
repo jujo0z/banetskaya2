@@ -130,5 +130,14 @@ Frontend (pages/BlankOverlay.js):
 ## Фича: тихая печать бланка (десктоп, июль 2025)
 GET /api/printers (список принтеров Windows, supported=false в вебе), POST /api/overlay/print-silent (генерит overlay-PDF и печатает через SumatraPDF -print-to ... -print-settings noscale -silent; fallback soffice --pt). В BlankOverlay.js — блок только для IS_DESKTOP: выбор принтера + кнопка "Печать на бланк (тихо, 100%)". SumatraPDF вшивается в установщик (workflow + installer.iss recursesubdirs). Backend-тест 7/7. Требует ПЕРЕСБОРКИ .exe.
 
+## Фича: Форма 19 «Адресный листок прибытия» (июль 2025) — ГОТОВО (backend 7/7 + регрессия 3/3)
+- Новый раздел меню «Адресный листок» → «Форма 19 (прибытие)» (роут /forma19, pages/Forma19.js).
+- ПОЛНАЯ ВЕКТОРНАЯ ОТРИСОВКА обеих сторон бланка (document_service._draw_forma19_front/_back) в зоне 105×145 мм, ОДИНАКОВЫЙ габарит лицевой и оборотной (2..103 × 2..143 мм). Серые заливки label-ячеек, объединения (5/8/9 — merged left cell + sublabel col), 14 ячеек идент. номера — 1:1 с официальным бланком blanki.by. Кириллица через AppSans.
+- build_forma19(people, duplex_flip): A4-сетка 2×2 = 2 человека/лист по 2 копии; порядок страниц лист-лицо/лист-оборот (дуплекс), duplex_flip=long|short меняет ряды оборота. Пунктирные линии реза.
+- forma19_from_contract(): разбивает ФИО/дату рождения/паспорт студента на компоненты.
+- Эндпоинты (/api): GET /forma19/fields, GET/POST /forma19/defaults (постоянные значения-константы в app_settings key=forma19_defaults), POST /forma19/prefill (students→records), POST /forma19/preview (PDF), POST /forma19/preview-png.
+- Frontend Forma19.js: загрузка Excel (upload→map→prefill), панель «Постоянные значения» (сохраняются, применяются ко всем), список людей с групповой правкой полей, переключатель дуплекса, живой PNG-предпросмотр, Открыть/Скачать PDF.
+- Отрисовка приведена под официальный эталон по фидбеку пользователя (серые ячейки, пропорции колонок, совпадение габаритов сторон).
+
 ## Фича: страница «Полная печать» (июль 2025)
 Новый раздел в сайдбаре /full-print (pages/FullPrint.js), и в вебе, и в десктопе. Печатает ВЕСЬ документ на белом листе: бланк по скану (with_background=true) + данные, размер 147x103. Переиспользует сохранённую overlay-раскладку и поля. Веб: Предпросмотр/Открыть-Печать PDF/Скачать. Десктоп: выбор принтера + тихая печать (with_background). Backend: print-silent теперь уважает with_background; overlay/generate с фоном отдаёт валидный PDF (~1.1МБ). Overlay-печать (только данные) сохранена. Требует пересборки .exe для десктопа.

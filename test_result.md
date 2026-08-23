@@ -108,6 +108,22 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Форма 19 (Адресный листок прибытия): векторная отрисовка + эндпоинты /api/forma19/*"
+    implemented: true
+    working: true
+    file: "document_service.py, server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВАЯ ФИЧА. Backend: полная векторная отрисовка двусторонней «Формы 19» (build_forma19 в document_service.py) в зоне 105×145 мм, раскладка на A4 сеткой 2×2 = 2 человека/лист по 2 копии; порядок страниц: лист-лицо, лист-оборот (для дуплекса), параметр duplex_flip=long|short меняет ряды на обороте. Также forma19_from_contract() разбивает ФИО/дату рождения/паспорт студента на компоненты. Новые эндпоинты (все под /api): GET /api/forma19/fields (сгруппированный список полей), GET/POST /api/forma19/defaults (постоянные значения-константы, хранятся в app_settings key=forma19_defaults), POST /api/forma19/prefill {students:[...]} → [forma19 records] (разбивка ФИО/даты/паспорта), POST /api/forma19/preview {records, duplex_flip} → application/pdf, POST /api/forma19/preview-png → image/png (первый лист). ПРОВЕРИТЬ: (1) GET /api/forma19/fields → 200, есть groups (список групп с fields[{key,label}]) и keys. (2) GET /api/forma19/defaults → 200 {defaults:{}}. (3) POST /api/forma19/defaults {defaults:{res_city:'Минск',purpose:'на учёбу'}} → 200 saved=true; повторный GET возвращает сохранённое. (4) POST /api/forma19/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'AB1234567',id_number:'1234567A001PB5',passport_issued_by:'РОВД'}]} → 200, records[0] содержит surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', birth_year='2007', passport_series='AB', passport_number='1234567'. (5) POST /api/forma19/preview {records:[{surname:'Петрович',first_name:'Пётр',citizenship:'РБ',purpose:'на учёбу'},{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200 application/pdf, %PDF, РОВНО 2 страницы A4 (595.28×841.89 pt, проверь pymupdf), кириллица извлекается (напр. 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ','Петрович','на учёбу'). (6) POST /api/forma19/preview-png с теми же records → 200 image/png (начинается с PNG-сигнатуры \\x89PNG). (7) duplex_flip:'short' тоже даёт 2 страницы валидного PDF. Верни отчёт что прошло/упало и подтверди отсутствие регрессии остальных /api."
+        - working: true
+          agent: "testing"
+          comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (10/10, 100% success rate). ФОРМА 19 ПОЛНОСТЬЮ РАБОТАЕТ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ: (1) GET /api/forma19/fields → 200, возвращает {groups:[...], keys:[...]}; найдено 5 групп с 39 ключами; все требуемые ключи присутствуют (surname, first_name, patronymic, birth_day, sex, citizenship, res_city, purpose, passport_series); структура groups корректна (каждая группа содержит group и fields[{key,label}]). (2) GET /api/forma19/defaults → 200 {defaults:{}} (пустой объект по умолчанию). (3) POST /api/forma19/defaults {defaults:{res_city:'Минск',purpose:'на учёбу',reg_authority:'ОГИМ Московского РУВД г. Минска'}} → 200 {saved:true, defaults:{...}}; повторный GET /api/forma19/defaults возвращает ТОЧНО сохранённые значения (res_city='Минск', purpose='на учёбу', reg_authority='ОГИМ Московского РУВД г. Минска') — персистентность в MongoDB app_settings подтверждена. (4) POST /api/forma19/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'AB1234567',id_number:'1234567A001PB5',passport_issued_by:'РОВД Минска'}]} → 200 {records:[...]}; records[0] содержит ТОЧНО: surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', birth_year='2007', passport_series='AB', passport_number='1234567', id_number='1234567A001PB5' — разбивка ФИО/даты/паспорта работает корректно. (5) POST /api/forma19/preview {records:[{surname:'Петрович',first_name:'Пётр',citizenship:'РБ',purpose:'на учёбу'},{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 67418 байт; проверено через pymupdf: РОВНО 2 страницы (len(doc)==2); размер страницы 0 РОВНО 595.28×841.89 pt (A4, допуск ±2pt выполнен); кириллица извлекается через pymupdf.get_text() ('АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ', 'Петрович', 'Идентификационный номер' найдены в тексте). (6) POST /api/forma19/preview-png {records:[{surname:'Тестов',first_name:'Тест'},{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 203898 байт (> 1000 байт). (7) POST /api/forma19/preview {records:[...], duplex_flip:'short'} → 200, валидный PDF начинается с %PDF, РОВНО 2 страницы (проверено через pymupdf). РЕГРЕССИЯ (3/3 теста): ✅ GET /api/_ping → 200 {ok:true}; ✅ GET /api/fields → 200, возвращает 17 полей договора; ✅ POST /api/contracts/preview?format=pdf с минимальными полями → 200, валидный PDF начинается с %PDF, размер 53647 байт, 4 страницы (проверено через pymupdf). Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Форма 19 готова к использованию."
+
+
   - task: "Фикс ERR_CONNECTION_REFUSED в десктоп-окне: льготный период idle-watchdog + HTTP-readiness перед открытием окна"
     implemented: true
     working: true
@@ -410,13 +426,13 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.6"
-  test_sequence: 8
+  version: "2.7"
+  test_sequence: 9
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Фикс ERR_CONNECTION_REFUSED в десктоп-окне: льготный период idle-watchdog + HTTP-readiness перед открытием окна"
+    - "Форма 19 (Адресный листок прибытия): векторная отрисовка + эндпоинты /api/forma19/*"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1131,3 +1147,35 @@ agent_communication:
         ✅ TEST 7: GET /api/stats → 200, JSON с ВСЕМИ требуемыми ключами: total=0, drafts=0, this_month=0, datasets=0, recent=[].
         
         ЗАКЛЮЧЕНИЕ: Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Windows-специфичный баг ERR_CONNECTION_REFUSED здесь не воспроизводится (ожидаемо), но все связанные эндпоинты (/api/_ping, /api/health/diagnostics) работают корректно на Linux. Приложение готово к использованию.
+    - agent: "main"
+      message: >
+        Протестируй ТОЛЬКО новые backend-эндпоинты Формы 19 (все под /api) + подтверди отсутствие регрессии основных эндпоинтов. База: локально http://localhost:8001. Фича описана в /app/test_result.md (задача "Форма 19 (Адресный листок прибытия)"). Проверки Формы 19: (1) GET /api/forma19/fields → 200 JSON; есть поле groups (список групп, у каждой group + fields[{key,label}]) и keys (список ключей). Убедись что среди ключей есть surname, first_name, patronymic, birth_day, sex, citizenship, res_city, purpose, passport_series. (2) GET /api/forma19/defaults → 200 JSON {defaults: {...} (может быть пусто). (3) POST /api/forma19/defaults с телом {"defaults":{"res_city":"Минск","purpose":"на учёбу","reg_authority":"ОГИМ Московского РУВД г. Минска"} → 200, saved=true. Затем повторный GET /api/forma19/defaults должен вернуть эти сохранённые значения (persist в MongoDB app_settings). (4) POST /api/forma19/prefill с телом {"students":[{"full_name":"Иванов Иван Иванович","birth_date":"01.09.2007","citizenship":"РБ","passport_number":"AB1234567","id_number":"1234567A001PB5","passport_issued_by":"РОВД Минска"}]} → 200, records[0] содержит: surname="Иванов", first_name="Иван", patronymic="Иванович", birth_day="01", birth_month="сентября", birth_year="2007", passport_series="AB", passport_number="1234567", id_number="1234567A001PB5". (5) POST /api/forma19/preview с телом {"records":[{"surname":"Петрович","first_name":"Пётр","citizenship":"РБ","purpose":"на учёбу"},{"surname":"Иванов","first_name":"Иван"}],"duplex_flip":"long"} → 200, Content-Type application/pdf, тело начинается с %PDF, РОВНО 2 страницы формата A4 (595.28×841.89 pt, проверь через pymupdf doc[0].rect, допуск ±2pt). Через pymupdf.get_text() на стр.0 должна извлекаться кириллица (напр. "АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ", "Петрович", "на учёбу", "Идентификационный номер"). (6) POST /api/forma19/preview-png с теми же records → 200, Content-Type image/png, тело начинается с PNG-сигнатуры (b"\x89PNG"). (7) POST /api/forma19/preview с "duplex_flip":"short" → 200, валидный PDF (%PDF), 2 страницы. Регрессия (кратко): GET /api/_ping → 200 {ok:true}; GET /api/fields → 200; POST /api/contracts/preview?format=pdf с минимальными полями → 200 валидный PDF. Верни чёткий отчёт: что прошло/упало, и подтверждение отсутствия регрессии.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО (10/10 тестов, 100% success rate). ФОРМА 19 ПОЛНОСТЬЮ РАБОТАЕТ + РЕГРЕССИЙ НЕ ОБНАРУЖЕНО.
+        
+        ФОРМА 19 ТЕСТЫ (7/7 PASS):
+        
+        ✅ TEST 1: GET /api/forma19/fields → 200, возвращает {groups:[...], keys:[...]}; найдено 5 групп с 39 ключами; ВСЕ требуемые ключи присутствуют (surname, first_name, patronymic, birth_day, sex, citizenship, res_city, purpose, passport_series); структура groups корректна (каждая группа содержит group и fields[{key,label}]).
+        
+        ✅ TEST 2: GET /api/forma19/defaults → 200 {defaults:{}} (пустой объект по умолчанию).
+        
+        ✅ TEST 3: POST /api/forma19/defaults {defaults:{res_city:'Минск',purpose:'на учёбу',reg_authority:'ОГИМ Московского РУВД г. Минска'}} → 200 {saved:true, defaults:{...}}; повторный GET /api/forma19/defaults возвращает ТОЧНО сохранённые значения (res_city='Минск', purpose='на учёбу', reg_authority='ОГИМ Московского РУВД г. Минска') — ПЕРСИСТЕНТНОСТЬ В MONGODB app_settings ПОДТВЕРЖДЕНА.
+        
+        ✅ TEST 4: POST /api/forma19/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'AB1234567',id_number:'1234567A001PB5',passport_issued_by:'РОВД Минска'}]} → 200 {records:[...]}; records[0] содержит ТОЧНО: surname='Иванов', first_name='Иван', patronymic='Иванович', birth_day='01', birth_month='сентября', birth_year='2007', passport_series='AB', passport_number='1234567', id_number='1234567A001PB5' — РАЗБИВКА ФИО/ДАТЫ/ПАСПОРТА РАБОТАЕТ КОРРЕКТНО.
+        
+        ✅ TEST 5: POST /api/forma19/preview {records:[{surname:'Петрович',first_name:'Пётр',citizenship:'РБ',purpose:'на учёбу'},{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 67418 байт; проверено через pymupdf: РОВНО 2 СТРАНИЦЫ (len(doc)==2); размер страницы 0 РОВНО 595.28×841.89 pt (A4, ДОПУСК ±2pt ВЫПОЛНЕН); КИРИЛЛИЦА ИЗВЛЕКАЕТСЯ через pymupdf.get_text() ('АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ', 'Петрович', 'Идентификационный номер' найдены в тексте).
+        
+        ✅ TEST 6: POST /api/forma19/preview-png {records:[{surname:'Тестов',first_name:'Тест'},{surname:'Иванов',first_name:'Иван'}], duplex_flip:'long'} → 200, Content-Type image/png, валидный PNG начинается с \x89PNG, размер 203898 байт (> 1000 байт).
+        
+        ✅ TEST 7: POST /api/forma19/preview {records:[...], duplex_flip:'short'} → 200, валидный PDF начинается с %PDF, РОВНО 2 СТРАНИЦЫ (проверено через pymupdf).
+        
+        РЕГРЕССИЯ (3/3 PASS):
+        
+        ✅ R1: GET /api/_ping → 200 {ok:true}.
+        
+        ✅ R2: GET /api/fields → 200, возвращает 17 полей договора.
+        
+        ✅ R3: POST /api/contracts/preview?format=pdf с минимальными полями {contract_number:'TEST-FORMA19', full_name:'Тестов Тест Тестович', citizenship:'Республики Беларусь', birth_date:'01.01.2000', room_number:'101', registration_address:'г. Минск, ул. Тестовая, д. 1', passport_number:'AB1234567', phone:'+375291234567'} → 200, Content-Type application/pdf, валидный PDF начинается с %PDF, размер 53647 байт, 4 страницы (проверено через pymupdf).
+        
+        ЗАКЛЮЧЕНИЕ: Все backend API полностью функциональны. ФОРМА 19 ГОТОВА К ИСПОЛЬЗОВАНИЮ. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Все эндпоинты /api/forma19/* работают корректно: fields (структура групп), defaults (сохранение/персистентность), prefill (разбивка ФИО/даты/паспорта), preview (PDF с точными размерами A4 + кириллица), preview-png (PNG-предпросмотр), duplex_flip (long/short). Основные эндпоинты (/api/_ping, /api/fields, /api/contracts/preview) работают без регрессий.

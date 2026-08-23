@@ -372,3 +372,60 @@ export function contractToOverlay(c = {}) {
   if (f.contract_number) out.number = f.contract_number;
   return out;
 }
+
+
+// ======================= ФОРМА 19 — Адресный листок прибытия =======================
+export async function forma19Fields() {
+  const { data } = await api.get("/forma19/fields");
+  return data; // { groups:[{group, fields:[{key,label}]}], keys:[] }
+}
+
+export async function getForma19Defaults() {
+  const { data } = await api.get("/forma19/defaults");
+  return data.defaults || {};
+}
+
+export async function saveForma19Defaults(defaults) {
+  const { data } = await api.post("/forma19/defaults", { defaults });
+  return data;
+}
+
+// Convert student dicts (contract fields) -> Форма 19 records (split ФИО/дата/паспорт).
+export async function forma19Prefill(students) {
+  const { data } = await api.post("/forma19/prefill", { students });
+  return data.records || [];
+}
+
+// Apply an Excel column mapping to raw rows -> field-keyed student dicts.
+export async function mapStudents(rows, mapping) {
+  const { data } = await api.post("/students/map", { rows, mapping });
+  return data.students || [];
+}
+
+export async function forma19PreviewPngUrl(records, duplexFlip = "long") {
+  const res = await api.post(
+    "/forma19/preview-png",
+    { records, duplex_flip: duplexFlip },
+    { responseType: "blob" }
+  );
+  return window.URL.createObjectURL(res.data);
+}
+
+export async function openForma19Pdf(records, duplexFlip = "long") {
+  const res = await api.post(
+    "/forma19/preview",
+    { records, duplex_flip: duplexFlip },
+    { responseType: "blob" }
+  );
+  const url = window.URL.createObjectURL(res.data);
+  window.open(url, "_blank");
+}
+
+export async function downloadForma19Pdf(records, duplexFlip = "long") {
+  const res = await api.post(
+    "/forma19/preview",
+    { records, duplex_flip: duplexFlip },
+    { responseType: "blob" }
+  );
+  downloadBlob(res.data, "forma19.pdf");
+}

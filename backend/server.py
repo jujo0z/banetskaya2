@@ -1401,6 +1401,87 @@ async def updates_apply(req: ApplyUpdateRequest):
         raise HTTPException(status_code=500, detail=f"Ошибка обновления: {e}")
 
 
+# ======================= ФОРМА 19 — Адресный листок прибытия =======================
+class Forma19Request(BaseModel):
+    records: List[Dict[str, Any]] = []      # список людей (поля FORMA19)
+    duplex_flip: str = "long"               # "long" | "short"
+
+
+@api_router.get("/forma19/fields")
+async def forma19_fields():
+    """Сгруппированный список полей Формы 19 для формы ввода."""
+    return {"groups": docsvc.FORMA19_FIELDS, "keys": docsvc.FORMA19_FIELD_KEYS}
+
+
+@api_router.get("/forma19/defaults")
+async def forma19_get_defaults():
+    """Постоянные значения (константы), которые пользователь задаёт один раз
+    и применяет ко всем листкам (адрес общежития, орган регистрации и т.п.)."""
+    doc = await db.app_settings.find_one({"key": "forma19_defaults"}, {"_id": 0})
+    return {"defaults": (doc or {}).get("value", {})}
+
+
+class Forma19Defaults(BaseModel):
+    defaults: Dict[str, Any] = {}
+
+
+@api_router.post("/forma19/defaults")
+async def forma19_save_defaults(payload: Forma19Defaults):
+    await db.app_settings.update_one(
+        {"key": "forma19_defaults"},
+        {"$set": {"key": "forma19_defaults", "value": payload.defaults}},
+        upsert=True,
+    )
+    return {"saved": True, "defaults": payload.defaults}
+
+
+class Forma19Prefill(BaseModel):
+    students: List[Dict[str, Any]] = []     # student dicts (поля договора)
+
+
+@api_router.post("/forma19/prefill")
+async def forma19_prefill(payload: Forma19Prefill):
+    """Пред-заполнение полей Формы 19 из данных студентов (поля договора):
+    разбивает ФИО/дату рождения/паспорт на компоненты."""
+    out = [docsvc.forma19_from_contract(s) for s in payload.students]
+    return {"records": out}
+
+
+def _build_forma19_pdf(req: "Forma19Request") -> bytes:
+    return docsvc.build_forma19(
+        people=req.records,
+        duplex_flip=req.duplex_flip,
+    )
+
+
+@api_router.post("/forma19/preview")
+async def forma19_preview(req: Forma19Request):
+    try:
+        data = _build_forma19_pdf(req)
+    except Exception as e:
+        logger.exception("forma19 generation failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=forma19.pdf"},
+    )
+
+
+@api_router.post("/forma19/preview-png")
+async def forma19_preview_png(req: Forma19Request):
+    """Первый лист как PNG — надёжный предпросмотр в браузере."""
+    try:
+        pdf = _build_forma19_pdf(req)
+        png = docsvc.render_pdf_first_page_png(pdf, scale=2.0)
+    except Exception as e:
+        logger.exception("forma19 preview failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка предпросмотра: {e}")
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
+
 app.include_router(api_router)
 
 app.add_middleware(
