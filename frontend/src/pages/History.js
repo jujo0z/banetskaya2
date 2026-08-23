@@ -28,7 +28,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye, Pencil, FileClock, FileSpreadsheet, Layers, Stamp } from "lucide-react";
+import { Search, FileText, FileType, Printer, Trash2, FileArchive, Loader2, Eye, Pencil, FileClock, FileSpreadsheet, Layers, Stamp, ClipboardList } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
@@ -43,6 +43,8 @@ import {
   contractToOverlay,
   openOverlayPdf,
   printOverlaySilent,
+  openContractPackage,
+  openContractsPackage,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
 import DocumentPreviewDialog from "@/components/DocumentPreviewDialog";
@@ -60,6 +62,8 @@ export default function History() {
   const [busyId, setBusyId] = useState("");
   const [batching, setBatching] = useState(false);
   const [batchPrinting, setBatchPrinting] = useState(false);
+  const [packageBusyId, setPackageBusyId] = useState("");
+  const [batchPackaging, setBatchPackaging] = useState(false);
   const [blankPrinting, setBlankPrinting] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [toDelete, setToDelete] = useState(null);
@@ -200,6 +204,32 @@ export default function History() {
     }
   }
 
+  // Полный пакет документов (договор + Форма 19 + Форма 24 + Сообщение)
+  async function handlePackage(c) {
+    setPackageBusyId(c.id);
+    try {
+      await openContractPackage(c.id, "long");
+      toast.success("Пакет сформирован");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось сформировать пакет");
+    } finally {
+      setPackageBusyId("");
+    }
+  }
+
+  async function handleBatchPackage() {
+    if (selected.size === 0) return;
+    setBatchPackaging(true);
+    try {
+      await openContractsPackage([...selected], "long");
+      toast.success(`Пакет сформирован: ${selected.size}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Не удалось сформировать пакет");
+    } finally {
+      setBatchPackaging(false);
+    }
+  }
+
   // Open the СООБЩЕНИЕ blank (overlay or full print) with this contract prefilled.
   function openBlank(c, path) {
     navigate(path, { state: { prefill: contractToOverlay(c) } });
@@ -335,6 +365,16 @@ export default function History() {
           >
             {batchPrinting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
             Печать выбранных ({selected.size})
+          </Button>
+          <Button
+            className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white"
+            onClick={handleBatchPackage}
+            disabled={selected.size === 0 || batchPackaging}
+            title="Полный пакет (договор + Форма 19 + Форма 24 + Сообщение) для выбранных"
+            data-testid="history-batch-package-btn"
+          >
+            {batchPackaging ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
+            Печать пакета ({selected.size})
           </Button>
           <Button
             variant="outline"
@@ -478,6 +518,17 @@ export default function History() {
                         data-testid={`print-${c.id}`}
                       >
                         {busyId === `${c.id}-print` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-none text-[#E11D48] hover:text-[#E11D48] hover:bg-[#E11D48]/10"
+                        onClick={() => handlePackage(c)}
+                        disabled={packageBusyId === c.id}
+                        title="Печать полного пакета (договор + Форма 19 + Форма 24 + Сообщение)"
+                        data-testid={`package-${c.id}`}
+                      >
+                        {packageBusyId === c.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
                       </Button>
                       <Button
                         variant="ghost"

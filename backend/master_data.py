@@ -258,6 +258,29 @@ def derive_all(m: dict) -> dict:
     }
 
 
+def contract_to_master(fields: dict) -> dict:
+    """Обратное преобразование для старых договоров без сохранённого master."""
+    f = fields or {}
+    return {
+        "fio": f.get("full_name", ""),
+        "birth_date": f.get("birth_date", ""),
+        "citizenship": f.get("citizenship", ""),
+        "phone": f.get("phone", ""),
+        "id_number": f.get("id_number", ""),
+        "passport": f.get("passport_number", ""),
+        "passport_issue_date": f.get("passport_issue_date", ""),
+        "passport_valid_until": f.get("passport_valid_until", ""),
+        "passport_issued_by": f.get("passport_issued_by", ""),
+        "res_street": f.get("registration_address", ""),
+        "contract_number": f.get("contract_number", ""),
+        "sign_date": f.get("sign_date", ""),
+        "order_number": f.get("order_number", ""),
+        "order_date": f.get("order_date", ""),
+        "room_number": f.get("room_number", ""),
+        "contract_end_date": f.get("contract_end_date", ""),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Excel: генерация красивого шаблона
 # ---------------------------------------------------------------------------
@@ -388,6 +411,21 @@ def _cell_str(v):
     if isinstance(v, float) and v.is_integer():
         return str(int(v))
     return str(v).strip()
+
+
+def has_master_headers(content: bytes) -> bool:
+    """Похож ли файл на единый шаблон «Данные» (по распознанным заголовкам)."""
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(io.BytesIO(content), data_only=True)
+    except Exception:
+        return False
+    ws = wb["Данные"] if "Данные" in wb.sheetnames else wb.active
+    for row in list(ws.iter_rows(values_only=True))[:5]:
+        hits = sum(1 for c in row if _cell_str(c).lower() in _HEADER_TO_KEY)
+        if hits >= 3:
+            return True
+    return False
 
 
 def parse_master_xlsx(content: bytes) -> list:

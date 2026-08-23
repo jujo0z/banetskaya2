@@ -495,6 +495,51 @@ backend:
         
         Новая фича готова к использованию."
 
+  - task: "Умная загрузка: POST /api/generate/upload (единый шаблон vs старый договорный Excel)"
+    implemented: true
+    working: true
+    file: "server.py, master_data.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВАЯ ФИЧА: умная загрузка Excel через POST /api/generate/upload. Определяет тип файла (единый master-шаблон с 49 колонками vs старый договорный с 17 колонками) и возвращает mode='master' или mode='contracts'. Для master-шаблона возвращает students (для contracts/batch) и masters (полные данные человека с >=40 ключами). Проверить: (1) GET /api/master-template → скачать .xlsx. (2) POST /api/generate/upload с этим файлом (multipart form-data, поле 'file') → 200, mode='master', count>=1, students[0].full_name='Иванов Иван Иванович', students[0].registration_address непустой, masters[0] содержит >=40 ключей (bp_obl, sex, education, purpose_choice и т.д.)."
+        - working: true
+          agent: "testing"
+          comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (2/2, 100% success rate). УМНАЯ ЗАГРУЗКА РАБОТАЕТ ПОЛНОСТЬЮ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ: (1) GET /api/master-template → 200, Content-Type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, скачано 9251 байт, валидный Excel с листами ['Данные', 'Инструкция'] (проверено через openpyxl). (2) POST /api/generate/upload с загруженным .xlsx (multipart form-data, поле 'file') → 200, Content-Type application/json, response keys: ['mode', 'count', 'students', 'masters']; mode='master' ✓; count=1 (>=1) ✓; students: 1 item ✓; students[0].full_name='Иванов Иван Иванович' ✓; students[0].registration_address='пр-т Дзержинского, 85, ком. 302/2' (непустой) ✓; masters: 1 item ✓; masters[0] содержит 49 ключей (>=40) ✓; masters[0].bp_obl='Минская' ✓; masters[0].sex='1' ✓; masters[0].education='2' ✓; masters[0].purpose_choice='2' ✓. Умная загрузка корректно определяет тип файла (master-шаблон) и возвращает полные данные для создания договоров с master. Новая фича готова к использованию."
+
+  - task: "Хранение master в договоре + POST /api/contracts/batch с masters"
+    implemented: true
+    working: true
+    file: "server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВАЯ ФИЧА: пакетное создание договоров с сохранением полных master-данных. POST /api/contracts/batch принимает {contracts: [...], masters: [...]} и создаёт договоры с сохранённым объектом master (49 полей человека для форм 19/24/сообщение). Проверить: POST /api/contracts/batch с {contracts: <students из generate/upload>, masters: <masters из generate/upload>} → 200, created[0].master непустой объект с >=40 ключами, created[0].id сохранить для дальнейших тестов."
+        - working: true
+          agent: "testing"
+          comment: "✅ ТЕСТ ПРОШЁЛ УСПЕШНО (1/1, 100% success rate). ПАКЕТНОЕ СОЗДАНИЕ С MASTER РАБОТАЕТ ПОЛНОСТЬЮ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ: POST /api/contracts/batch с {contracts: [students[0]], masters: [masters[0]]} → 200, Content-Type application/json, response keys: ['created', 'count']; created: 1 item ✓; created[0].id='899716d3-4f96-47b0-bd4c-ab27745e5cd8' (UUID сохранён) ✓; created[0].master: непустой объект с 49 ключами ✓; created[0].master.bp_obl='Минская' ✓; created[0].master.sex='1' ✓. Договор создан с полными master-данными, готов для генерации пакета документов. Новая фича готова к использованию."
+
+  - task: "Пакет из истории: POST /api/contracts/{id}/package и POST /api/contracts/package"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВАЯ ФИЧА: генерация полного пакета документов из сохранённого договора с master. (1) POST /api/contracts/{id}/package {duplex_flip:'long'} → 200 application/pdf, 7 страниц (договор 4 стр + объединённый лист Ф19+Ф24 2 стр + сообщение 1 стр); стр.0 содержит 'ДОГОВОР', стр.4 содержит ОБА текста 'Форма № 19' И 'Форма 24', стр.6 содержит 'СООБЩЕНИЕ'. (2) POST /api/contracts/package {ids:[...], duplex_flip:'long', include:{contract:false, forma19:true, forma24:true, soobshenie:false}} → 200 PDF ровно 2 страницы (только Ф19+Ф24). (3) Обратная совместимость: договор без сохранённого master (master выводится из полей договора) → пакет формируется без ошибок, >=1 страница. Проверить все три сценария."
+        - working: true
+          agent: "testing"
+          comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (3/3, 100% success rate). ПАКЕТ ИЗ ИСТОРИИ РАБОТАЕТ ПОЛНОСТЬЮ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ: (1) POST /api/contracts/899716d3-4f96-47b0-bd4c-ab27745e5cd8/package {duplex_flip:'long'} → 200, Content-Type application/pdf, PDF размер 183279 байт, валидный PDF начинается с %PDF; проверено через pymupdf: РОВНО 7 СТРАНИЦ ✓; стр.0 содержит 'ДОГОВОР' ✓; стр.4 содержит ОБА текста 'Форма № 19' (или 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ') И 'Форма 24' (или 'ТАЛОН МИГРАЦИОННОГО') ✓; стр.6 содержит 'СООБЩЕНИЕ' ✓. Структура пакета: Договор (4 стр) + Ф19+Ф24 объединённые (2 стр лицо+оборот) + Сообщение (1 стр) = 7 стр. (2) POST /api/contracts/package {ids:['899716d3-4f96-47b0-bd4c-ab27745e5cd8'], duplex_flip:'long', include:{contract:false, forma19:true, forma24:true, soobshenie:false}} → 200, Content-Type application/pdf, PDF размер 72762 байт, валидный PDF начинается с %PDF; проверено через pymupdf: РОВНО 2 СТРАНИЦЫ ✓ (только объединённый лист Ф19+Ф24, лицо и оборот). Параметр include работает корректно (исключены contract и soobshenie). (3) ОБРАТНАЯ СОВМЕСТИМОСТЬ: POST /api/contracts {fields:{full_name:'Петров Пётр Петрович', birth_date:'01.01.2000', citizenship:'РБ', passport_number:'MP 7654321'}} → 200, created contract id='5320b5a9-d6ab-44ef-8e73-e1cdf5c0c4ff'; POST /api/contracts/5320b5a9-d6ab-44ef-8e73-e1cdf5c0c4ff/package {duplex_flip:'long'} → 200, Content-Type application/pdf, PDF размер 180097 байт, валидный PDF начинается с %PDF; проверено через pymupdf: 7 СТРАНИЦ ✓ (master выведен из полей договора, пакет сформирован без ошибок). Обратная совместимость работает корректно. CLEANUP: DELETE /api/contracts/899716d3-4f96-47b0-bd4c-ab27745e5cd8 → 200 ✓; DELETE /api/contracts/5320b5a9-d6ab-44ef-8e73-e1cdf5c0c4ff → 200 ✓. Тестовые договоры удалены. РЕГРЕССИЯ (2/2): GET /api/contracts → 200, массив (0 items после cleanup) ✓; GET /api/fields → 200, fields: 17 items ✓. Все backend API полностью функциональны. РЕГРЕССИЙ НЕ ОБНАРУЖЕНО. Новая фича готова к использованию."
+
 frontend:
   - task: "Desktop vs Web entry-gate logic (window.__IS_DESKTOP__ flag detection)"
     implemented: true
@@ -541,22 +586,133 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "2.10"
-  test_sequence: 13
+  version: "3.0"
+  test_sequence: 15
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Единый Excel-шаблон: GET /api/master-template + POST /api/master-upload"
-    - "Полный пакет документов: POST /api/package (договор + Ф19+Ф24 на одном листе + сообщение)"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО (9/9 тестов, 100% success rate).
+        
+        НОВАЯ ФИЧА «ПОЛНЫЙ ПАКЕТ ДОКУМЕНТОВ ИЗ ИСТОРИИ ДОГОВОРОВ» ПОЛНОСТЬЮ РАБОТАЕТ.
+        
+        ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+        
+        ✅ TEST 1: GET /api/master-template
+           → 200, Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+           → Скачано 9251 байт
+           → Валидный Excel с листами ['Данные', 'Инструкция'] (проверено через openpyxl)
+        
+        ✅ TEST 2: POST /api/generate/upload (умная загрузка)
+           → Загружен скачанный .xlsx как multipart form-data (поле 'file')
+           → 200, Content-Type: application/json
+           → Response keys: ['mode', 'count', 'students', 'masters']
+           → mode='master' ✓
+           → count=1 (>=1) ✓
+           → students: 1 item ✓
+           → students[0].full_name='Иванов Иван Иванович' ✓
+           → students[0].registration_address='пр-т Дзержинского, 85, ком. 302/2' (непустой) ✓
+           → masters: 1 item ✓
+           → masters[0] содержит 49 ключей (>=40) ✓
+           → masters[0].bp_obl='Минская', sex='1', education='2', purpose_choice='2' ✓
+        
+        ✅ TEST 3: POST /api/contracts/batch (пакетное создание с master)
+           → {contracts: [students[0]], masters: [masters[0]]}
+           → 200, Content-Type: application/json
+           → Response keys: ['created', 'count']
+           → created: 1 item ✓
+           → created[0].id='899716d3-4f96-47b0-bd4c-ab27745e5cd8' (UUID сохранён) ✓
+           → created[0].master: непустой объект с 49 ключами ✓
+           → created[0].master.bp_obl='Минская', sex='1' ✓
+        
+        ✅ TEST 4: POST /api/contracts/{id}/package (полный пакет для одного договора)
+           → POST /api/contracts/899716d3-4f96-47b0-bd4c-ab27745e5cd8/package {duplex_flip:'long'}
+           → 200, Content-Type: application/pdf
+           → PDF размер: 183279 байт
+           → Валидный PDF начинается с %PDF
+           → Проверено через pymupdf: РОВНО 7 СТРАНИЦ ✓
+           → Страница 0 содержит: 'ДОГОВОР' ✓
+           → Страница 4 содержит ОБА текста:
+              • 'Форма № 19' (или 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ') ✓
+              • 'Форма 24' (или 'ТАЛОН МИГРАЦИОННОГО') ✓
+              • Обе формы на одном листе (верхний ряд Ф19, нижний Ф24) ✓
+           → Страница 6 содержит: 'СООБЩЕНИЕ' ✓
+           → Структура пакета: Договор (4 стр) + Ф19+Ф24 объединённые (2 стр лицо+оборот) + Сообщение (1 стр) = 7 стр
+        
+        ✅ TEST 5: POST /api/contracts/package (выборочный пакет с include)
+           → {ids:['899716d3-4f96-47b0-bd4c-ab27745e5cd8'], duplex_flip:'long', include:{contract:false, forma19:true, forma24:true, soobshenie:false}}
+           → 200, Content-Type: application/pdf
+           → PDF размер: 72762 байт
+           → Валидный PDF начинается с %PDF
+           → Проверено через pymupdf: РОВНО 2 СТРАНИЦЫ ✓
+           → Только объединённый лист Ф19+Ф24 (лицо и оборот) ✓
+           → Параметр include работает корректно (исключены contract и soobshenie) ✓
+        
+        ✅ TEST 6: Обратная совместимость (договор без сохранённого master)
+           → POST /api/contracts {fields:{full_name:'Петров Пётр Петрович', birth_date:'01.01.2000', citizenship:'РБ', passport_number:'MP 7654321'}}
+           → 200, created contract id='5320b5a9-d6ab-44ef-8e73-e1cdf5c0c4ff'
+           → POST /api/contracts/5320b5a9-d6ab-44ef-8e73-e1cdf5c0c4ff/package {duplex_flip:'long'}
+           → 200, Content-Type: application/pdf
+           → PDF размер: 180097 байт
+           → Валидный PDF начинается с %PDF
+           → Проверено через pymupdf: 7 СТРАНИЦ ✓
+           → Master выведен из полей договора, пакет сформирован без ошибок ✓
+           → Обратная совместимость работает корректно ✓
+        
+        ✅ TEST 7: Cleanup (удаление тестовых договоров)
+           → DELETE /api/contracts/899716d3-4f96-47b0-bd4c-ab27745e5cd8 → 200 ✓
+           → DELETE /api/contracts/5320b5a9-d6ab-44ef-8e73-e1cdf5c0c4ff → 200 ✓
+           → Тестовые договоры удалены, история не засорена ✓
+        
+        РЕГРЕССИЯ (2/2 PASS):
+        
+        ✅ R1: GET /api/contracts
+           → 200, возвращает массив (0 items после cleanup) ✓
+        
+        ✅ R2: GET /api/fields
+           → 200, возвращает 17 полей договора ✓
+        
+        ЗАКЛЮЧЕНИЕ:
+        
+        🎉 НОВАЯ ФИЧА ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНА:
+        • GET /api/master-template возвращает корректный Excel-шаблон
+        • POST /api/generate/upload умно определяет тип файла (master vs contracts) и возвращает students/masters
+        • POST /api/contracts/batch создаёт договоры с сохранёнными master-данными (49 полей)
+        • POST /api/contracts/{id}/package генерирует полный пакет документов (7 страниц: договор 4 стр + Ф19+Ф24 2 стр + сообщение 1 стр)
+        • POST /api/contracts/package с параметром include позволяет выбирать документы (частичный пакет работает корректно)
+        • Обратная совместимость: договоры без сохранённого master работают (master выводится из полей)
+        • Cleanup работает корректно (тестовые договоры удалены)
+        • Все backend API полностью функциональны
+        • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+        
+        Новая фича готова к использованию.
+
     - agent: "main"
       message: >
-        НОВЫЙ ПРОГОН — протестируй ТОЛЬКО backend, новые фичи «единый Excel-шаблон» и «полный пакет».
+        НОВЫЙ ПРОГОН — протестируй ТОЛЬКО backend новую фичу «пакет из истории договоров». Шаги:
+        (1) GET /api/master-template → скачать .xlsx. (2) POST /api/generate/upload с этим файлом
+        (multipart, поле file) → 200, mode="master", count>=1, есть students (student[0].full_name=
+        "Иванов Иван Иванович", registration_address непустой) и masters (>=40 ключей). (3) POST
+        /api/contracts/batch с телом {"contracts": students, "masters": masters} → 200,
+        created[0].master непустой. Запомни created[0].id. (4) POST /api/contracts/{id}/package с
+        телом {"duplex_flip":"long"} → 200 application/pdf, ровно 7 страниц (pymupdf): стр.0
+        "ДОГОВОР", стр.4 содержит и "Форма № 19" и "Форма 24", стр.6 "СООБЩЕНИЕ". (5) POST
+        /api/contracts/package с телом {"ids":["<id>"],"duplex_flip":"long","include":{"contract":false,
+        "forma19":true,"forma24":true,"soobshenie":false}} → 200 PDF ровно 2 страницы. (6) Обратная
+        совместимость: POST /api/contracts {"fields":{"full_name":"Петров Пётр","birth_date":
+        "01.01.2000","citizenship":"РБ"}} → затем POST /api/contracts/{id}/package {"duplex_flip":
+        "long"} → 200 PDF (master выводится из полей). ВАЖНО: удали созданные тестовые договоры
+        (DELETE /api/contracts/{id}). Регресс: GET /api/contracts → 200.
+    - agent: "main_prev"
+      message: >
+        (предыдущий прогон) НОВЫЙ ПРОГОН — протестируй ТОЛЬКО backend, новые фичи «единый Excel-шаблон» и «полный пакет».
         Проверки: (1) GET /api/master-template → 200, валидный .xlsx (openpyxl загружается, есть лист
         "Данные" и "Инструкция", в строке 3 листа "Данные" есть пробные данные). (2) POST
         /api/master-upload с этим же скачанным файлом (multipart) → 200, count>=1, и присутствуют

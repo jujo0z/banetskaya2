@@ -1,302 +1,401 @@
 #!/usr/bin/env python3
 """
-Backend API testing for Forma 19 preview-png bug fix.
-Tests that side='front' and side='back' return DIFFERENT images (different pages).
+Backend API testing for "полный пакет документов из истории договоров" feature.
+Tests master-template, generate/upload, contracts/batch, contracts/{id}/package, contracts/package.
 """
 import os
 import sys
 import requests
 import json
+import io
 
 # Get backend URL from environment
-BACKEND_URL = os.environ.get('REACT_APP_BACKEND_URL', 'http://localhost:8001')
+with open('/app/frontend/.env', 'r') as f:
+    for line in f:
+        if line.startswith('REACT_APP_BACKEND_URL='):
+            BACKEND_URL = line.strip().split('=', 1)[1]
+            break
+
 API_BASE = f"{BACKEND_URL}/api"
 
-def test_forma19_preview_png_front():
-    """Test 1: POST /api/forma19/preview-png with side='front' returns PNG"""
-    print("\n[TEST 1] POST /api/forma19/preview-png with side='front'")
-    url = f"{API_BASE}/forma19/preview-png"
-    payload = {
-        "records": [
-            {
-                "surname": "Тест",
-                "purpose": "на учёбу",
-                "passport_series": "AB"
-            }
-        ],
-        "side": "front"
-    }
+print(f"Backend URL: {BACKEND_URL}")
+print(f"API Base: {API_BASE}")
+
+# Global variables to store test data
+xlsx_bytes = None
+students = None
+masters = None
+contract_id_1 = None
+contract_id_2 = None
+
+
+def test_1_get_master_template():
+    """Test 1: GET /api/master-template → 200, download .xlsx bytes"""
+    global xlsx_bytes
+    print("\n" + "="*70)
+    print("[TEST 1] GET /api/master-template")
+    print("="*70)
+    
+    url = f"{API_BASE}/master-template"
     
     try:
-        resp = requests.post(url, json=payload, timeout=30)
+        resp = requests.get(url, timeout=30)
         print(f"  Status: {resp.status_code}")
         print(f"  Content-Type: {resp.headers.get('Content-Type')}")
         
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert resp.headers.get('Content-Type') == 'image/png', f"Expected image/png, got {resp.headers.get('Content-Type')}"
+        assert 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' in resp.headers.get('Content-Type', ''), \
+            f"Expected Excel content type, got {resp.headers.get('Content-Type')}"
         
-        body = resp.content
-        assert body[:4] == b'\x89PNG', f"Expected PNG signature, got {body[:4]}"
-        print(f"  Body size: {len(body)} bytes")
-        print(f"  PNG signature: ✓")
+        xlsx_bytes = resp.content
+        print(f"  Downloaded: {len(xlsx_bytes)} bytes")
+        
+        # Verify it's a valid Excel file
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+        print(f"  Sheets: {wb.sheetnames}")
+        assert 'Данные' in wb.sheetnames, "Missing 'Данные' sheet"
+        
         print("  ✅ PASS")
-        return body
+        return xlsx_bytes
     except Exception as e:
         print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
-def test_forma19_preview_png_back():
-    """Test 2: POST /api/forma19/preview-png with side='back' returns PNG"""
-    print("\n[TEST 2] POST /api/forma19/preview-png with side='back'")
-    url = f"{API_BASE}/forma19/preview-png"
-    payload = {
-        "records": [
-            {
-                "surname": "Тест",
-                "purpose": "на учёбу",
-                "passport_series": "AB"
-            }
-        ],
-        "side": "back"
-    }
+def test_2_post_generate_upload():
+    """Test 2: POST /api/generate/upload with .xlsx → 200, mode="master", students and masters arrays"""
+    global students, masters
+    print("\n" + "="*70)
+    print("[TEST 2] POST /api/generate/upload")
+    print("="*70)
+    
+    url = f"{API_BASE}/generate/upload"
     
     try:
-        resp = requests.post(url, json=payload, timeout=30)
+        # Send as multipart form-data
+        files = {'file': ('master_template.xlsx', xlsx_bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
+        resp = requests.post(url, files=files, timeout=30)
+        
         print(f"  Status: {resp.status_code}")
         print(f"  Content-Type: {resp.headers.get('Content-Type')}")
         
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert resp.headers.get('Content-Type') == 'image/png', f"Expected image/png, got {resp.headers.get('Content-Type')}"
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         
-        body = resp.content
-        assert body[:4] == b'\x89PNG', f"Expected PNG signature, got {body[:4]}"
-        print(f"  Body size: {len(body)} bytes")
-        print(f"  PNG signature: ✓")
+        data = resp.json()
+        print(f"  Response keys: {list(data.keys())}")
+        
+        # Check mode
+        assert data.get('mode') == 'master', f"Expected mode='master', got {data.get('mode')}"
+        print(f"  mode: {data.get('mode')} ✓")
+        
+        # Check count
+        count = data.get('count', 0)
+        assert count >= 1, f"Expected count >= 1, got {count}"
+        print(f"  count: {count} ✓")
+        
+        # Check students array
+        students = data.get('students', [])
+        assert len(students) >= 1, f"Expected students array with >= 1 items, got {len(students)}"
+        print(f"  students: {len(students)} items ✓")
+        
+        # Check students[0]
+        student0 = students[0]
+        print(f"  students[0].full_name: {student0.get('full_name')}")
+        assert student0.get('full_name') == "Иванов Иван Иванович", \
+            f"Expected 'Иванов Иван Иванович', got {student0.get('full_name')}"
+        
+        print(f"  students[0].registration_address: {student0.get('registration_address')}")
+        assert student0.get('registration_address'), "Expected non-empty registration_address"
+        
+        # Check masters array
+        masters = data.get('masters', [])
+        assert len(masters) >= 1, f"Expected masters array with >= 1 items, got {len(masters)}"
+        print(f"  masters: {len(masters)} items ✓")
+        
+        # Check masters[0] has >= 40 keys
+        master0 = masters[0]
+        master0_keys = len(master0.keys())
+        print(f"  masters[0] keys count: {master0_keys}")
+        assert master0_keys >= 40, f"Expected masters[0] to have >= 40 keys, got {master0_keys}"
+        
+        # Print some key fields
+        print(f"  masters[0].bp_obl: {master0.get('bp_obl')}")
+        print(f"  masters[0].sex: {master0.get('sex')}")
+        print(f"  masters[0].education: {master0.get('education')}")
+        print(f"  masters[0].purpose_choice: {master0.get('purpose_choice')}")
+        
         print("  ✅ PASS")
-        return body
+        return students, masters
     except Exception as e:
         print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
-def test_forma19_preview_png_different():
-    """Test 3: Verify front and back are DIFFERENT images"""
-    print("\n[TEST 3] Verify front != back (different pages)")
-    url = f"{API_BASE}/forma19/preview-png"
+def test_3_post_contracts_batch():
+    """Test 3: POST /api/contracts/batch with students and masters → 200, created[0].master non-empty"""
+    global contract_id_1
+    print("\n" + "="*70)
+    print("[TEST 3] POST /api/contracts/batch")
+    print("="*70)
     
-    # Get front
-    payload_front = {
-        "records": [{"surname": "Тест", "purpose": "на учёбу", "passport_series": "AB"}],
-        "side": "front"
-    }
-    resp_front = requests.post(url, json=payload_front, timeout=30)
-    front_png = resp_front.content
+    url = f"{API_BASE}/contracts/batch"
     
-    # Get back
-    payload_back = {
-        "records": [{"surname": "Тест", "purpose": "на учёбу", "passport_series": "AB"}],
-        "side": "back"
-    }
-    resp_back = requests.post(url, json=payload_back, timeout=30)
-    back_png = resp_back.content
-    
-    print(f"  Front size: {len(front_png)} bytes")
-    print(f"  Back size: {len(back_png)} bytes")
-    
-    # They should be different
-    if front_png == back_png:
-        print(f"  ❌ FAIL: front and back are IDENTICAL (bug not fixed)")
+    try:
+        payload = {
+            "contracts": students,
+            "masters": masters
+        }
+        
+        resp = requests.post(url, json=payload, timeout=30)
+        
+        print(f"  Status: {resp.status_code}")
+        print(f"  Content-Type: {resp.headers.get('Content-Type')}")
+        
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        
+        data = resp.json()
+        print(f"  Response keys: {list(data.keys())}")
+        
+        # Check created array
+        created = data.get('created', [])
+        assert len(created) >= 1, f"Expected created array with >= 1 items, got {len(created)}"
+        print(f"  created: {len(created)} items ✓")
+        
+        # Check created[0].master
+        created0 = created[0]
+        contract_id_1 = created0.get('id')
+        print(f"  created[0].id: {contract_id_1}")
+        
+        master = created0.get('master')
+        assert master, "Expected non-empty master object in created[0]"
+        print(f"  created[0].master keys: {len(master.keys())}")
+        print(f"  created[0].master.bp_obl: {master.get('bp_obl')}")
+        print(f"  created[0].master.sex: {master.get('sex')}")
+        
+        print("  ✅ PASS")
+        return contract_id_1
+    except Exception as e:
+        print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
+
+
+def test_4_post_contract_package():
+    """Test 4: POST /api/contracts/{id}/package → 200 PDF, 7 pages, check text content"""
+    print("\n" + "="*70)
+    print(f"[TEST 4] POST /api/contracts/{contract_id_1}/package")
+    print("="*70)
     
-    # Size difference is a good indicator
-    size_diff = abs(len(front_png) - len(back_png))
-    print(f"  Size difference: {size_diff} bytes")
+    url = f"{API_BASE}/contracts/{contract_id_1}/package"
     
-    # Additional verification: check PDF pages
-    print("\n  Verifying via PDF pages...")
-    pdf_url = f"{API_BASE}/forma19/preview"
-    pdf_payload = {
-        "records": [{"surname": "Тест", "purpose": "на учёбу", "passport_series": "AB"}],
-        "duplex_flip": "long"
-    }
-    pdf_resp = requests.post(pdf_url, json=pdf_payload, timeout=30)
-    
-    if pdf_resp.status_code == 200:
+    try:
+        payload = {"duplex_flip": "long"}
+        
+        resp = requests.post(url, json=payload, timeout=60)
+        
+        print(f"  Status: {resp.status_code}")
+        print(f"  Content-Type: {resp.headers.get('Content-Type')}")
+        
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.headers.get('Content-Type') == 'application/pdf', \
+            f"Expected application/pdf, got {resp.headers.get('Content-Type')}"
+        
+        pdf_bytes = resp.content
+        print(f"  PDF size: {len(pdf_bytes)} bytes")
+        
+        # Open PDF with pymupdf
         import pymupdf
-        pdf_doc = pymupdf.open(stream=pdf_resp.content, filetype="pdf")
-        print(f"  PDF pages: {len(pdf_doc)}")
-        
-        if len(pdf_doc) >= 2:
-            # Extract text from page 0 (front) and page 1 (back)
-            page0_text = pdf_doc[0].get_text()
-            page1_text = pdf_doc[1].get_text()
-            
-            # Front should contain "АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ"
-            if "АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ" in page0_text:
-                print(f"  Page 0 (front): contains 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ' ✓")
-            else:
-                print(f"  Page 0 (front): missing expected text")
-            
-            # Back should contain "10. Цель приезда" or "Паспорт" or "Примечание"
-            back_markers = ["10. Цель приезда", "Паспорт", "Примечание"]
-            found_back_marker = any(marker in page1_text for marker in back_markers)
-            if found_back_marker:
-                print(f"  Page 1 (back): contains back-side markers ✓")
-            else:
-                print(f"  Page 1 (back): missing expected back-side text")
-            
-            pdf_doc.close()
-        else:
-            print(f"  ⚠️  PDF has only {len(pdf_doc)} page(s)")
-    
-    print("  ✅ PASS: front and back are DIFFERENT images")
-
-
-def test_forma19_preview_png_no_side():
-    """Test 4: POST /api/forma19/preview-png WITHOUT side parameter (defaults to front)"""
-    print("\n[TEST 4] POST /api/forma19/preview-png WITHOUT side parameter")
-    url = f"{API_BASE}/forma19/preview-png"
-    payload = {
-        "records": [{"surname": "Тест"}]
-    }
-    
-    try:
-        resp = requests.post(url, json=payload, timeout=30)
-        print(f"  Status: {resp.status_code}")
-        print(f"  Content-Type: {resp.headers.get('Content-Type')}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert resp.headers.get('Content-Type') == 'image/png', f"Expected image/png, got {resp.headers.get('Content-Type')}"
-        
-        body = resp.content
-        assert body[:4] == b'\x89PNG', f"Expected PNG signature, got {body[:4]}"
-        print(f"  Body size: {len(body)} bytes")
-        print(f"  Defaults to front (page 0): ✓")
-        print("  ✅ PASS")
-    except Exception as e:
-        print(f"  ❌ FAIL: {e}")
-        sys.exit(1)
-
-
-def test_forma19_regression_preview_pdf():
-    """Regression: POST /api/forma19/preview returns 2-page PDF"""
-    print("\n[REGRESSION 1] POST /api/forma19/preview (PDF)")
-    url = f"{API_BASE}/forma19/preview"
-    payload = {
-        "records": [
-            {
-                "surname": "Иванов",
-                "first_name": "Иван"
-            }
-        ],
-        "duplex_flip": "long"
-    }
-    
-    try:
-        resp = requests.post(url, json=payload, timeout=30)
-        print(f"  Status: {resp.status_code}")
-        print(f"  Content-Type: {resp.headers.get('Content-Type')}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert resp.headers.get('Content-Type') == 'application/pdf', f"Expected application/pdf"
-        
-        body = resp.content
-        assert body[:4] == b'%PDF', f"Expected PDF signature"
-        
-        # Check pages
-        import pymupdf
-        doc = pymupdf.open(stream=body, filetype="pdf")
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
         num_pages = len(doc)
         print(f"  Pages: {num_pages}")
         
-        assert num_pages == 2, f"Expected 2 pages (A4), got {num_pages}"
+        assert num_pages == 7, f"Expected 7 pages, got {num_pages}"
         
-        # Check page size (A4: 595.28 x 841.89 pt)
-        page0 = doc[0]
-        w = page0.rect.width
-        h = page0.rect.height
-        print(f"  Page 0 size: {w:.2f} x {h:.2f} pt")
+        # Check page 0 contains "ДОГОВОР"
+        page0_text = doc[0].get_text()
+        assert "ДОГОВОР" in page0_text, "Page 0 should contain 'ДОГОВОР'"
+        print(f"  Page 0: contains 'ДОГОВОР' ✓")
         
-        assert abs(w - 595.28) < 2, f"Expected width ~595.28, got {w}"
-        assert abs(h - 841.89) < 2, f"Expected height ~841.89, got {h}"
+        # Check page 4 contains BOTH "Форма № 19" AND "Форма 24"
+        page4_text = doc[4].get_text()
+        assert "Форма № 19" in page4_text or "Форма №19" in page4_text or "АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ" in page4_text, \
+            "Page 4 should contain 'Форма № 19' or 'АДРЕСНЫЙ ЛИСТОК ПРИБЫТИЯ'"
+        assert "Форма 24" in page4_text or "ТАЛОН МИГРАЦИОННОГО" in page4_text, \
+            "Page 4 should contain 'Форма 24' or 'ТАЛОН МИГРАЦИОННОГО'"
+        print(f"  Page 4: contains BOTH 'Форма № 19' AND 'Форма 24' ✓")
+        
+        # Check page 6 contains "СООБЩЕНИЕ"
+        page6_text = doc[6].get_text()
+        assert "СООБЩЕНИЕ" in page6_text, "Page 6 should contain 'СООБЩЕНИЕ'"
+        print(f"  Page 6: contains 'СООБЩЕНИЕ' ✓")
         
         doc.close()
+        
         print("  ✅ PASS")
     except Exception as e:
         print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
-def test_forma19_regression_fields():
-    """Regression: GET /api/forma19/fields"""
-    print("\n[REGRESSION 2] GET /api/forma19/fields")
-    url = f"{API_BASE}/forma19/fields"
+def test_5_post_contracts_package_selective():
+    """Test 5: POST /api/contracts/package with include filter → 200 PDF, 2 pages"""
+    print("\n" + "="*70)
+    print("[TEST 5] POST /api/contracts/package (selective)")
+    print("="*70)
+    
+    url = f"{API_BASE}/contracts/package"
     
     try:
-        resp = requests.get(url, timeout=10)
-        print(f"  Status: {resp.status_code}")
-        
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        
-        data = resp.json()
-        assert 'groups' in data, "Missing 'groups' key"
-        assert 'keys' in data, "Missing 'keys' key"
-        
-        print(f"  Groups: {len(data['groups'])}")
-        print(f"  Keys: {len(data['keys'])}")
-        print("  ✅ PASS")
-    except Exception as e:
-        print(f"  ❌ FAIL: {e}")
-        sys.exit(1)
-
-
-def test_forma19_regression_prefill():
-    """Regression: POST /api/forma19/prefill"""
-    print("\n[REGRESSION 3] POST /api/forma19/prefill")
-    url = f"{API_BASE}/forma19/prefill"
-    payload = {
-        "students": [
-            {
-                "full_name": "Иванов Иван Иванович",
-                "birth_date": "01.09.2007",
-                "passport_number": "AB1234567"
+        payload = {
+            "ids": [contract_id_1],
+            "duplex_flip": "long",
+            "include": {
+                "contract": False,
+                "forma19": True,
+                "forma24": True,
+                "soobshenie": False
             }
-        ]
-    }
-    
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
+        }
+        
+        resp = requests.post(url, json=payload, timeout=60)
+        
         print(f"  Status: {resp.status_code}")
+        print(f"  Content-Type: {resp.headers.get('Content-Type')}")
         
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.headers.get('Content-Type') == 'application/pdf', \
+            f"Expected application/pdf, got {resp.headers.get('Content-Type')}"
         
-        data = resp.json()
-        assert 'records' in data, "Missing 'records' key"
+        pdf_bytes = resp.content
+        print(f"  PDF size: {len(pdf_bytes)} bytes")
         
-        rec = data['records'][0]
-        print(f"  surname: {rec.get('surname')}")
-        print(f"  first_name: {rec.get('first_name')}")
-        print(f"  patronymic: {rec.get('patronymic')}")
-        print(f"  birth_day: {rec.get('birth_day')}")
-        print(f"  birth_month: {rec.get('birth_month')}")
-        print(f"  passport_series: {rec.get('passport_series')}")
-        print(f"  passport_number: {rec.get('passport_number')}")
+        # Open PDF with pymupdf
+        import pymupdf
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        num_pages = len(doc)
+        print(f"  Pages: {num_pages}")
         
-        assert rec.get('surname') == 'Иванов', f"Expected surname='Иванов'"
-        assert rec.get('first_name') == 'Иван', f"Expected first_name='Иван'"
-        assert rec.get('patronymic') == 'Иванович', f"Expected patronymic='Иванович'"
+        assert num_pages == 2, f"Expected 2 pages (only Forma19+Forma24), got {num_pages}"
+        
+        doc.close()
         
         print("  ✅ PASS")
     except Exception as e:
         print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
-def test_forma19_regression_defaults():
-    """Regression: GET /api/forma19/defaults"""
-    print("\n[REGRESSION 4] GET /api/forma19/defaults")
-    url = f"{API_BASE}/forma19/defaults"
+def test_6_backward_compatibility():
+    """Test 6: Backward compatibility - contract without saved master"""
+    global contract_id_2
+    print("\n" + "="*70)
+    print("[TEST 6] Backward compatibility (contract without master)")
+    print("="*70)
+    
+    # Create contract without master
+    url = f"{API_BASE}/contracts"
+    
+    try:
+        payload = {
+            "fields": {
+                "full_name": "Петров Пётр Петрович",
+                "birth_date": "01.01.2000",
+                "citizenship": "РБ",
+                "passport_number": "MP 7654321"
+            }
+        }
+        
+        resp = requests.post(url, json=payload, timeout=30)
+        
+        print(f"  POST /api/contracts status: {resp.status_code}")
+        
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        
+        data = resp.json()
+        contract_id_2 = data.get('id')
+        print(f"  Created contract id: {contract_id_2}")
+        
+        # Now try to generate package for this contract
+        package_url = f"{API_BASE}/contracts/{contract_id_2}/package"
+        package_payload = {"duplex_flip": "long"}
+        
+        package_resp = requests.post(package_url, json=package_payload, timeout=60)
+        
+        print(f"  POST /api/contracts/{contract_id_2}/package status: {package_resp.status_code}")
+        print(f"  Content-Type: {package_resp.headers.get('Content-Type')}")
+        
+        assert package_resp.status_code == 200, \
+            f"Expected 200, got {package_resp.status_code}: {package_resp.text}"
+        assert package_resp.headers.get('Content-Type') == 'application/pdf', \
+            f"Expected application/pdf, got {package_resp.headers.get('Content-Type')}"
+        
+        pdf_bytes = package_resp.content
+        print(f"  PDF size: {len(pdf_bytes)} bytes")
+        
+        # Open PDF with pymupdf
+        import pymupdf
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        num_pages = len(doc)
+        print(f"  Pages: {num_pages}")
+        
+        assert num_pages >= 1, f"Expected >= 1 page, got {num_pages}"
+        
+        doc.close()
+        
+        print("  ✅ PASS (master derived from contract fields)")
+    except Exception as e:
+        print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def test_7_cleanup():
+    """Test 7: DELETE created test contracts"""
+    print("\n" + "="*70)
+    print("[TEST 7] Cleanup - DELETE test contracts")
+    print("="*70)
+    
+    try:
+        # Delete contract 1
+        if contract_id_1:
+            url1 = f"{API_BASE}/contracts/{contract_id_1}"
+            resp1 = requests.delete(url1, timeout=10)
+            print(f"  DELETE /api/contracts/{contract_id_1}: {resp1.status_code}")
+            assert resp1.status_code == 200, f"Expected 200, got {resp1.status_code}"
+        
+        # Delete contract 2
+        if contract_id_2:
+            url2 = f"{API_BASE}/contracts/{contract_id_2}"
+            resp2 = requests.delete(url2, timeout=10)
+            print(f"  DELETE /api/contracts/{contract_id_2}: {resp2.status_code}")
+            assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}"
+        
+        print("  ✅ PASS")
+    except Exception as e:
+        print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def test_8_regression_contracts():
+    """Test 8: Regression - GET /api/contracts"""
+    print("\n" + "="*70)
+    print("[REGRESSION 1] GET /api/contracts")
+    print("="*70)
+    
+    url = f"{API_BASE}/contracts"
     
     try:
         resp = requests.get(url, timeout=10)
@@ -305,47 +404,73 @@ def test_forma19_regression_defaults():
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
         
         data = resp.json()
-        assert 'defaults' in data, "Missing 'defaults' key"
+        assert isinstance(data, list), f"Expected array, got {type(data)}"
+        print(f"  Contracts count: {len(data)}")
         
-        print(f"  defaults: {data['defaults']}")
         print("  ✅ PASS")
     except Exception as e:
         print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def test_9_regression_fields():
+    """Test 9: Regression - GET /api/fields"""
+    print("\n" + "="*70)
+    print("[REGRESSION 2] GET /api/fields")
+    print("="*70)
+    
+    url = f"{API_BASE}/fields"
+    
+    try:
+        resp = requests.get(url, timeout=10)
+        print(f"  Status: {resp.status_code}")
+        
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+        
+        data = resp.json()
+        assert 'fields' in data, "Missing 'fields' key"
+        print(f"  Fields count: {len(data['fields'])}")
+        
+        print("  ✅ PASS")
+    except Exception as e:
+        print(f"  ❌ FAIL: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
 def main():
-    print("=" * 70)
-    print("FORMA 19 PREVIEW-PNG BUG FIX VERIFICATION")
-    print("=" * 70)
-    print(f"Backend URL: {BACKEND_URL}")
-    print(f"API Base: {API_BASE}")
+    print("\n" + "="*70)
+    print("BACKEND TESTING: ПОЛНЫЙ ПАКЕТ ДОКУМЕНТОВ ИЗ ИСТОРИИ ДОГОВОРОВ")
+    print("="*70)
     
-    # Main bug fix tests
-    test_forma19_preview_png_front()
-    test_forma19_preview_png_back()
-    test_forma19_preview_png_different()
-    test_forma19_preview_png_no_side()
+    # Run all tests in sequence
+    test_1_get_master_template()
+    test_2_post_generate_upload()
+    test_3_post_contracts_batch()
+    test_4_post_contract_package()
+    test_5_post_contracts_package_selective()
+    test_6_backward_compatibility()
+    test_7_cleanup()
+    test_8_regression_contracts()
+    test_9_regression_fields()
     
-    # Regression tests
-    test_forma19_regression_preview_pdf()
-    test_forma19_regression_fields()
-    test_forma19_regression_prefill()
-    test_forma19_regression_defaults()
-    
-    print("\n" + "=" * 70)
-    print("✅ ALL TESTS PASSED (8/8)")
-    print("=" * 70)
+    print("\n" + "="*70)
+    print("✅ ALL TESTS PASSED (9/9)")
+    print("="*70)
     print("\nSUMMARY:")
-    print("  ✓ side='front' returns PNG (page 0)")
-    print("  ✓ side='back' returns PNG (page 1)")
-    print("  ✓ front and back are DIFFERENT images")
-    print("  ✓ without side parameter defaults to front")
-    print("  ✓ Regression: /forma19/preview (PDF 2 pages)")
-    print("  ✓ Regression: /forma19/fields")
-    print("  ✓ Regression: /forma19/prefill")
-    print("  ✓ Regression: /forma19/defaults")
-    print("\n🎉 BUG FIX CONFIRMED: Preview now works for both front AND back sides!")
+    print("  ✓ GET /api/master-template returns valid .xlsx")
+    print("  ✓ POST /api/generate/upload parses Excel and returns students/masters")
+    print("  ✓ POST /api/contracts/batch creates contracts with master data")
+    print("  ✓ POST /api/contracts/{id}/package generates 7-page PDF package")
+    print("  ✓ POST /api/contracts/package with include filter generates 2-page PDF")
+    print("  ✓ Backward compatibility: contract without master works")
+    print("  ✓ Cleanup: test contracts deleted")
+    print("  ✓ Regression: GET /api/contracts works")
+    print("  ✓ Regression: GET /api/fields works")
+    print("\n🎉 НОВАЯ ФИЧА ПОЛНОСТЬЮ РАБОТАЕТ!")
 
 
 if __name__ == "__main__":

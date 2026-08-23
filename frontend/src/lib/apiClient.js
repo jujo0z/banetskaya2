@@ -54,9 +54,37 @@ export async function updateContract(id, fields, status) {
   return data;
 }
 
-export async function saveContractsBatch(contracts) {
-  const { data } = await api.post("/contracts/batch", { contracts });
+export async function saveContractsBatch(contracts, masters = []) {
+  const { data } = await api.post("/contracts/batch", { contracts, masters });
   return data;
+}
+
+// Умная загрузка Excel для «Генерация из Excel» (единый шаблон или старый формат)
+export async function generateUpload(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post("/generate/upload", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data; // { mode, count, students, masters, [columns, rows, mapping] }
+}
+
+// Пакет из истории — по одному договору и по нескольким
+export async function openContractPackage(id, duplexFlip = "long", include = {}) {
+  const res = await api.post(`/contracts/${id}/package`, { duplex_flip: duplexFlip, include }, { responseType: "blob" });
+  window.open(window.URL.createObjectURL(res.data), "_blank");
+}
+export async function downloadContractPackage(id, duplexFlip = "long", include = {}) {
+  const res = await api.post(`/contracts/${id}/package`, { duplex_flip: duplexFlip, include }, { responseType: "blob" });
+  downloadBlob(res.data, "paket_dokumentov.pdf");
+}
+export async function openContractsPackage(ids, duplexFlip = "long", include = {}) {
+  const res = await api.post("/contracts/package", { ids, duplex_flip: duplexFlip, include }, { responseType: "blob" });
+  window.open(window.URL.createObjectURL(res.data), "_blank");
+}
+export async function downloadContractsPackage(ids, duplexFlip = "long", include = {}) {
+  const res = await api.post("/contracts/package", { ids, duplex_flip: duplexFlip, include }, { responseType: "blob" });
+  downloadBlob(res.data, "paket_dokumentov.pdf");
 }
 
 export async function listContracts(q = "", status = "") {

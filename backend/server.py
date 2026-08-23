@@ -94,6 +94,7 @@ class GenerateRequest(BaseModel):
 
 class BatchGenerateRequest(BaseModel):
     contracts: List[Dict[str, str]]
+    masters: List[Dict[str, Any]] = []
 
 
 class Contract(BaseModel):
@@ -102,6 +103,7 @@ class Contract(BaseModel):
     contract_number: str = ""
     full_name: str = ""
     fields: Dict[str, str]
+    master: Dict[str, str] = {}
     status: str = "final"  # "final" | "draft"
     demo: bool = False
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -257,11 +259,13 @@ async def map_students(payload: Dict):
     return {"students": _apply_mapping(rows, mapping)}
 
 
-async def _save_contract(fields: Dict[str, str], status: str = "final") -> Contract:
+async def _save_contract(fields: Dict[str, str], status: str = "final",
+                         master: Dict[str, str] = None) -> Contract:
     contract = Contract(
         contract_number=fields.get("contract_number", ""),
         full_name=fields.get("full_name", ""),
         fields=fields,
+        master=master or {},
         status=status if status in ("final", "draft") else "final",
     )
     await db.contracts.insert_one(contract.model_dump())
@@ -294,10 +298,62 @@ async def update_contract(contract_id: str, req: GenerateRequest):
 @api_router.post("/contracts/batch")
 async def create_contracts_batch(req: BatchGenerateRequest):
     created = []
-    for fields in req.contracts:
-        contract = await _save_contract(fields)
+    for i, fields in enumerate(req.contracts):
+        master = req.masters[i] if i < len(req.masters) else {}
+        contract = await _save_contract(fields, master=master)
         created.append(contract.model_dump())
     return {"created": created, "count": len(created)}
+
+
+@api_router.post("/generate/upload")
+async def generate_upload(file: UploadFile = File(...)):
+    """Умная загрузка для «Генерация из Excel».
+    Единый шаблон «Данные» → возвращает students(поля договора) + masters(полные данные).
+    Старый договорный Excel → как раньше (columns/rows/mapping)."""
+    if not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Поддерживаются только файлы .xlsx")
+    content = await file.read()
+    if masterdata.has_master_headers(content):
+        people = masterdata.parse_master_xlsx(content)
+        if not people:
+            raise HTTPException(status_code=400, detail="В шаблоне нет данных (заполните строки с 3-й)")
+        students = [masterdata.master_to_contract(m) for m in people]
+        return {"mode": "master", "count": len(people),
+                "students": students, "masters": people}
+    # --- старый договорный формат ---
+    try:
+        wb = load_workbook(io.BytesIO(content), data_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Не удалось прочитать файл: {e}")
+    ws = wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    try:
+        header_row = next(rows_iter)
+    except StopIteration:
+        raise HTTPException(status_code=400, detail="Файл пуст")
+    columns = [(_cell_to_str(h) or f"Колонка {i+1}") for i, h in enumerate(header_row)]
+    rows = []
+    for raw in rows_iter:
+        if raw is None or all(c is None for c in raw):
+            continue
+        row = {}
+        for i, col in enumerate(columns):
+            row[col] = _cell_to_str(raw[i]) if i < len(raw) else ""
+        if any(v for v in row.values()):
+            rows.append(row)
+    mapping = docsvc.auto_map_columns(columns)
+    students = _apply_mapping(rows, mapping)
+    return {"mode": "contract", "count": len(students),
+            "students": students, "masters": [],
+            "columns": columns, "rows": rows, "mapping": mapping}
+
+
+def _contract_master(doc: dict) -> dict:
+    """Полные данные человека для пакета: сохранённый master или вывод из полей договора."""
+    m = doc.get("master") or {}
+    if any(str(v).strip() for v in m.values()):
+        return m
+    return masterdata.contract_to_master(doc.get("fields", {}) or {})
 
 
 @api_router.get("/contracts")
@@ -1635,6 +1691,62 @@ async def build_package(req: PackageRequest):
         raise
     except Exception as e:
         logger.exception("package generation failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка формирования пакета: {e}")
+    return StreamingResponse(
+        io.BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=paket_dokumentov.pdf"})
+
+
+class SinglePackageRequest(BaseModel):
+    duplex_flip: str = "long"
+    include: Dict[str, bool] = {}
+
+
+class ContractsPackageRequest(BaseModel):
+    ids: List[str]
+    duplex_flip: str = "long"
+    include: Dict[str, bool] = {}
+
+
+@api_router.post("/contracts/{contract_id}/package")
+async def contract_package(contract_id: str, req: SinglePackageRequest = SinglePackageRequest()):
+    """Полный пакет документов для одного договора из истории."""
+    doc = await db.contracts.find_one({"id": contract_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Договор не найден")
+    preq = PackageRequest(people=[_contract_master(doc)],
+                          duplex_flip=req.duplex_flip, include=req.include)
+    try:
+        pdf = await _build_package_pdf(preq)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("contract package failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка формирования пакета: {e}")
+    return StreamingResponse(
+        io.BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=paket_dokumentov.pdf"})
+
+
+@api_router.post("/contracts/package")
+async def contracts_package(req: ContractsPackageRequest):
+    """Полный пакет документов сразу для нескольких выбранных договоров."""
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="Не выбрано ни одного договора")
+    people = []
+    for cid in req.ids:
+        doc = await db.contracts.find_one({"id": cid}, {"_id": 0})
+        if doc:
+            people.append(_contract_master(doc))
+    if not people:
+        raise HTTPException(status_code=404, detail="Договоры не найдены")
+    preq = PackageRequest(people=people, duplex_flip=req.duplex_flip, include=req.include)
+    try:
+        pdf = await _build_package_pdf(preq)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("contracts package failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования пакета: {e}")
     return StreamingResponse(
         io.BytesIO(pdf), media_type="application/pdf",

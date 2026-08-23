@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { FIELDS, mapRowsToStudents } from "@/lib/fields";
-import { uploadExcel, saveContractsBatch, batchDownload, batchPrint, downloadSampleTemplate } from "@/lib/apiClient";
+import { generateUpload, saveContractsBatch, batchDownload, batchPrint, downloadMasterTemplate } from "@/lib/apiClient";
 import EditContractDialog from "@/components/DocumentEditor";
 import ManualDuplexDialog from "@/components/ManualDuplexDialog";
 import { PageHeader } from "@/components/Page";
@@ -42,6 +42,10 @@ const NONE = "__none__";
 export default function Generate() {
   const [dataset, setDataset] = useState(null);
   const [mapping, setMapping] = useState({});
+  const [mode, setMode] = useState("contract");
+  const [masterStudents, setMasterStudents] = useState([]);
+  const [masters, setMasters] = useState([]);
+  const [fileInfo, setFileInfo] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [showMapping, setShowMapping] = useState(false);
   const [search, setSearch] = useState("");
@@ -56,9 +60,16 @@ export default function Generate() {
   const fileRef = useRef();
 
   const students = useMemo(
-    () => (dataset ? mapRowsToStudents(dataset.rows, mapping) : []),
-    [dataset, mapping]
+    () =>
+      mode === "master"
+        ? masterStudents
+        : dataset
+        ? mapRowsToStudents(dataset.rows, mapping)
+        : [],
+    [mode, masterStudents, dataset, mapping]
   );
+
+  const loaded = !!fileInfo;
 
   const filtered = useMemo(() => {
     if (!search.trim()) return students.map((s, i) => ({ s, i }));
@@ -77,11 +88,25 @@ export default function Generate() {
     if (!file) return;
     setUploading(true);
     try {
-      const data = await uploadExcel(file);
-      setDataset(data);
-      setMapping(data.mapping || {});
+      const data = await generateUpload(file);
       setSelected(new Set());
-      toast.success(`Загружено студентов: ${data.rows.length}`);
+      setFileInfo({ filename: file.name, count: data.count });
+      if (data.mode === "master") {
+        setMode("master");
+        setMasterStudents(data.students || []);
+        setMasters(data.masters || []);
+        setDataset(null);
+        setMapping({});
+        setShowMapping(false);
+        toast.success(`Загружено (единый шаблон): ${data.count}`);
+      } else {
+        setMode("contract");
+        setDataset({ filename: file.name, columns: data.columns, rows: data.rows, mapping: data.mapping });
+        setMapping(data.mapping || {});
+        setMasterStudents([]);
+        setMasters([]);
+        toast.success(`Загружено: ${data.count}`);
+      }
     } catch (err) {
       toast.error(err.response?.data?.detail || "Ошибка загрузки файла");
     } finally {
@@ -109,11 +134,13 @@ export default function Generate() {
   }
 
   async function handleBatch() {
-    const items = [...selected].map((i) => students[i]);
+    const idxs = [...selected];
+    const items = idxs.map((i) => students[i]);
+    const ms = idxs.map((i) => masters[i] || {});
     if (items.length === 0) return;
     setBatching(true);
     try {
-      const res = await saveContractsBatch(items);
+      const res = await saveContractsBatch(items, ms);
       const ids = res.created.map((c) => c.id);
       toast.success(`Сформировано договоров: ${res.count}. Загрузка архива…`);
       await batchDownload(ids, batchFormat);
@@ -125,11 +152,13 @@ export default function Generate() {
   }
 
   async function handleBatchPrint() {
-    const items = [...selected].map((i) => students[i]);
+    const idxs = [...selected];
+    const items = idxs.map((i) => students[i]);
+    const ms = idxs.map((i) => masters[i] || {});
     if (items.length === 0) return;
     setBatchPrinting(true);
     try {
-      const res = await saveContractsBatch(items);
+      const res = await saveContractsBatch(items, ms);
       const ids = res.created.map((c) => c.id);
       await batchPrint(ids);
       toast.success(`Открыто на печать: ${res.count}`);
@@ -141,11 +170,13 @@ export default function Generate() {
   }
 
   async function handleManualDuplex() {
-    const items = [...selected].map((i) => students[i]);
+    const idxs = [...selected];
+    const items = idxs.map((i) => students[i]);
+    const ms = idxs.map((i) => masters[i] || {});
     if (items.length === 0) return;
     setPreparingDuplex(true);
     try {
-      const res = await saveContractsBatch(items);
+      const res = await saveContractsBatch(items, ms);
       setDuplexIds(res.created.map((c) => c.id));
       setDuplexOpen(true);
     } catch (err) {
@@ -191,20 +222,25 @@ export default function Generate() {
           <Button
             variant="outline"
             className="rounded-none h-11"
-            onClick={() => downloadSampleTemplate()}
+            onClick={() => downloadMasterTemplate()}
             data-testid="download-sample-btn"
           >
             <Download className="h-4 w-4" />
-            Скачать шаблон Excel
+            Скачать единый шаблон
           </Button>
-          {dataset && (
+          {fileInfo && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <FileSpreadsheet className="h-4 w-4" />
-              <span className="font-medium text-foreground">{dataset.filename}</span>
-              <span>· студентов: {dataset.rows.length}</span>
+              <span className="font-medium text-foreground">{fileInfo.filename}</span>
+              <span>· записей: {fileInfo.count}</span>
+              {mode === "master" && (
+                <span className="px-2 py-0.5 rounded bg-[#E11D48]/15 text-[#E11D48] text-[11px]">
+                  единый шаблон
+                </span>
+              )}
             </div>
           )}
-          {dataset && (
+          {dataset && mode === "contract" && (
             <Button
               variant="outline"
               className="rounded-none ml-auto"
@@ -218,7 +254,7 @@ export default function Generate() {
         </div>
 
         {/* Column mapping editor */}
-        {dataset && showMapping && (
+        {dataset && mode === "contract" && showMapping && (
           <div className="mt-6 border-t border-border pt-6">
             <p className="text-xs uppercase tracking-[0.2em] font-semibold text-muted-foreground mb-4">
               Сопоставьте поля договора с колонками таблицы
@@ -253,7 +289,7 @@ export default function Generate() {
       </div>
 
       {/* Students */}
-      {dataset && (
+      {loaded && (
         <div className="card-premium overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 p-4 border-b border-border">
             <div className="relative flex-1 min-w-[220px]">
