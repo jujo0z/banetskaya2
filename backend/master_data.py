@@ -265,13 +265,20 @@ def master_to_zayavlenie(m: dict) -> dict:
                      _nz(m.get("res_city"), m.get("res_village")))
     from_place = _join(", ", m.get("from_obl"), m.get("from_raion"),
                        _nz(m.get("from_city"), m.get("from_village")))
-    basis = ""
-    if m.get("contract_number"):
-        basis = f"договор найма жилого помещения № {str(m.get('contract_number')).strip()}"
-        if m.get("sign_date"):
-            basis += f" от {str(m.get('sign_date')).strip()}"
+    # Основание: ВСЕГДА «Договор найма № … от …»
+    num_c = str(m.get("contract_number") or "").strip()
+    date_c = str(m.get("sign_date") or "").strip()
+    basis = f"Договор найма № {num_c} от {date_c}"
+    # Срок пребывания «Прибыл(а) на …» из колонки «Срок договора до»
+    end = str(m.get("contract_end_date") or "").strip()
+    stay_term = f"срок до {end}" if end else ""
+    # Год рождения из даты рождения ДД.ММ.ГГГГ
+    bd = str(m.get("birth_date") or "").strip()
+    birth_year = bd.split(".")[-1] if "." in bd else bd
     return {
         "fio": m.get("fio", ""),
+        "birth_year": birth_year,
+        "doc_name": "паспорт гражданина Республики Беларусь",
         "passport_series": ser,
         "passport_number": num,
         "passport_issued_by": m.get("passport_issued_by", ""),
@@ -283,6 +290,7 @@ def master_to_zayavlenie(m: dict) -> dict:
         "res_house": m.get("res_house", ""),
         "res_korpus": m.get("res_korpus", ""),
         "res_apartment": m.get("res_apartment", ""),
+        "stay_term": stay_term,
         "from_place": from_place,
         "basis": basis,
         "sign_date": m.get("sign_date", ""),

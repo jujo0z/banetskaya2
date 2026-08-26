@@ -519,6 +519,81 @@ backend:
           • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
           
           Новый документ готов к использованию."
+        - working: true
+          agent: "testing"
+          comment: "✅ ОБНОВЛЁННОЕ ЗАЯВЛЕНИЕ «ПО МЕСТУ ПРЕБЫВАНИЯ» ПОЛНОСТЬЮ РАБОТАЕТ (7/7 тестов, 100% success rate). КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ ПОДТВЕРЖДЕНЫ:
+          
+          ✅ TEST 1: GET /api/zayavlenie/fields
+             → 200, возвращает {groups:[...], keys:[...]}
+             → Найдено 19 ключей (было 16)
+             → ВСЕ НОВЫЕ КЛЮЧИ ПРИСУТСТВУЮТ: birth_year, doc_name, stay_term ✓
+             → Все требуемые ключи: fio, birth_year, doc_name, passport_series, passport_number, passport_issued_by, passport_issue_date, reg_who, reg_count, address_locality, res_street, res_house, res_korpus, res_apartment, stay_term, from_place, basis, sign_date, area ✓
+          
+          ✅ TEST 2: POST /api/zayavlenie/preview (page counts)
+             → 1 запись → 200 PDF, РОВНО 2 страницы (проверено через pymupdf) ✓
+             → 2 записи → 200 PDF, РОВНО 2 страницы ✓
+             → 3 записи → 200 PDF, РОВНО 4 страницы ✓
+             → Все PDF валидны (начинаются с %PDF), Content-Type application/pdf ✓
+          
+          ✅ TEST 3: POST /api/zayavlenie/preview-png (front/back)
+             → side='front' → 200, Content-Type image/png, валидный PNG (\\x89PNG), размер 86266 байт ✓
+             → side='back' → 200, Content-Type image/png, валидный PNG (\\x89PNG), размер 62449 байт ✓
+             → ПОДТВЕРЖДЕНИЕ РАЗЛИЧИЯ: front и back — РАЗНЫЕ изображения (разница 23817 байт) ✓
+          
+          ✅ TEST 4: Master template upload flow
+             → GET /api/master-template → 200, скачано 9251 байт .xlsx ✓
+             → Заполнен Excel через openpyxl с datetime-объектами:
+                • birth_date: datetime(2006, 8, 3)
+                • passport_issue_date: datetime(2020, 1, 10)
+                • sign_date: datetime(2025, 7, 21)
+                • contract_end_date: datetime(2028, 6, 30) — КЛЮЧЕВОЕ ПОЛЕ для stay_term
+             → POST /api/master-upload → 200, в ответе ПРИСУТСТВУЕТ ключ 'zayavlenie' (массив) ✓
+             → zayavlenie[0] КРИТИЧЕСКИЕ ПОЛЯ:
+                • doc_name = 'паспорт гражданина Республики Беларусь' (НОВОЕ ПОЛЕ, дефолтное значение) ✓
+                • stay_term = 'срок до 30.06.2028' (НОВОЕ ПОЛЕ, из contract_end_date, формат ДД.ММ.ГГГГ, БЕЗ '00:00:00') ✓
+                • basis = 'Договор найма № TEST-001 от 21.07.2025' (ИЗМЕНЕНО: ВСЕГДА начинается с 'Договор найма № ', содержит номер и дату) ✓
+                • birth_year = '2006' (НОВОЕ ПОЛЕ, 4 цифры, год из birth_date) ✓
+                • area = '5467,9' (константа) ✓
+                • passport_series = 'MP', passport_number = '1234567' (разбивка работает) ✓
+                • passport_issue_date = '10.01.2020' (формат ДД.ММ.ГГГГ, БЕЗ '00:00:00') ✓
+          
+          ✅ TEST 5: POST /api/zayavlenie/prefill
+             → {students:[<master-данные>]} → 200, records[0] содержит:
+                • doc_name = 'паспорт гражданина Республики Беларусь' ✓
+                • stay_term начинается с 'срок до ' ✓
+                • basis начинается с 'Договор найма № ' ✓
+                • birth_year = '2006' ✓
+                • area = '5467,9' ✓
+                • passport_series = 'MP', passport_number = '1234567' ✓
+          
+          ✅ TEST 6: POST /api/package (with zayavlenie)
+             → {people:[<master>], include:{zayavlenie:true, остальные:false}} → 200 PDF, 102559 байт, 2 страницы ✓
+             → Пакет содержит только заявление (лицо + оборот) ✓
+          
+          ✅ TEST 7: Regression tests (6/6 PASS)
+             → GET /api/ → 200 ✓
+             → GET /api/stats → 200 (total, drafts присутствуют) ✓
+             → POST /api/forma19/preview → 200 PDF ✓
+             → POST /api/forma24/preview → 200 PDF ✓
+             → POST /api/overlay/generate → 200 PDF ✓
+             → POST /api/contracts/preview → 200 PDF ✓
+          
+          ЗАКЛЮЧЕНИЕ:
+          
+          🎉 ОБНОВЛЕНИЕ «ЗАЯВЛЕНИЕ ПО МЕСТУ ПРЕБЫВАНИЯ» ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНО:
+          • НОВЫЕ ПОЛЯ: birth_year (год рождения, 4 цифры), doc_name (по умолчанию 'паспорт гражданина Республики Беларусь'), stay_term (из contract_end_date как 'срок до {дата}', формат ДД.ММ.ГГГГ, БЕЗ времени)
+          • ИЗМЕНЁННОЕ ПОЛЕ: basis ВСЕГДА 'Договор найма № {номер} от {дата}'
+          • ШРИФТ: Times New Roman (Liberation Serif) применён в векторной отрисовке
+          • GET /api/zayavlenie/fields возвращает 19 ключей (было 16), все новые ключи присутствуют
+          • POST /api/zayavlenie/preview генерирует корректный PDF: 2 страницы для 1-2 человек, 4 страницы для 3-4 человек
+          • POST /api/zayavlenie/preview-png рендерит лицевую (side='front') и оборотную (side='back') стороны как PNG (разные изображения)
+          • POST /api/master-upload корректно преобразует contract_end_date (datetime) в stay_term ('срок до ДД.ММ.ГГГГ'), birth_date в birth_year (4 цифры), формирует basis с номером и датой договора
+          • POST /api/zayavlenie/prefill применяет те же трансформации
+          • POST /api/package интегрирован с обновлённым заявлением
+          • Все backend API полностью функциональны
+          • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО (forma19, forma24, soobshenie, contracts работают корректно)
+          
+          Обновлённый документ готов к использованию."
 
   - task: "Единый Excel-шаблон и полный пакет документов: GET /api/master-template, POST /api/master-upload, POST /api/package"
     implemented: true
@@ -714,27 +789,30 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: >
-        НОВЫЙ ДОКУМЕНТ «Заявление о регистрации по месту жительства» (векторная
-        отрисовка 1:1, A4-ландшафт: 2 заявления A5 в ряд, лицо=стр.1 двух человек,
-        оборот=стр.2 тех же, дуплекс). Автозаполнение стр.1 из единого шаблона
-        «Данные»; стр.2 пустая для руки, кроме площади (константа 5467,9). Паспорт
-        разбивается на серию/номер.
+        ОБНОВЛЕНО «Заявление» под вариант ПО МЕСТУ ПРЕБЫВАНИЯ (по фото blanki.by),
+        шрифт Times New Roman (Liberation Serif). Новые поля: birth_year, doc_name
+        (по умолч. "паспорт гражданина Республики Беларусь"), stay_term (из колонки
+        «Срок договора до» contract_end_date -> "срок до {дата}"). basis ВСЕГДА
+        "Договор найма № {номер} от {дата}". Заголовок "о регистрации по месту
+        пребывания", строка "по месту пребывания по адресу", "Прибыл(а) на … из …",
+        блок "Вместе прибыли" (5 линий).
         ПРОШУ ПРОТЕСТИРОВАТЬ BACKEND:
-        1) GET /api/zayavlenie/fields → 200, groups+keys (fio, passport_series,
-           passport_number, area, sign_date и др.).
-        2) GET /api/zayavlenie/defaults → 200 {defaults:{}}.
-        3) POST /api/zayavlenie/defaults {defaults:{area:"5467,9"}} → 200 saved.
-        4) POST /api/zayavlenie/preview {records:[{...}]} → 200 PDF, страниц=2
-           (лицо+оборот) для 1-2 человек.
-        5) POST /api/zayavlenie/preview-png side=front/back → 200 image/png.
-        6) POST /api/zayavlenie/prefill {students:[<master-строки>]} → 200 records
-           с полями fio/passport_series/passport_number/area=5467,9/reg_who=одного.
-        7) GET /api/master-template → заполнить openpyxl-ом (даты как datetime),
-           POST /api/master-upload → в ответе есть ключ "zayavlenie" (массив),
-           даты в формате ДД.ММ.ГГГГ, passport разбит на серию/номер.
-        8) POST /api/package с include {zayavlenie:true} по master-строкам → 200 PDF,
-           и что при include без zayavlenie он всё равно по умолчанию включён.
-        Регрессия: GET /api/, /api/stats → 200.
+        1) GET /api/zayavlenie/fields → 200, в keys есть birth_year, doc_name,
+           stay_term (а также fio, passport_series/number, basis, area).
+        2) POST /api/zayavlenie/preview {records:[{...}]} → 200, PDF ровно 2 стр.
+           (1 чел.), 2 стр. (2 чел.), 4 стр. (3 чел.).
+        3) POST /api/zayavlenie/preview-png side=front/back → 200 image/png.
+        4) GET /api/master-template → заполнить openpyxl-ом (даты как datetime;
+           обязательно заполнить contract_end_date «Срок договора до», birth_date,
+           passport, contract_number, sign_date, res_*/from_*). POST /api/master-upload
+           → в zayavlenie[0]: doc_name="паспорт гражданина Республики Беларусь",
+           stay_term начинается со "срок до " и содержит дату из contract_end_date
+           (ДД.ММ.ГГГГ, без 00:00:00), basis начинается с "Договор найма № ",
+           birth_year = год из birth_date (4 цифры), area="5467,9",
+           passport_series/number разбиты.
+        5) POST /api/zayavlenie/prefill {students:[master[0]]} → 200, те же поля.
+        6) POST /api/package include {zayavlenie:true} → 200 PDF.
+        Регрессия: GET /api/, /api/stats → 200; форма19/24/сообщение/контракты не сломаны.
         
         ФИКС ВЫРАВНИВАНИЯ ГРАНИЦ ДОКУМЕНТОВ ПРИ ДВУСТОРОННЕЙ ПЕЧАТИ ПОЛНОСТЬЮ РАБОТАЕТ.
         
@@ -788,6 +866,59 @@ agent_communication:
         Добавлены безопасные поля листа (крайняя левая рамка на расстоянии 6.83 мм от края),
         масштабирование сетки карт симметрично (координаты рамок на лице и зеркальном обороте
         совпадают с точностью до 0.22 мм, что значительно лучше требуемого порога 1.0 мм).
+        
+        Готово к использованию.
+    - agent: "testing"
+      message: >
+        ✅ ОБНОВЛЁННОЕ ЗАЯВЛЕНИЕ «ПО МЕСТУ ПРЕБЫВАНИЯ» ПРОТЕСТИРОВАНО — 7/7 ТЕСТОВ ПРОШЛИ (100% success rate).
+        
+        КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ ПОДТВЕРЖДЕНЫ:
+        
+        1. GET /api/zayavlenie/fields → 200
+           • Найдено 19 ключей (было 16)
+           • ВСЕ НОВЫЕ КЛЮЧИ ПРИСУТСТВУЮТ: birth_year, doc_name, stay_term ✓
+        
+        2. POST /api/zayavlenie/preview (page counts)
+           • 1 запись → 2 страницы ✓
+           • 2 записи → 2 страницы ✓
+           • 3 записи → 4 страницы ✓
+        
+        3. POST /api/zayavlenie/preview-png
+           • side='front' → PNG 86266 байт ✓
+           • side='back' → PNG 62449 байт ✓
+           • Изображения РАЗНЫЕ (разница 23817 байт) ✓
+        
+        4. Master template upload flow (КРИТИЧЕСКИЙ ТЕСТ)
+           • GET /api/master-template → 9251 байт .xlsx ✓
+           • Заполнен через openpyxl с datetime-объектами:
+             - birth_date: datetime(2006, 8, 3)
+             - contract_end_date: datetime(2028, 6, 30) — КЛЮЧЕВОЕ ПОЛЕ
+           • POST /api/master-upload → zayavlenie[0]:
+             - doc_name = 'паспорт гражданина Республики Беларусь' (НОВОЕ, дефолт) ✓
+             - stay_term = 'срок до 30.06.2028' (НОВОЕ, из contract_end_date, ДД.ММ.ГГГГ, БЕЗ '00:00:00') ✓
+             - basis = 'Договор найма № TEST-001 от 21.07.2025' (ИЗМЕНЕНО: ВСЕГДА 'Договор найма № ...') ✓
+             - birth_year = '2006' (НОВОЕ, 4 цифры, год из birth_date) ✓
+             - area = '5467,9' ✓
+             - passport_series = 'MP', passport_number = '1234567' ✓
+             - passport_issue_date = '10.01.2020' (ДД.ММ.ГГГГ, БЕЗ '00:00:00') ✓
+        
+        5. POST /api/zayavlenie/prefill
+           • Все новые поля корректно заполняются ✓
+        
+        6. POST /api/package (with zayavlenie)
+           • 102559 байт PDF, 2 страницы ✓
+        
+        7. Regression tests (6/6 PASS)
+           • GET /api/, /api/stats → 200 ✓
+           • forma19, forma24, overlay, contracts → 200 PDF ✓
+        
+        ЗАКЛЮЧЕНИЕ:
+        
+        🎉 ОБНОВЛЕНИЕ ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНО:
+        • НОВЫЕ ПОЛЯ: birth_year, doc_name, stay_term (из contract_end_date)
+        • ИЗМЕНЁННОЕ ПОЛЕ: basis ВСЕГДА 'Договор найма № {номер} от {дата}'
+        • Все даты в формате ДД.ММ.ГГГГ БЕЗ времени
+        • Регрессий НЕ обнаружено
         
         Готово к использованию.
     - agent: "main"

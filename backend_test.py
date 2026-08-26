@@ -1,483 +1,549 @@
 #!/usr/bin/env python3
 """
-Тест фикса парсинга дат из Excel для приложения Banetskaya.by (Document Engine).
-
-Проверяет, что даты из Excel (объекты datetime) корректно конвертируются
-в белорусский формат ДД.ММ.ГГГГ, а не остаются в виде "YYYY-MM-DD 00:00:00".
+Тестирование обновлённого документа «Заявление о регистрации по месту ПРЕБЫВАНИЯ».
+Backend: https://code-review-hub-160.preview.emergentagent.com/api
 """
+import requests
 import io
 import sys
-import requests
-from datetime import datetime, date
+from datetime import datetime
 from openpyxl import load_workbook
 
-# Backend URL
-BASE_URL = "https://cdb3aa12-3471-40c2-bf41-ada0349ed1fe.preview.emergentagent.com/api"
+BASE_URL = "https://code-review-hub-160.preview.emergentagent.com/api"
 
-# Цвета для вывода
-GREEN = '\033[92m'
-RED = '\033[91m'
-YELLOW = '\033[93m'
-RESET = '\033[0m'
+def test_zayavlenie_fields():
+    """TEST 1: GET /api/zayavlenie/fields → проверить наличие новых полей"""
+    print("\n" + "="*80)
+    print("TEST 1: GET /api/zayavlenie/fields")
+    print("="*80)
+    
+    r = requests.get(f"{BASE_URL}/zayavlenie/fields")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    
+    data = r.json()
+    assert "keys" in data, "Response must contain 'keys'"
+    assert "groups" in data, "Response must contain 'groups'"
+    
+    keys = data["keys"]
+    required_keys = [
+        "fio", "birth_year", "doc_name", "passport_series", "passport_number",
+        "passport_issued_by", "passport_issue_date", "reg_who", "reg_count",
+        "address_locality", "res_street", "res_house", "res_korpus", "res_apartment",
+        "stay_term", "from_place", "basis", "sign_date", "area"
+    ]
+    
+    missing = [k for k in required_keys if k not in keys]
+    assert not missing, f"Missing required keys: {missing}"
+    
+    print(f"✅ PASS: Found {len(keys)} keys, all required keys present")
+    print(f"   Required keys: {required_keys}")
+    return True
 
-def log_test(name, passed, details=""):
-    """Логирование результата теста."""
-    status = f"{GREEN}✓ PASS{RESET}" if passed else f"{RED}✗ FAIL{RESET}"
-    print(f"{status} | {name}")
-    if details:
-        print(f"       {details}")
-    return passed
 
-def check_date_format(value, field_name):
-    """Проверяет, что значение даты в формате ДД.ММ.ГГГГ, а не YYYY-MM-DD или ISO."""
-    if not value or not isinstance(value, str):
-        return True, ""
+def test_zayavlenie_preview_pages():
+    """TEST 2: POST /api/zayavlenie/preview → проверить количество страниц"""
+    print("\n" + "="*80)
+    print("TEST 2: POST /api/zayavlenie/preview (page counts)")
+    print("="*80)
     
-    # Проверяем, что НЕ содержит "YYYY-MM-DD" или "00:00:00"
-    if " 00:00:00" in value:
-        return False, f"{field_name}='{value}' содержит ' 00:00:00' (не конвертировано)"
+    # Test 1 record → 2 pages
+    payload1 = {
+        "records": [{
+            "fio": "Иванов Иван Иванович",
+            "birth_year": "2006",
+            "stay_term": "срок до 30.06.2028",
+            "from_place": "г. Лида",
+            "basis": "Договор найма № 5 от 21.07.2025",
+            "area": "5467,9",
+            "sign_date": "21.07.2025"
+        }]
+    }
     
-    # Проверяем, что НЕ в ISO формате (YYYY-MM-DD)
-    if len(value) >= 10 and value[4] == '-' and value[7] == '-':
-        return False, f"{field_name}='{value}' в ISO формате YYYY-MM-DD (не конвертировано)"
+    r1 = requests.post(f"{BASE_URL}/zayavlenie/preview", json=payload1)
+    assert r1.status_code == 200, f"Expected 200, got {r1.status_code}"
+    assert r1.headers.get("Content-Type") == "application/pdf", "Expected PDF"
+    assert r1.content[:4] == b"%PDF", "Response must be valid PDF"
     
-    # Проверяем, что в формате ДД.ММ.ГГГГ
-    parts = value.split('.')
-    if len(parts) == 3:
-        try:
-            day, month, year = parts
-            if len(day) == 2 and len(month) == 2 and len(year) == 4:
-                return True, f"{field_name}='{value}' ✓"
-        except Exception:
-            pass
+    # Check page count using pymupdf
+    import pymupdf
+    doc1 = pymupdf.open(stream=r1.content, filetype="pdf")
+    pages1 = len(doc1)
+    doc1.close()
+    assert pages1 == 2, f"1 record should produce 2 pages, got {pages1}"
+    print(f"✅ PASS: 1 record → {pages1} pages (expected 2)")
     
-    return True, f"{field_name}='{value}' (формат не распознан, но нет явных ошибок)"
+    # Test 2 records → 2 pages
+    payload2 = {
+        "records": [
+            payload1["records"][0],
+            {
+                "fio": "Петров Пётр Петрович",
+                "birth_year": "2005",
+                "stay_term": "срок до 30.06.2027",
+                "from_place": "г. Гродно",
+                "basis": "Договор найма № 6 от 22.07.2025",
+                "area": "5467,9",
+                "sign_date": "22.07.2025"
+            }
+        ]
+    }
+    
+    r2 = requests.post(f"{BASE_URL}/zayavlenie/preview", json=payload2)
+    assert r2.status_code == 200, f"Expected 200, got {r2.status_code}"
+    doc2 = pymupdf.open(stream=r2.content, filetype="pdf")
+    pages2 = len(doc2)
+    doc2.close()
+    assert pages2 == 2, f"2 records should produce 2 pages, got {pages2}"
+    print(f"✅ PASS: 2 records → {pages2} pages (expected 2)")
+    
+    # Test 3 records → 4 pages
+    payload3 = {
+        "records": payload2["records"] + [{
+            "fio": "Сидоров Сидор Сидорович",
+            "birth_year": "2007",
+            "stay_term": "срок до 30.06.2029",
+            "from_place": "г. Брест",
+            "basis": "Договор найма № 7 от 23.07.2025",
+            "area": "5467,9",
+            "sign_date": "23.07.2025"
+        }]
+    }
+    
+    r3 = requests.post(f"{BASE_URL}/zayavlenie/preview", json=payload3)
+    assert r3.status_code == 200, f"Expected 200, got {r3.status_code}"
+    doc3 = pymupdf.open(stream=r3.content, filetype="pdf")
+    pages3 = len(doc3)
+    doc3.close()
+    assert pages3 == 4, f"3 records should produce 4 pages, got {pages3}"
+    print(f"✅ PASS: 3 records → {pages3} pages (expected 4)")
+    
+    return True
+
+
+def test_zayavlenie_preview_png():
+    """TEST 3: POST /api/zayavlenie/preview-png → проверить side=front/back"""
+    print("\n" + "="*80)
+    print("TEST 3: POST /api/zayavlenie/preview-png (front/back)")
+    print("="*80)
+    
+    payload = {
+        "records": [{
+            "fio": "Тестов Тест Тестович",
+            "birth_year": "2006",
+            "stay_term": "срок до 30.06.2028",
+            "from_place": "г. Минск",
+            "basis": "Договор найма № 1 от 01.01.2025",
+            "area": "5467,9",
+            "sign_date": "01.01.2025"
+        }],
+        "side": "front"
+    }
+    
+    # Test front
+    r_front = requests.post(f"{BASE_URL}/zayavlenie/preview-png", json=payload)
+    assert r_front.status_code == 200, f"Expected 200, got {r_front.status_code}"
+    assert r_front.headers.get("Content-Type") == "image/png", "Expected PNG"
+    assert r_front.content[:4] == b'\x89PNG', "Response must be valid PNG"
+    front_size = len(r_front.content)
+    print(f"✅ PASS: side='front' → PNG {front_size} bytes")
+    
+    # Test back
+    payload["side"] = "back"
+    r_back = requests.post(f"{BASE_URL}/zayavlenie/preview-png", json=payload)
+    assert r_back.status_code == 200, f"Expected 200, got {r_back.status_code}"
+    assert r_back.headers.get("Content-Type") == "image/png", "Expected PNG"
+    assert r_back.content[:4] == b'\x89PNG', "Response must be valid PNG"
+    back_size = len(r_back.content)
+    print(f"✅ PASS: side='back' → PNG {back_size} bytes")
+    
+    # Verify they are different
+    assert r_front.content != r_back.content, "Front and back images must be different"
+    print(f"✅ PASS: Front and back are DIFFERENT images (size diff: {abs(front_size - back_size)} bytes)")
+    
+    return True
+
+
+def test_master_upload_flow():
+    """TEST 4: GET /api/master-template → заполнить → POST /api/master-upload"""
+    print("\n" + "="*80)
+    print("TEST 4: Master template upload flow")
+    print("="*80)
+    
+    # Download template
+    r_tpl = requests.get(f"{BASE_URL}/master-template")
+    assert r_tpl.status_code == 200, f"Expected 200, got {r_tpl.status_code}"
+    assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in r_tpl.headers.get("Content-Type", "")
+    print(f"✅ Downloaded template: {len(r_tpl.content)} bytes")
+    
+    # Load and fill template
+    wb = load_workbook(io.BytesIO(r_tpl.content))
+    ws = wb["Данные"] if "Данные" in wb.sheetnames else wb.active
+    
+    # Find header row (row 2 in the template)
+    headers = {}
+    for idx, cell in enumerate(ws[2], start=1):
+        if cell.value:
+            headers[str(cell.value).strip()] = idx
+    
+    print(f"   Found {len(headers)} headers")
+    
+    # Fill row 3 with test data
+    row = 3
+    test_data = {
+        "ФИО (полностью)": "Иванов Иван Иванович",
+        "Дата рождения (ДД.ММ.ГГГГ)": datetime(2006, 8, 3),  # datetime object
+        "Паспорт (серия и номер)": "MP1234567",
+        "Паспорт: кем выдан": "Первомайским РУВД г. Минска",
+        "Паспорт: дата выдачи": datetime(2020, 1, 10),
+        "Номер договора": "TEST-001",
+        "Дата подписания договора": datetime(2025, 7, 21),
+        "Срок договора до": datetime(2028, 6, 30),  # contract_end_date
+        "Жительство: область": "Минская",
+        "Жительство: район": "Минский",
+        "Жительство: город (пгт)": "Минск",
+        "Жительство: улица": "пр-т Дзержинского",
+        "Жительство: дом": "85",
+        "Жительство: комната/квартира": "302/2",
+        "Откуда прибыл: область": "Гродненская",
+        "Откуда прибыл: город (пгт)": "Лида",
+    }
+    
+    for header, value in test_data.items():
+        if header in headers:
+            col_idx = headers[header]
+            ws.cell(row=row, column=col_idx, value=value)
+    
+    # Save to bytes
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filled_xlsx = buf.getvalue()
+    print(f"   Filled template: {len(filled_xlsx)} bytes")
+    
+    # Upload
+    files = {"file": ("test_data.xlsx", filled_xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    r_upload = requests.post(f"{BASE_URL}/master-upload", files=files)
+    assert r_upload.status_code == 200, f"Expected 200, got {r_upload.status_code}: {r_upload.text}"
+    
+    data = r_upload.json()
+    assert "zayavlenie" in data, "Response must contain 'zayavlenie' key"
+    assert isinstance(data["zayavlenie"], list), "'zayavlenie' must be a list"
+    assert len(data["zayavlenie"]) > 0, "'zayavlenie' must not be empty"
+    
+    zayav = data["zayavlenie"][0]
+    print(f"\n   Checking zayavlenie[0] fields:")
+    
+    # Check doc_name
+    assert "doc_name" in zayav, "Missing 'doc_name'"
+    assert zayav["doc_name"] == "паспорт гражданина Республики Беларусь", \
+        f"doc_name should be 'паспорт гражданина Республики Беларусь', got '{zayav['doc_name']}'"
+    print(f"   ✓ doc_name = '{zayav['doc_name']}'")
+    
+    # Check stay_term
+    assert "stay_term" in zayav, "Missing 'stay_term'"
+    assert zayav["stay_term"].startswith("срок до "), \
+        f"stay_term should start with 'срок до ', got '{zayav['stay_term']}'"
+    assert "00:00:00" not in zayav["stay_term"], \
+        f"stay_term should NOT contain '00:00:00', got '{zayav['stay_term']}'"
+    # Check date format ДД.ММ.ГГГГ
+    import re
+    date_match = re.search(r'\d{2}\.\d{2}\.\d{4}', zayav["stay_term"])
+    assert date_match, f"stay_term should contain date in ДД.ММ.ГГГГ format, got '{zayav['stay_term']}'"
+    print(f"   ✓ stay_term = '{zayav['stay_term']}'")
+    
+    # Check basis
+    assert "basis" in zayav, "Missing 'basis'"
+    assert zayav["basis"].startswith("Договор найма № "), \
+        f"basis should start with 'Договор найма № ', got '{zayav['basis']}'"
+    assert "TEST-001" in zayav["basis"], \
+        f"basis should contain contract number 'TEST-001', got '{zayav['basis']}'"
+    assert " от " in zayav["basis"], \
+        f"basis should contain ' от ', got '{zayav['basis']}'"
+    print(f"   ✓ basis = '{zayav['basis']}'")
+    
+    # Check birth_year
+    assert "birth_year" in zayav, "Missing 'birth_year'"
+    assert len(zayav["birth_year"]) == 4, \
+        f"birth_year should be 4 digits, got '{zayav['birth_year']}'"
+    assert zayav["birth_year"] == "2006", \
+        f"birth_year should be '2006', got '{zayav['birth_year']}'"
+    print(f"   ✓ birth_year = '{zayav['birth_year']}'")
+    
+    # Check area
+    assert "area" in zayav, "Missing 'area'"
+    assert zayav["area"] == "5467,9", \
+        f"area should be '5467,9', got '{zayav['area']}'"
+    print(f"   ✓ area = '{zayav['area']}'")
+    
+    # Check passport split
+    assert "passport_series" in zayav, "Missing 'passport_series'"
+    assert "passport_number" in zayav, "Missing 'passport_number'"
+    assert zayav["passport_series"] == "MP", \
+        f"passport_series should be 'MP', got '{zayav['passport_series']}'"
+    assert zayav["passport_number"] == "1234567", \
+        f"passport_number should be '1234567', got '{zayav['passport_number']}'"
+    print(f"   ✓ passport_series = '{zayav['passport_series']}', passport_number = '{zayav['passport_number']}'")
+    
+    # Check passport_issue_date format
+    assert "passport_issue_date" in zayav, "Missing 'passport_issue_date'"
+    assert "00:00:00" not in zayav["passport_issue_date"], \
+        f"passport_issue_date should NOT contain '00:00:00', got '{zayav['passport_issue_date']}'"
+    print(f"   ✓ passport_issue_date = '{zayav['passport_issue_date']}'")
+    
+    print(f"\n✅ PASS: All zayavlenie[0] fields are correct")
+    return data
+
+
+def test_zayavlenie_prefill():
+    """TEST 5: POST /api/zayavlenie/prefill"""
+    print("\n" + "="*80)
+    print("TEST 5: POST /api/zayavlenie/prefill")
+    print("="*80)
+    
+    # Use master data from previous test
+    master_data = {
+        "fio": "Иванов Иван Иванович",
+        "birth_date": "03.08.2006",
+        "passport": "MP1234567",
+        "passport_issued_by": "Первомайским РУВД г. Минска",
+        "passport_issue_date": "10.01.2020",
+        "contract_number": "TEST-001",
+        "sign_date": "21.07.2025",
+        "contract_end_date": "30.06.2028",
+        "res_obl": "Минская",
+        "res_raion": "Минский",
+        "res_city": "Минск",
+        "res_street": "пр-т Дзержинского",
+        "res_house": "85",
+        "res_apartment": "302/2",
+        "from_obl": "Гродненская",
+        "from_city": "Лида",
+    }
+    
+    payload = {"students": [master_data]}
+    r = requests.post(f"{BASE_URL}/zayavlenie/prefill", json=payload)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+    
+    data = r.json()
+    assert "records" in data, "Response must contain 'records'"
+    assert len(data["records"]) > 0, "'records' must not be empty"
+    
+    rec = data["records"][0]
+    print(f"\n   Checking prefill record:")
+    
+    # Check same fields as master-upload
+    assert rec.get("doc_name") == "паспорт гражданина Республики Беларусь"
+    print(f"   ✓ doc_name = '{rec['doc_name']}'")
+    
+    assert rec.get("stay_term", "").startswith("срок до ")
+    print(f"   ✓ stay_term = '{rec['stay_term']}'")
+    
+    assert rec.get("basis", "").startswith("Договор найма № ")
+    print(f"   ✓ basis = '{rec['basis']}'")
+    
+    assert rec.get("birth_year") == "2006"
+    print(f"   ✓ birth_year = '{rec['birth_year']}'")
+    
+    assert rec.get("area") == "5467,9"
+    print(f"   ✓ area = '{rec['area']}'")
+    
+    assert rec.get("passport_series") == "MP"
+    assert rec.get("passport_number") == "1234567"
+    print(f"   ✓ passport split correctly")
+    
+    print(f"\n✅ PASS: Prefill produces correct fields")
+    return True
+
+
+def test_package_with_zayavlenie():
+    """TEST 6: POST /api/package with zayavlenie"""
+    print("\n" + "="*80)
+    print("TEST 6: POST /api/package (with zayavlenie)")
+    print("="*80)
+    
+    # First, upload master data to get proper master records
+    print("   Uploading master data...")
+    r_tpl = requests.get(f"{BASE_URL}/master-template")
+    wb = load_workbook(io.BytesIO(r_tpl.content))
+    ws = wb["Данные"] if "Данные" in wb.sheetnames else wb.active
+    
+    headers = {}
+    for idx, cell in enumerate(ws[2], start=1):
+        if cell.value:
+            headers[str(cell.value).strip()] = idx
+    
+    row = 3
+    test_data = {
+        "ФИО (полностью)": "Тестов Тест Тестович",
+        "Дата рождения (ДД.ММ.ГГГГ)": datetime(2006, 8, 3),
+        "Паспорт (серия и номер)": "MP9999999",
+        "Паспорт: кем выдан": "Тестовым РУВД",
+        "Паспорт: дата выдачи": datetime(2020, 1, 10),
+        "Номер договора": "PKG-001",
+        "Дата подписания договора": datetime(2025, 7, 21),
+        "Срок договора до": datetime(2028, 6, 30),
+        "Жительство: город (пгт)": "Минск",
+        "Жительство: улица": "ул. Тестовая",
+        "Жительство: дом": "1",
+        "Откуда прибыл: город (пгт)": "Гродно",
+    }
+    
+    for header, value in test_data.items():
+        if header in headers:
+            ws.cell(row=row, column=headers[header], value=value)
+    
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    
+    files = {"file": ("pkg_test.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    r_upload = requests.post(f"{BASE_URL}/master-upload", files=files)
+    assert r_upload.status_code == 200, f"Upload failed: {r_upload.status_code}"
+    
+    master_data = r_upload.json()
+    assert "master" in master_data, "Missing 'master' in upload response"
+    
+    # Test package with zayavlenie=true
+    payload = {
+        "people": master_data["master"],
+        "duplex_flip": "long",
+        "include": {
+            "contract": False,
+            "forma19": False,
+            "forma24": False,
+            "soobshenie": False,
+            "zayavlenie": True
+        }
+    }
+    
+    r = requests.post(f"{BASE_URL}/package", json=payload)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
+    assert r.headers.get("Content-Type") == "application/pdf", "Expected PDF"
+    assert r.content[:4] == b"%PDF", "Response must be valid PDF"
+    
+    # Check it's not empty
+    assert len(r.content) > 1000, f"PDF too small: {len(r.content)} bytes"
+    
+    import pymupdf
+    doc = pymupdf.open(stream=r.content, filetype="pdf")
+    pages = len(doc)
+    doc.close()
+    
+    print(f"✅ PASS: Package with zayavlenie → PDF {len(r.content)} bytes, {pages} pages")
+    return True
+
+
+def test_regression():
+    """TEST 7: Regression tests"""
+    print("\n" + "="*80)
+    print("TEST 7: Regression tests")
+    print("="*80)
+    
+    # Test root endpoint
+    r1 = requests.get(f"{BASE_URL}/")
+    assert r1.status_code == 200, f"GET / failed: {r1.status_code}"
+    print("   ✓ GET /api/ → 200")
+    
+    # Test stats
+    r2 = requests.get(f"{BASE_URL}/stats")
+    assert r2.status_code == 200, f"GET /stats failed: {r2.status_code}"
+    data = r2.json()
+    assert "total" in data and "drafts" in data, "Stats missing required fields"
+    print("   ✓ GET /api/stats → 200")
+    
+    # Test forma19/preview
+    r3 = requests.post(f"{BASE_URL}/forma19/preview", json={
+        "records": [{"surname": "Тест", "first_name": "Тестович"}],
+        "duplex_flip": "long"
+    })
+    assert r3.status_code == 200, f"forma19/preview failed: {r3.status_code}"
+    assert r3.content[:4] == b"%PDF", "forma19 must return PDF"
+    print("   ✓ POST /api/forma19/preview → 200 PDF")
+    
+    # Test forma24/preview
+    r4 = requests.post(f"{BASE_URL}/forma24/preview", json={
+        "records": [{"surname": "Тест", "sex": "1"}],
+        "duplex_flip": "long"
+    })
+    assert r4.status_code == 200, f"forma24/preview failed: {r4.status_code}"
+    assert r4.content[:4] == b"%PDF", "forma24 must return PDF"
+    print("   ✓ POST /api/forma24/preview → 200 PDF")
+    
+    # Test soobshenie (overlay/generate)
+    r5 = requests.post(f"{BASE_URL}/overlay/generate", json={
+        "records": [{"fio": "Тест"}],
+        "page_size": "card",
+        "with_form": True
+    })
+    assert r5.status_code == 200, f"overlay/generate failed: {r5.status_code}"
+    assert r5.content[:4] == b"%PDF", "overlay must return PDF"
+    print("   ✓ POST /api/overlay/generate → 200 PDF")
+    
+    # Test contracts/preview
+    r6 = requests.post(f"{BASE_URL}/contracts/preview?format=pdf", json={
+        "fields": {
+            "contract_number": "REG-001",
+            "full_name": "Регрессия Тест",
+            "citizenship": "Республики Беларусь",
+            "birth_date": "01.01.2000",
+            "room_number": "101",
+            "registration_address": "г. Минск",
+            "passport_number": "AB1234567",
+            "phone": "+375291234567"
+        }
+    })
+    assert r6.status_code == 200, f"contracts/preview failed: {r6.status_code}"
+    assert r6.content[:4] == b"%PDF", "contract must return PDF"
+    print("   ✓ POST /api/contracts/preview → 200 PDF")
+    
+    print(f"\n✅ PASS: All regression tests passed")
+    return True
+
 
 def main():
-    print(f"\n{YELLOW}{'='*80}{RESET}")
-    print(f"{YELLOW}ТЕСТ ФИКСА ПАРСИНГА ДАТ ИЗ EXCEL{RESET}")
-    print(f"{YELLOW}{'='*80}{RESET}\n")
+    print("\n" + "="*80)
+    print("ТЕСТИРОВАНИЕ: Заявление о регистрации по месту ПРЕБЫВАНИЯ")
+    print("Backend: " + BASE_URL)
+    print("="*80)
     
-    results = []
-    date_values = []
+    tests = [
+        ("GET /api/zayavlenie/fields", test_zayavlenie_fields),
+        ("POST /api/zayavlenie/preview (pages)", test_zayavlenie_preview_pages),
+        ("POST /api/zayavlenie/preview-png", test_zayavlenie_preview_png),
+        ("Master template upload flow", test_master_upload_flow),
+        ("POST /api/zayavlenie/prefill", test_zayavlenie_prefill),
+        ("POST /api/package", test_package_with_zayavlenie),
+        ("Regression tests", test_regression),
+    ]
     
-    # ========== ТЕСТ 1: GET /api/master-template ==========
-    print(f"\n{YELLOW}[1] GET /api/master-template{RESET}")
-    try:
-        resp = requests.get(f"{BASE_URL}/master-template", timeout=30)
-        passed = resp.status_code == 200 and resp.headers.get('content-type', '').startswith('application/vnd.openxmlformats')
-        results.append(log_test(
-            "GET /api/master-template",
-            passed,
-            f"status={resp.status_code}, content-type={resp.headers.get('content-type', 'N/A')[:50]}"
-        ))
-        
-        if not passed:
-            print(f"{RED}Не удалось скачать шаблон. Прерываем тест.{RESET}")
-            sys.exit(1)
-        
-        template_bytes = resp.content
-        print(f"       Шаблон скачан, размер: {len(template_bytes)} байт")
-        
-    except Exception as e:
-        results.append(log_test("GET /api/master-template", False, f"Exception: {e}"))
-        sys.exit(1)
+    passed = 0
+    failed = 0
     
-    # ========== ТЕСТ 2: Заполнение шаблона с datetime объектами ==========
-    print(f"\n{YELLOW}[2] Заполнение шаблона с datetime объектами{RESET}")
-    try:
-        wb = load_workbook(io.BytesIO(template_bytes))
-        ws = wb["Данные"] if "Данные" in wb.sheetnames else wb.active
-        
-        # Найдём строку заголовков (обычно строка 2)
-        header_row = 2
-        headers = {}
-        for col_idx, cell in enumerate(ws[header_row], start=1):
-            if cell.value:
-                headers[str(cell.value).strip()] = col_idx
-        
-        print(f"       Найдено {len(headers)} колонок в шаблоне")
-        
-        # Заполним строку 3 реальными данными с datetime объектами
-        data_row = 3
-        
-        # Реальные datetime объекты для дат
-        test_dates = {
-            "Дата рождения (ДД.ММ.ГГГГ)": datetime(2006, 8, 3),  # 03.08.2006
-            "Паспорт: дата выдачи": datetime(2020, 1, 10),       # 10.01.2020
-            "Паспорт: действителен до": datetime(2030, 1, 10),   # 10.01.2030
-            "Дата прибытия": datetime(2024, 9, 1),               # 01.09.2024
-            "Проживал там с": datetime(2010, 1, 1),              # 01.01.2010
-            "Дата подписания договора": datetime(2025, 7, 21),   # 21.07.2025
-            "Дата приказа": datetime(2025, 7, 21),               # 21.07.2025
-            "Срок договора до": datetime(2028, 6, 30),           # 30.06.2028
-            "Дата сообщения": datetime(2024, 9, 1),              # 01.09.2024
-            "Зарегистрирован с": datetime(2024, 9, 1),           # 01.09.2024
-            "Зарегистрирован по": datetime(2028, 6, 30),         # 30.06.2028
-            "Срок пребывания (по...)": datetime(2028, 6, 30),    # 30.06.2028
-        }
-        
-        # Заполним текстовые поля
-        text_data = {
-            "ФИО (полностью)": "Иванов Иван Иванович",
-            "Пол (1-муж, 2-жен)": "1",
-            "Национальность": "белорус",
-            "Гражданство": "Республика Беларусь",
-            "Телефон": "+375291234567",
-            "Идентификационный номер (ИИН)": "3060803A011PB5",
-            "Паспорт (серия и номер)": "AB 1234567",
-            "Паспорт: кем выдан": "Первомайским РУВД г. Минска",
-            "Место рождения: город (пгт)": "Минск",
-            "Жительство: город (пгт)": "Минск",
-            "Жительство: улица": "пр-т Дзержинского",
-            "Жительство: дом": "85",
-            "Жительство: комната/квартира": "302/2",
-            "Откуда прибыл: город (пгт)": "Гомель",
-            "Номер договора": "0047390 003370",
-            "Номер приказа": "228",
-            "Номер комнаты": "302/2",
-            "Орган регистрации": "Первомайский РУВД г. Минска",
-            "№ сообщения": "125",
-            "Начальник (ФИО)": "Петров П.П.",
-            "Цель приезда (текст, Ф.19)": "на обучение",
-            "Цель приезда Ф.24 (1-работа, 2-обучение)": "2",
-        }
-        
-        # Заполняем ячейки
-        for header, value in test_dates.items():
-            if header in headers:
-                col_idx = headers[header]
-                cell = ws.cell(row=data_row, column=col_idx)
-                cell.value = value  # ВАЖНО: записываем datetime объект, не строку!
-                print(f"       Заполнено {header}: {value} (тип: {type(value).__name__})")
-        
-        for header, value in text_data.items():
-            if header in headers:
-                col_idx = headers[header]
-                ws.cell(row=data_row, column=col_idx, value=value)
-        
-        # Сохраняем в BytesIO
-        filled_file = io.BytesIO()
-        wb.save(filled_file)
-        filled_file.seek(0)
-        filled_bytes = filled_file.getvalue()
-        
-        results.append(log_test(
-            "Заполнение шаблона с datetime объектами",
-            True,
-            f"Заполнено {len(test_dates)} полей-дат с datetime объектами"
-        ))
-        
-    except Exception as e:
-        results.append(log_test("Заполнение шаблона", False, f"Exception: {e}"))
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    for name, test_func in tests:
+        try:
+            test_func()
+            passed += 1
+        except AssertionError as e:
+            print(f"\n❌ FAIL: {name}")
+            print(f"   Error: {e}")
+            failed += 1
+        except Exception as e:
+            print(f"\n❌ ERROR: {name}")
+            print(f"   Exception: {e}")
+            import traceback
+            traceback.print_exc()
+            failed += 1
     
-    # ========== ТЕСТ 3: POST /api/master-upload ==========
-    print(f"\n{YELLOW}[3] POST /api/master-upload{RESET}")
-    try:
-        files = {'file': ('test_data.xlsx', filled_bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
-        resp = requests.post(f"{BASE_URL}/master-upload", files=files, timeout=30)
-        passed = resp.status_code == 200
-        
-        if passed:
-            data = resp.json()
-            count = data.get('count', 0)
-            master = data.get('master', [])
-            contracts = data.get('contracts', [])
-            forma19 = data.get('forma19', [])
-            forma24 = data.get('forma24', [])
-            soobshenie = data.get('soobshenie', [])
-            
-            results.append(log_test(
-                "POST /api/master-upload",
-                True,
-                f"status=200, count={count}, master={len(master)}, contracts={len(contracts)}"
-            ))
-            
-            # Проверяем формат дат во ВСЕХ возвращённых данных
-            print(f"\n       {YELLOW}Проверка формата дат в master:{RESET}")
-            if master:
-                person = master[0]
-                date_fields = ['birth_date', 'passport_issue_date', 'passport_valid_until', 
-                              'arrival_date', 'lived_since', 'sign_date', 'order_date', 
-                              'contract_end_date', 'reg_date', 'reg_from_date', 'reg_to_date', 
-                              'purpose_term']
-                
-                all_dates_ok = True
-                for field in date_fields:
-                    if field in person:
-                        ok, msg = check_date_format(person[field], field)
-                        print(f"         {msg}")
-                        date_values.append((field, person[field]))
-                        if not ok:
-                            all_dates_ok = False
-                
-                results.append(log_test(
-                    "Формат дат в master",
-                    all_dates_ok,
-                    "Все даты в формате ДД.ММ.ГГГГ" if all_dates_ok else "Найдены даты в неправильном формате"
-                ))
-            
-            print(f"\n       {YELLOW}Проверка формата дат в contracts:{RESET}")
-            if contracts:
-                contract = contracts[0]
-                contract_date_fields = ['birth_date', 'passport_issue_date', 'passport_valid_until',
-                                       'sign_date', 'order_date', 'contract_end_date']
-                
-                all_dates_ok = True
-                for field in contract_date_fields:
-                    if field in contract:
-                        ok, msg = check_date_format(contract[field], field)
-                        print(f"         {msg}")
-                        date_values.append((f"contract.{field}", contract[field]))
-                        if not ok:
-                            all_dates_ok = False
-                
-                results.append(log_test(
-                    "Формат дат в contracts",
-                    all_dates_ok,
-                    "Все даты в формате ДД.ММ.ГГГГ" if all_dates_ok else "Найдены даты в неправильном формате"
-                ))
-            
-            print(f"\n       {YELLOW}Проверка формата дат в forma19:{RESET}")
-            if forma19:
-                f19 = forma19[0]
-                # В forma19 даты разбиты на компоненты (birth_day, birth_month, birth_year)
-                # но arrival_date и purpose_term остаются целыми
-                f19_date_fields = ['arrival_date', 'purpose_term']
-                
-                all_dates_ok = True
-                for field in f19_date_fields:
-                    if field in f19:
-                        ok, msg = check_date_format(f19[field], field)
-                        print(f"         {msg}")
-                        date_values.append((f"forma19.{field}", f19[field]))
-                        if not ok:
-                            all_dates_ok = False
-                
-                # Проверяем компоненты даты рождения
-                if 'birth_day' in f19 and 'birth_month' in f19 and 'birth_year' in f19:
-                    birth_str = f"{f19.get('birth_day', '')}.{f19.get('birth_month', '')}.{f19.get('birth_year', '')}"
-                    print(f"         birth_date (компоненты)='{birth_str}' ✓")
-                
-                results.append(log_test(
-                    "Формат дат в forma19",
-                    all_dates_ok,
-                    "Все даты в формате ДД.ММ.ГГГГ" if all_dates_ok else "Найдены даты в неправильном формате"
-                ))
-            
-            print(f"\n       {YELLOW}Проверка формата дат в forma24:{RESET}")
-            if forma24:
-                f24 = forma24[0]
-                f24_date_fields = ['arrival_date', 'lived_since', 'term']
-                
-                all_dates_ok = True
-                for field in f24_date_fields:
-                    if field in f24:
-                        ok, msg = check_date_format(f24[field], field)
-                        print(f"         {msg}")
-                        date_values.append((f"forma24.{field}", f24[field]))
-                        if not ok:
-                            all_dates_ok = False
-                
-                results.append(log_test(
-                    "Формат дат в forma24",
-                    all_dates_ok,
-                    "Все даты в формате ДД.ММ.ГГГГ" if all_dates_ok else "Найдены даты в неправильном формате"
-                ))
-            
-            print(f"\n       {YELLOW}Проверка формат дат в soobshenie:{RESET}")
-            if soobshenie:
-                soob = soobshenie[0]
-                # В soobshenie даты разбиты на компоненты (date_day, date_month, date_year и т.д.)
-                # Проверяем, что компоненты не содержат "00:00:00"
-                date_components = ['date_day', 'date_month', 'date_year', 
-                                  'issue_day', 'issue_month', 'issue_year',
-                                  'from_day', 'from_month', 'from_year',
-                                  'to_day', 'to_month', 'to_year']
-                
-                all_dates_ok = True
-                for field in date_components:
-                    if field in soob:
-                        value = soob[field]
-                        if " 00:00:00" in str(value):
-                            print(f"         {field}='{value}' ✗ содержит ' 00:00:00'")
-                            all_dates_ok = False
-                        else:
-                            print(f"         {field}='{value}' ✓")
-                
-                results.append(log_test(
-                    "Формат дат в soobshenie",
-                    all_dates_ok,
-                    "Все компоненты дат корректны" if all_dates_ok else "Найдены компоненты с ' 00:00:00'"
-                ))
-        else:
-            results.append(log_test(
-                "POST /api/master-upload",
-                False,
-                f"status={resp.status_code}, body={resp.text[:200]}"
-            ))
+    print("\n" + "="*80)
+    print(f"SUMMARY: {passed} passed, {failed} failed out of {len(tests)} tests")
+    print("="*80)
     
-    except Exception as e:
-        results.append(log_test("POST /api/master-upload", False, f"Exception: {e}"))
-        import traceback
-        traceback.print_exc()
-    
-    # ========== ТЕСТ 4: POST /api/generate/upload (режим master) ==========
-    print(f"\n{YELLOW}[4] POST /api/generate/upload (режим master){RESET}")
-    try:
-        files = {'file': ('test_data.xlsx', filled_bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
-        resp = requests.post(f"{BASE_URL}/generate/upload", files=files, timeout=30)
-        passed = resp.status_code == 200
-        
-        if passed:
-            data = resp.json()
-            mode = data.get('mode', '')
-            students = data.get('students', [])
-            masters = data.get('masters', [])
-            
-            results.append(log_test(
-                "POST /api/generate/upload",
-                mode == 'master',
-                f"status=200, mode={mode}, students={len(students)}, masters={len(masters)}"
-            ))
-            
-            # Проверяем формат дат в students (поля договора)
-            print(f"\n       {YELLOW}Проверка формата дат в students:{RESET}")
-            if students:
-                student = students[0]
-                student_date_fields = ['birth_date', 'passport_issue_date', 'passport_valid_until',
-                                      'sign_date', 'order_date', 'contract_end_date']
-                
-                all_dates_ok = True
-                for field in student_date_fields:
-                    if field in student:
-                        ok, msg = check_date_format(student[field], field)
-                        print(f"         {msg}")
-                        date_values.append((f"student.{field}", student[field]))
-                        if not ok:
-                            all_dates_ok = False
-                
-                results.append(log_test(
-                    "Формат дат в students (generate/upload)",
-                    all_dates_ok,
-                    "Все даты в формате ДД.ММ.ГГГГ" if all_dates_ok else "Найдены даты в неправильном формате"
-                ))
-        else:
-            results.append(log_test(
-                "POST /api/generate/upload",
-                False,
-                f"status={resp.status_code}, body={resp.text[:200]}"
-            ))
-    
-    except Exception as e:
-        results.append(log_test("POST /api/generate/upload", False, f"Exception: {e}"))
-        import traceback
-        traceback.print_exc()
-    
-    # ========== ТЕСТ 5: POST /api/package (дополнительно) ==========
-    print(f"\n{YELLOW}[5] POST /api/package (дополнительно){RESET}")
-    try:
-        # Используем данные из master-upload
-        if master and len(master) > 0:
-            payload = {
-                "people": [master[0]],
-                "duplex_flip": "long",
-                "include": {
-                    "contract": True,
-                    "forma19": True,
-                    "forma24": True,
-                    "soobshenie": True
-                }
-            }
-            resp = requests.post(f"{BASE_URL}/package", json=payload, timeout=60)
-            passed = resp.status_code == 200 and resp.headers.get('content-type', '').startswith('application/pdf')
-            
-            results.append(log_test(
-                "POST /api/package",
-                passed,
-                f"status={resp.status_code}, content-type={resp.headers.get('content-type', 'N/A')[:50]}, size={len(resp.content)} байт"
-            ))
-            
-            if passed:
-                print(f"       Пакет документов сгенерирован успешно (PDF, {len(resp.content)} байт)")
-        else:
-            results.append(log_test("POST /api/package", False, "Нет данных master для теста"))
-    
-    except Exception as e:
-        results.append(log_test("POST /api/package", False, f"Exception: {e}"))
-    
-    # ========== ТЕСТ 6: Регрессия - GET /api/ ==========
-    print(f"\n{YELLOW}[6] Регрессия: GET /api/{RESET}")
-    try:
-        resp = requests.get(f"{BASE_URL}/", timeout=10)
-        passed = resp.status_code == 200
-        results.append(log_test(
-            "GET /api/",
-            passed,
-            f"status={resp.status_code}"
-        ))
-    except Exception as e:
-        results.append(log_test("GET /api/", False, f"Exception: {e}"))
-    
-    # ========== ТЕСТ 7: Регрессия - GET /api/stats ==========
-    print(f"\n{YELLOW}[7] Регрессия: GET /api/stats{RESET}")
-    try:
-        resp = requests.get(f"{BASE_URL}/stats", timeout=10)
-        passed = resp.status_code == 200
-        if passed:
-            data = resp.json()
-            has_keys = all(k in data for k in ['total', 'drafts', 'this_month', 'datasets', 'recent'])
-            passed = has_keys
-        
-        results.append(log_test(
-            "GET /api/stats",
-            passed,
-            f"status={resp.status_code}, keys={'OK' if has_keys else 'MISSING'}"
-        ))
-    except Exception as e:
-        results.append(log_test("GET /api/stats", False, f"Exception: {e}"))
-    
-    # ========== ИТОГИ ==========
-    print(f"\n{YELLOW}{'='*80}{RESET}")
-    print(f"{YELLOW}ИТОГИ ТЕСТИРОВАНИЯ{RESET}")
-    print(f"{YELLOW}{'='*80}{RESET}\n")
-    
-    total = len(results)
-    passed = sum(1 for r in results if r)
-    failed = total - passed
-    
-    print(f"Всего тестов: {total}")
-    print(f"{GREEN}Успешно: {passed}{RESET}")
     if failed > 0:
-        print(f"{RED}Провалено: {failed}{RESET}")
-    
-    # Выводим все значения дат, которые мы нашли
-    if date_values:
-        print(f"\n{YELLOW}КОНКРЕТНЫЕ ЗНАЧЕНИЯ ПОЛЕЙ-ДАТ:{RESET}")
-        for field, value in date_values:
-            # Проверяем на наличие проблемных паттернов
-            if " 00:00:00" in str(value) or (len(str(value)) >= 10 and str(value)[4] == '-'):
-                print(f"  {RED}✗{RESET} {field}: '{value}'")
-            else:
-                print(f"  {GREEN}✓{RESET} {field}: '{value}'")
-    
-    print(f"\n{YELLOW}{'='*80}{RESET}")
-    
-    # Главный критерий успеха
-    has_bad_dates = any(" 00:00:00" in str(v) or (len(str(v)) >= 10 and str(v)[4] == '-') 
-                       for _, v in date_values)
-    
-    if has_bad_dates:
-        print(f"\n{RED}❌ КРИТИЧЕСКИЙ ПРОВАЛ: Найдены даты в формате 'YYYY-MM-DD 00:00:00' или ISO{RESET}")
-        print(f"{RED}   Фикс парсинга дат НЕ РАБОТАЕТ!{RESET}\n")
         sys.exit(1)
     else:
-        print(f"\n{GREEN}✅ УСПЕХ: Все даты в формате ДД.ММ.ГГГГ{RESET}")
-        print(f"{GREEN}   Фикс парсинга дат РАБОТАЕТ КОРРЕКТНО!{RESET}\n")
-        sys.exit(0 if failed == 0 else 1)
+        print("\n✅ ALL TESTS PASSED")
+        sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

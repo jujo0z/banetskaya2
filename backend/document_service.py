@@ -255,6 +255,7 @@ def merge_pdfs(pdf_list) -> bytes:
 
 
 _FONTS_READY = False
+_SERIF_READY = False
 
 
 def _ensure_fonts():
@@ -279,7 +280,6 @@ def _ensure_fonts():
             except Exception:
                 pass
         return None
-
     fonts_dir = _resource_base() / "assets" / "fonts"
     reg = _first_existing([
         fonts_dir / "LiberationSans-Regular.ttf",
@@ -307,6 +307,48 @@ def _ensure_fonts():
             _FONTS_READY = False
     except Exception:
         _FONTS_READY = False
+
+    # --- Serif (Times New Roman) для официальных бланков ---
+    global _SERIF_READY
+    s_reg = _first_existing([
+        fonts_dir / "LiberationSerif-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+        r"C:\Windows\Fonts\times.ttf",
+    ])
+    s_bold = _first_existing([
+        fonts_dir / "LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf",
+        r"C:\Windows\Fonts\timesbd.ttf",
+    ])
+    s_italic = _first_existing([
+        fonts_dir / "LiberationSerif-Italic.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSerifItalic.ttf",
+        r"C:\Windows\Fonts\timesi.ttf",
+    ])
+    try:
+        if s_reg:
+            pdfmetrics.registerFont(TTFont("AppSerif", str(s_reg)))
+            pdfmetrics.registerFont(TTFont("AppSerif-Bold", str(s_bold or s_reg)))
+            pdfmetrics.registerFont(TTFont("AppSerif-Italic", str(s_italic or s_reg)))
+            _SERIF_READY = True
+        else:
+            _SERIF_READY = False
+    except Exception:
+        _SERIF_READY = False
+
+
+def _serif(bold=False, italic=False):
+    """Times New Roman-совместимый шрифт (Liberation Serif) для бланков."""
+    if _SERIF_READY:
+        if bold:
+            return "AppSerif-Bold"
+        if italic:
+            return "AppSerif-Italic"
+        return "AppSerif"
+    return _font(bold)
 
 
 def _font(bold=False):
@@ -2182,23 +2224,26 @@ ZAYAV_ZONE_MM = (148.5, 210.0)  # одно заявление = A5-портре�
 ZAYAVLENIE_FIELDS = [
     {"group": "Заявитель", "fields": [
         {"key": "fio", "label": "ФИО (полностью)"},
+        {"key": "birth_year", "label": "Год рождения"},
+        {"key": "doc_name", "label": "Документ, удостоверяющий личность"},
         {"key": "passport_series", "label": "Паспорт: серия"},
         {"key": "passport_number", "label": "Паспорт: номер"},
         {"key": "passport_issued_by", "label": "Паспорт: кем выдан"},
         {"key": "passport_issue_date", "label": "Паспорт: дата выдачи (ДД.ММ.ГГГГ)"},
     ]},
-    {"group": "Регистрация", "fields": [
+    {"group": "Регистрация (пребывание)", "fields": [
         {"key": "reg_who", "label": "Зарегистрировать (одного / с семьёй)"},
         {"key": "reg_count", "label": "Всего человек"},
-        {"key": "address_locality", "label": "Адрес: населённый пункт (область, район, город)"},
+        {"key": "address_locality", "label": "Адрес пребывания: населённый пункт"},
         {"key": "res_street", "label": "Улица"},
         {"key": "res_house", "label": "Дом"},
         {"key": "res_korpus", "label": "Корпус"},
         {"key": "res_apartment", "label": "Квартира / комната"},
     ]},
     {"group": "Прибытие и основание", "fields": [
-        {"key": "from_place", "label": "Прибыл(а) из (государство, область, нас. пункт)"},
-        {"key": "basis", "label": "Жилое помещение предоставлено на основании"},
+        {"key": "stay_term", "label": "Прибыл(а) на (срок пребывания)"},
+        {"key": "from_place", "label": "Прибыл(а) из (государство, область, район, нас. пункт)"},
+        {"key": "basis", "label": "Основание (договор найма № … от …)"},
     ]},
     {"group": "Дата и площадь", "fields": [
         {"key": "sign_date", "label": "Дата заявления (ДД.ММ.ГГГГ)"},
@@ -2209,10 +2254,10 @@ ZAYAVLENIE_FIELD_KEYS = [f["key"] for g in ZAYAVLENIE_FIELDS for f in g["fields"
 
 
 def _zayav_helpers(c, x0, y_bottom, zh_pt):
-    """Замыкания для рисования в системе координат зоны (мм от верх-лев угла)."""
-    DARK = (0.10, 0.10, 0.16)
-    GREY = (0.38, 0.38, 0.45)
-    INK = (0.04, 0.06, 0.30)
+    """Замыкания рисования в координатах зоны (мм от верх-лев угла), шрифт Times."""
+    DARK = (0.09, 0.09, 0.14)
+    GREY = (0.30, 0.30, 0.36)
+    INK = (0.03, 0.05, 0.32)
 
     def Xmm(mm):
         return x0 + mm * MM
@@ -2220,45 +2265,45 @@ def _zayav_helpers(c, x0, y_bottom, zh_pt):
     def Ymm(mm_top):
         return y_bottom + zh_pt - mm_top * MM
 
-    def text(xmm, ymm, s, size=7.2, bold=False, color=DARK):
+    def text(x, y, s, size=6.8, bold=False, color=DARK):
         c.setFillColorRGB(*color)
-        c.setFont(_font(bold), size)
-        c.drawString(Xmm(xmm), Ymm(ymm), "" if s is None else str(s))
+        c.setFont(_serif(bold), size)
+        c.drawString(Xmm(x), Ymm(y), "" if s is None else str(s))
 
-    def center(xmm, ymm, s, size=7.2, bold=False, color=DARK):
+    def center(x, y, s, size=6.8, bold=False, color=DARK):
         c.setFillColorRGB(*color)
-        c.setFont(_font(bold), size)
-        c.drawCentredString(Xmm(xmm), Ymm(ymm), "" if s is None else str(s))
+        c.setFont(_serif(bold), size)
+        c.drawCentredString(Xmm(x), Ymm(y), "" if s is None else str(s))
 
-    def right(xmm, ymm, s, size=7.2, bold=False, color=DARK):
+    def right(x, y, s, size=6.8, bold=False, color=DARK):
         c.setFillColorRGB(*color)
-        c.setFont(_font(bold), size)
-        c.drawRightString(Xmm(xmm), Ymm(ymm), "" if s is None else str(s))
+        c.setFont(_serif(bold), size)
+        c.drawRightString(Xmm(x), Ymm(y), "" if s is None else str(s))
 
-    def cap(xmm, ymm, s, size=4.4):
+    def cap(x, y, s, size=3.6):
         c.setFillColorRGB(*GREY)
-        c.setFont(_font(False), size)
-        c.drawCentredString(Xmm(xmm), Ymm(ymm), "" if s is None else str(s))
+        c.setFont(_serif(False, italic=True), size)
+        c.drawCentredString(Xmm(x), Ymm(y), "" if s is None else str(s))
 
-    def rule(x1, x2, ymm, w=0.5):
-        y = Ymm(ymm) - 1.3
-        c.setStrokeColorRGB(0.15, 0.15, 0.2)
+    def rule(x1, x2, y, w=0.5):
+        yy = Ymm(y) - 1.2
+        c.setStrokeColorRGB(0.12, 0.12, 0.16)
         c.setLineWidth(w)
-        c.line(Xmm(x1), y, Xmm(x2), y)
+        c.line(Xmm(x1), yy, Xmm(x2), yy)
 
-    def val(xmm, ymm, s, size=7.0, bold=False):
+    def val(x, y, s, size=6.2, bold=False):
         if s is None or str(s).strip() == "":
             return
         c.setFillColorRGB(*INK)
-        c.setFont(_font(bold), size)
-        c.drawString(Xmm(xmm), Ymm(ymm), str(s))
+        c.setFont(_serif(bold), size)
+        c.drawString(Xmm(x), Ymm(y), str(s))
 
-    def cval(xmm, ymm, s, size=7.0, bold=False):
+    def cval(x, y, s, size=6.2, bold=False):
         if s is None or str(s).strip() == "":
             return
         c.setFillColorRGB(*INK)
-        c.setFont(_font(bold), size)
-        c.drawCentredString(Xmm(xmm), Ymm(ymm), str(s))
+        c.setFont(_serif(bold), size)
+        c.drawCentredString(Xmm(x), Ymm(y), str(s))
 
     return text, center, right, cap, rule, val, cval
 
@@ -2268,10 +2313,13 @@ def _draw_zayavlenie_page1(c, x0, y_bottom, zw_pt, zh_pt, rec):
     text, center, right, cap, rule, val, cval = _zayav_helpers(c, x0, y_bottom, zh_pt)
 
     fio = rec.get("fio", "")
+    by = str(rec.get("birth_year", "") or "").strip()
+    applicant = fio + (f", {by} г.р." if by else "")
+    doc_name = rec.get("doc_name", "")
     ser = rec.get("passport_series", "")
     num = rec.get("passport_number", "")
     issued = rec.get("passport_issued_by", "")
-    issue_date = rec.get("passport_issue_date", "")
+    idate = rec.get("passport_issue_date", "")
     reg_who = rec.get("reg_who", "") or "одного"
     reg_count = rec.get("reg_count", "") or "1"
     locality = rec.get("address_locality", "")
@@ -2279,183 +2327,197 @@ def _draw_zayavlenie_page1(c, x0, y_bottom, zw_pt, zh_pt, rec):
     house = rec.get("res_house", "")
     korp = rec.get("res_korpus", "")
     apt = rec.get("res_apartment", "")
+    stay_term = rec.get("stay_term", "")
     from_place = rec.get("from_place", "")
     basis = rec.get("basis", "")
     sd, smon, sy = _split_ru_date(rec.get("sign_date", ""))
     sy2 = sy[-2:] if sy else ""
 
-    # --- Получатель (правый верхний блок) ---
-    ry = 9.0
+    XR = 45.0   # левый край правого блока
+    RB = 142.0  # правый край
+    CXR = (XR + RB) / 2.0
+
+    # --- Получатель: правый блок, ПРАВОЕ выравнивание ---
+    ry = 7.0
     for ln in [
         "В орган внутренних дел, сельский (поселковый)",
         "исполнительный комитет (в сельских населённых",
-        "пунктах и посёлках городского типа, в которых нет",
-        "иных органов внутренних дел)",
+        "пунктах и посёлках городского типа, в которых не",
+        "имеется органов внутренних дел)",
     ]:
-        right(139.0, ry, ln, 6.1)
-        ry += 3.4
+        right(RB, ry, ln, 6.0)
+        ry += 3.2
 
-    # --- Заявитель (ФИО) ---
-    rule(9, 139, 30)
-    cval(74.25, 29, fio, 7.6, bold=True)
-    cap(74.25, 33, "(фамилия, собственное имя, отчество (если таковое имеется), подразделение)", 4.1)
+    # --- ФИО заявителя: 2 линии под блоком, по ширине блока ---
+    rule(XR, RB, 24)
+    rule(XR, RB, 28.5)
+    cval(CXR, 23, applicant, 6.8)
+    cap(CXR, 31.6, "(фамилия, собственное имя, отчество (если таковое", 3.7)
+    cap(CXR, 34.0, "имеется), год рождения)", 3.7)
 
-    # --- Паспорт ---
-    text(9, 40, "паспорт или иной документ, удостоверяющий", 7.0)
-    text(9, 43.6, "личность", 7.0)
-    text(9, 49.5, "серия (при наличии)", 7.0)
-    rule(41, 58, 49.5)
-    cval(49.5, 48.5, ser, 7.0, bold=True)
-    text(59.5, 49.5, "№", 7.0)
-    rule(63.5, 100, 49.5)
-    cval(81.5, 48.5, num, 7.0, bold=True)
-    text(9, 55.5, "выдан", 7.0)
-    rule(20, 139, 55.5)
-    val(21, 54.5, issued, 6.3)
-    cap(80, 59, "(наименование (код) органа, выдавшего документ, удостоверяющий личность)", 4.0)
-    rule(9, 62, 65.5)
-    val(11, 64.5, issue_date, 6.8)
-    cap(35, 69, "(дата выдачи)", 4.2)
+    # --- Паспорт (под блоком, линии по ширине) ---
+    text(XR, 40, "паспорт или иной документ, удостоверяющий", 6.4)
+    text(XR, 44.2, "личность", 6.4)
+    rule(60, RB, 44.2)
+    val(61, 43.3, doc_name, 5.8)
+    text(XR, 49.2, "серия (при наличии)", 6.4)
+    rule(74, RB, 49.2)
+    cval((74 + RB) / 2, 48.3, ser, 6.4)
+    text(XR, 54.2, "№", 6.4)
+    rule(51, RB, 54.2)
+    val(52, 53.3, num, 6.4)
+    text(XR, 59.2, "выдан", 6.4)
+    rule(58, RB, 59.2)
+    val(59, 58.3, issued, 5.6)
+    cap(CXR, 62.4, "(наименование (код) органа, выдавшего документ,", 3.5)
+    cap(CXR, 64.8, "удостоверяющий личность)", 3.5)
+    rule(XR, RB, 71)
+    val(XR + 2, 70, idate, 6.2)
+    cap(CXR, 74.2, "(дата выдачи)", 3.7)
 
     # --- Заголовок ---
-    center(74.25, 79, "ЗАЯВЛЕНИЕ", 13, bold=True)
-    center(74.25, 84.5, "о регистрации по месту жительства", 8, bold=True)
+    center(74.25, 82, "ЗАЯВЛЕНИЕ", 12, bold=True)
+    center(74.25, 87.5, "о регистрации по месту пребывания", 8.4, bold=True)
 
     # --- Прошу зарегистрировать ---
-    text(9, 94, "Прошу зарегистрировать меня", 7.2)
-    rule(53, 90, 94)
-    val(55, 93, reg_who, 7.0)
-    cap(71.5, 97.4, "(одного, с семьёй)", 4.1)
-    text(91, 94, ", всего", 7.2)
-    rule(105, 122, 94)
-    cval(113.5, 93, reg_count, 7.0)
-    text(123.5, 94, "чел.,", 7.2)
+    text(7, 95, "Прошу зарегистрировать меня", 6.9)
+    rule(52, 100, 95)
+    val(54, 94, reg_who, 6.2)
+    cap(76, 98.3, "(одного, с семьёй)", 3.7)
+    text(101, 95, ", всего", 6.9)
+    rule(115, 130, 95)
+    cval(122.5, 94, reg_count, 6.2)
+    text(131, 95, "чел.,", 6.9)
 
-    # --- Адрес ---
-    text(9, 103, "по месту жительства по адресу:", 7.2)
-    rule(56, 139, 103)
-    val(57.5, 102, locality, 6.6)
-    text(9, 110, "ул.", 7.2)
-    rule(16, 66, 110)
-    val(17, 109, street, 6.6)
-    text(68, 110, "дом", 7.2)
-    rule(77, 92, 110)
-    cval(84.5, 109, house, 6.8)
-    text(94, 110, "корп.", 7.2)
-    rule(105, 116, 110)
-    cval(110.5, 109, korp, 6.8)
-    text(118, 110, "кв.", 7.2)
-    rule(124, 139, 110)
-    cval(131.5, 109, apt, 6.8)
+    # --- Адрес пребывания ---
+    text(7, 103, "по месту пребывания по адресу:", 6.9)
+    rule(58, RB, 103)
+    val(59, 102, locality, 6.0)
+    text(7, 109, "ул.", 6.9)
+    rule(14, 66, 109)
+    val(15, 108, street, 5.8)
+    text(67, 109, ", дом", 6.9)
+    rule(80, 95, 109)
+    cval(87.5, 108, house, 6.0)
+    text(96, 109, ", корп.", 6.9)
+    rule(110, 120, 109)
+    cval(115, 108, korp, 6.0)
+    text(121, 109, "кв.", 6.9)
+    rule(127, RB, 109)
+    cval(134.5, 108, apt, 6.0)
 
-    # --- Прибыл(а) из ---
-    text(9, 118, "Прибыл(а) из", 7.2)
-    rule(30, 139, 118)
-    val(31, 117, from_place, 6.6)
-    cap(84, 122, "(наименование государства, наименование области, населённого пункта)", 3.9)
+    # --- Прибыл(а) на … из … ---
+    text(7, 116, "Прибыл(а) на", 6.9)
+    rule(31, 72, 116)
+    val(32, 115, stay_term, 5.6)
+    text(73, 116, "из", 6.9)
+    rule(80, RB, 116)
+    val(81, 115, from_place, 5.6)
+    cap(90, 119.2, "(название государства, наименование области, района, населённого пункта)", 3.3)
 
-    # --- Вместе со мной (3 строки, для руки) ---
-    text(9, 128, "Вместе со мной:", 7.2)
-    rule(38, 139, 128)
-    cap_txt = "(фамилия, собственное имя, отчество (если таковое имеется), подразделение, подпись совершеннолетнего гражданина)"
-    cap(74.25, 131.2, cap_txt, 3.5)
-    rule(9, 139, 137)
-    cap(74.25, 140.2, cap_txt, 3.5)
-    rule(9, 139, 146)
-    cap(74.25, 149.2, cap_txt, 3.5)
+    # --- Вместе прибыли (5 линий, для руки) ---
+    text(7, 125, "Вместе прибыли:", 6.9)
+    ccap = ("(фамилия, собственное имя, отчество (если таковое имеется), "
+            "год рождения; подпись совершеннолетнего гражданина)")
+    yy = 130.0
+    for _ in range(5):
+        rule(7, RB, yy)
+        cap(74.5, yy + 2.6, ccap, 3.1)
+        yy += 6.0
 
-    # --- Основание ---
-    text(9, 156, "Жилое помещение предоставлено на основании", 6.9)
-    rule(9, 139, 161.5)
-    val(11, 160.5, basis, 6.4)
-    cap(74.25, 165, "(документ, являющийся основанием для регистрации гражданина по месту жительства)", 3.8)
+    # --- Основание (всегда «Договор найма № … от …») ---
+    text(7, 163, "Жилое помещение предоставлено на основании (находится в собственности)", 6.1)
+    rule(7, RB, 168)
+    val(9, 167, basis, 6.0)
+    cap(74.5, 171, "(документы, являющиеся основанием для регистрации гражданина по месту жительства)", 3.3)
 
-    # --- Подпись гражданина (от руки) ---
-    text(9, 173, "Подпись гражданина", 7.2)
-    rule(45, 112, 173)
-    cap(78.5, 176.4, "(подпись, фамилия, инициалы)", 4.1)
-
-    # --- Дата ---
-    y = 184
-    text(9, y, "«", 7.2)
-    rule(11.5, 22, y)
-    cval(16.5, y, sd, 7.0)
-    text(22.5, y, "»", 7.2)
-    rule(24.5, 66, y)
-    cval(45, y, smon, 6.6)
-    text(67, y, "20", 7.2)
-    rule(73.5, 83, y)
-    cval(78, y, sy2, 7.0)
-    text(84, y, "г.", 7.2)
+    # --- Подпись гражданина + дата ---
+    text(7, 177, "Подпись гражданина:", 6.9)
+    rule(7, 92, 184)
+    cap(45, 187.2, "(подпись, фамилия, инициалы)", 3.7)
+    text(95, 184, "«", 6.6)
+    rule(97, 104, 184)
+    cval(100.5, 184, sd, 6.0)
+    text(104.5, 184, "»", 6.6)
+    rule(107, 126, 184)
+    cval(116.5, 184, smon, 5.4)
+    text(127, 184, "20", 6.6)
+    rule(131, 138, 184)
+    cval(134.5, 184, sy2, 6.0)
+    text(139, 184, "г.", 6.6)
 
 
 def _draw_zayavlenie_page2(c, x0, y_bottom, zw_pt, zh_pt, rec):
     rec = rec or {}
     text, center, right, cap, rule, val, cval = _zayav_helpers(c, x0, y_bottom, zh_pt)
     area = rec.get("area", "") or ""
+    RB = 142.0
 
     # --- Подпись собственника / нанимателя ---
-    text(9, 13, "Подпись собственника либо нанимателя жилого помещения,", 6.8)
-    text(9, 16.8, "предоставившего гражданину жилое помещение:", 6.8)
-    rule(9, 82, 29)
-    text(90, 28, "«", 7.0)
-    rule(92, 100, 28)
-    text(100.5, 28, "»", 7.0)
-    rule(102, 124, 28)
-    text(125, 28, "20", 7.0)
-    rule(130, 138, 28)
-    text(139, 28, "г.", 7.0)
-    cap(45.5, 32.4, "(подпись, фамилия, собственное имя, отчество (если таковое имеется))", 3.9)
+    text(7, 12, "Подпись собственника либо нанимателя жилого помещения,", 6.5)
+    text(7, 15.8, "предоставившего гражданину жилое помещение:", 6.5)
+    rule(7, 82, 27)
+    text(90, 26, "«", 6.6)
+    rule(93, 101, 26)
+    text(102, 26, "»", 6.6)
+    rule(104, 124, 26)
+    text(125, 26, "20", 6.6)
+    rule(130, 138, 26)
+    text(139, 26, "г.", 6.6)
+    cap(44, 30.2, "(подпись, фамилия, собственное имя,", 3.6)
+    cap(44, 32.6, "отчество (если таковое имеется))", 3.6)
 
     # --- Подписи иных граждан ---
-    text(9, 41, "Подписи иных граждан, проживающих совместно с собственником", 6.8)
-    text(9, 44.8, "либо нанимателем и (или) имеющих право пользования жилым", 6.8)
-    text(9, 48.6, "помещением:", 6.8)
+    text(7, 39, "Подписи иных граждан, проживающих совместно с собственником либо", 6.3)
+    text(7, 42.8, "нанимателем и (или) имеющих право пользования жилым помещением:", 6.3)
     ccap = "(подпись, фамилия, собственное имя, отчество (если таковое имеется))"
-    for yy in (60, 72, 84):
-        rule(9, 95, yy)
-        text(100, yy, "(", 7.0)
-        rule(104, 130, yy)
-        text(131, yy, ")", 7.0)
-        cap(52, yy + 3.3, ccap, 3.6)
-        cap(117, yy + 3.3, "(год рождения)", 3.9)
+    yy = 54.0
+    for _ in range(3):
+        rule(7, 92, yy)
+        text(97, yy, "(", 6.6)
+        rule(101, 132, yy)
+        text(133, yy, ")", 6.6)
+        cap(49.5, yy + 3.0, ccap, 3.5)
+        cap(116, yy + 3.0, "(год рождения)", 3.6)
+        yy += 11.0
 
-    # --- Общая площадь (единственное автозаполняемое поле стр. 2) ---
-    text(9, 96, "Общая площадь жилого помещения составляет", 6.8)
-    rule(60, 80, 96)
-    cval(70, 95, area, 6.8, bold=True)
-    text(81, 96, "кв. метров, в нём", 6.8)
-    text(9, 100.5, "проживает", 6.8)
-    rule(27, 42, 100.5)
-    text(43, 100.5, "чел., в том числе несовершеннолетних", 6.8)
-    rule(112, 130, 100.5)
-    text(131, 100.5, "чел.*", 6.8)
+    # --- Общая площадь (единственное автозаполнение стр. 2) ---
+    text(7, 90, "Общая площадь жилого помещения составляет", 6.4)
+    rule(63, 84, 90)
+    cval(73.5, 89, area, 6.4, bold=True)
+    text(85, 90, "кв. метров, в нём", 6.4)
+    text(7, 94.5, "проживает", 6.4)
+    rule(25, 40, 94.5)
+    text(41, 94.5, "чел., в том числе несовершеннолетних", 6.4)
+    rule(112, 132, 94.5)
+    text(133, 94.5, "чел.*", 6.4)
 
     # --- Лицо, ответственное за регистрацию ---
-    text(9, 110, "Лицо, ответственное за регистрацию (при его отсутствии –", 6.7)
-    text(9, 113.8, "должностное лицо органа регистрации):", 6.7)
-    rule(9, 52, 126)
-    cap(30.5, 129.4, "(должность)", 4.1)
-    rule(58, 96, 126)
-    cap(77, 129.4, "(подпись)", 4.1)
-    rule(102, 139, 126)
-    cap(120.5, 129.4, "(фамилия, инициалы)", 4.1)
-    text(72, 131.5, "М.П.", 6.8)
+    text(7, 102, "Лицо, ответственное за регистрацию (при его отсутствии – должностное", 6.3)
+    text(7, 105.8, "лицо органа регистрации):", 6.3)
+    rule(7, 52, 118)
+    cap(29.5, 121.2, "(должность)", 3.8)
+    rule(58, 96, 118)
+    cap(77, 121.2, "(подпись)", 3.8)
+    rule(102, RB, 118)
+    cap(122, 121.2, "(фамилия, инициалы)", 3.8)
+    text(72, 123.2, "М.П.", 6.4)
 
     # --- Дата ---
-    y = 141
-    text(9, y, "«", 7.0)
-    rule(11.5, 22, y)
-    text(22.5, y, "»", 7.0)
-    rule(24.5, 66, y)
-    text(67, y, "20", 7.0)
-    rule(73.5, 83, y)
-    text(84, y, "г.", 7.0)
+    text(7, 132, "«", 6.6)
+    rule(10, 22, 132)
+    text(23, 132, "»", 6.6)
+    rule(25, 66, 132)
+    text(67, 132, "20", 6.6)
+    rule(73, 83, 132)
+    text(84, 132, "г.", 6.6)
 
     # --- Сноска ---
-    rule(9, 45, 151)
-    text(9, 156, "* Заполняется лицом, ответственным за регистрацию (при его", 5.6)
-    text(9, 159.5, "отсутствии – должностным лицом органа регистрации).", 5.6)
+    rule(7, 44, 143)
+    text(7, 148, "* Заполняется лицом, ответственным за регистрацию (при его", 5.4)
+    text(7, 151.5, "отсутствии – должностным лицом органа регистрации).", 5.4)
+
+
 
 
 def build_zayavlenie(people, duplex_flip="long", draw_guides=True):

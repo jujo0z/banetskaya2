@@ -157,3 +157,9 @@ GET /api/printers (список принтеров Windows, supported=false в �
 - Frontend: pages/Zayavlenie.js (по образцу Forma24), lib/apiClient.js (zayavlenie* функции), маршрут /zayavlenie в App.js, пункт меню в Layout.js, чекбокс в Package.js.
 - Тесты backend: 20/20 (100%) — эндпоинты, кол-во страниц PDF (2 для 1-2 чел., 4 для 3), разбивка паспорта, даты ДД.ММ.ГГГГ, интеграция master-upload и пакет.
 - ДЕПЛОЙ на VPS (banetskaya.duckdns.org): backend-файлы + пересборка фронта (yarn build), systemctl restart banetskaya — проверено (API 200, UI живой). Бэкапы в /opt/banetskaya/_backup_*.
+
+## Updated (2026-08 — Заявление: вариант ПО МЕСТУ ПРЕБЫВАНИЯ + Times New Roman)
+- Заявление переделано 1:1 по фото blanki.by, вариант «о регистрации по месту ПРЕБЫВАНИЯ». Шрифт Times New Roman (Liberation Serif, зарегистрирован как AppSerif/-Bold/-Italic; helper _serif()).
+- Блок «В орган внутренних дел…» — правое выравнивание; линии ФИО (2 уровня) и паспорта — под ним по ширине; «Прибыл(а) на {срок} из {место}»; «Вместе прибыли» — 5 линий с подписями снизу; основание ВСЕГДА «Договор найма № {номер} от {дата}»; стр.2 как на фото (площадь 5467,9).
+- Новые поля: birth_year (год из birth_date), doc_name (по умолч. «паспорт гражданина Республики Беларусь»), stay_term (из колонки «Срок договора до» contract_end_date -> «срок до {дата}»).
+- Тесты backend: 7/7 + регрессия 6/6 (100%). Задеплоено на VPS (backend-файлы + restart, фронт не пересобирался — поля динамические).
