@@ -9,7 +9,7 @@ import sys
 import json
 
 # Base URL from frontend/.env
-BASE_URL = "https://numbers-586.preview.emergentagent.com/api"
+BASE_URL = "https://code-review-hub-160.preview.emergentagent.com/api"
 
 
 def test_diagnostics_endpoint():
