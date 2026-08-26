@@ -5,7 +5,7 @@ import sys
 import uuid
 import zipfile
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from pathlib import Path
 from typing import List, Optional, Dict, Annotated, Any
 
@@ -142,6 +142,8 @@ def _cell_to_str(value) -> str:
     if value is None:
         return ""
     if isinstance(value, datetime):
+        return value.strftime("%d.%m.%Y")
+    if isinstance(value, date):
         return value.strftime("%d.%m.%Y")
     if isinstance(value, float) and value.is_integer():
         return str(int(value))

@@ -10,6 +10,7 @@
 """
 import io
 import re
+import datetime as _dt
 
 from document_service import _split_ru_date, _split_passport
 
@@ -408,6 +409,10 @@ def build_master_xlsx() -> bytes:
 def _cell_str(v):
     if v is None:
         return ""
+    # openpyxl возвращает datetime/date для ячеек с форматом «дата» —
+    # приводим к белорусскому формату ДД.ММ.ГГГГ, а не к "2006-08-03 00:00:00".
+    if isinstance(v, (_dt.datetime, _dt.date)):
+        return v.strftime("%d.%m.%Y")
     if isinstance(v, float) and v.is_integer():
         return str(int(v))
     return str(v).strip()
