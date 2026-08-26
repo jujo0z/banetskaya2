@@ -503,6 +503,37 @@ export async function downloadForma24Pdf(records, duplexFlip = "long") {
   downloadBlob(res.data, "forma24.pdf");
 }
 
+// ---- Заявление о регистрации по месту жительства ----
+export async function zayavlenieFields() {
+  const { data } = await api.get("/zayavlenie/fields");
+  return data;
+}
+export async function getZayavlenieDefaults() {
+  const { data } = await api.get("/zayavlenie/defaults");
+  return data.defaults || {};
+}
+export async function saveZayavlenieDefaults(defaults) {
+  const { data } = await api.post("/zayavlenie/defaults", { defaults });
+  return data;
+}
+export async function zayavleniePrefill(students) {
+  const { data } = await api.post("/zayavlenie/prefill", { students });
+  return data.records || [];
+}
+export async function zayavleniePreviewPngUrl(records, duplexFlip = "long", side = "front") {
+  const res = await api.post("/zayavlenie/preview-png", { records, duplex_flip: duplexFlip, side }, { responseType: "blob" });
+  return window.URL.createObjectURL(res.data);
+}
+export async function openZayavleniePdf(records, duplexFlip = "long") {
+  const res = await api.post("/zayavlenie/preview", { records, duplex_flip: duplexFlip }, { responseType: "blob" });
+  window.open(window.URL.createObjectURL(res.data), "_blank");
+}
+export async function downloadZayavleniePdf(records, duplexFlip = "long") {
+  const res = await api.post("/zayavlenie/preview", { records, duplex_flip: duplexFlip }, { responseType: "blob" });
+  downloadBlob(res.data, "zayavlenie.pdf");
+}
+
+
 // ---- Полный пакет документов (договор + Ф19 + Ф24 + сообщение) ----
 export async function openPackagePdf(people, duplexFlip = "long", include = {}) {
   const res = await api.post("/package", { people, duplex_flip: duplexFlip, include }, { responseType: "blob" });

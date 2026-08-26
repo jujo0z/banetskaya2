@@ -250,12 +250,53 @@ def master_to_soobshenie(m: dict) -> dict:
     return {k: v for k, v in rec.items() if str(v).strip()}
 
 
+# Общая площадь жилого помещения (общежития) — константа для всех (стр. 2).
+ZAYAV_AREA_DEFAULT = "5467,9"
+
+
+def master_to_zayavlenie(m: dict) -> dict:
+    """Строка-«человек» -> поля «Заявления о регистрации по месту жительства».
+
+    Автозаполняется страница 1 (заявитель, паспорт, адрес, откуда прибыл,
+    основание, дата). Страница 2 заполняется от руки, кроме общей площади."""
+    m = m or {}
+    ser, num = _split_passport(m.get("passport", ""))
+    locality = _join(", ", m.get("res_obl"), m.get("res_raion"),
+                     _nz(m.get("res_city"), m.get("res_village")))
+    from_place = _join(", ", m.get("from_obl"), m.get("from_raion"),
+                       _nz(m.get("from_city"), m.get("from_village")))
+    basis = ""
+    if m.get("contract_number"):
+        basis = f"договор найма жилого помещения № {str(m.get('contract_number')).strip()}"
+        if m.get("sign_date"):
+            basis += f" от {str(m.get('sign_date')).strip()}"
+    return {
+        "fio": m.get("fio", ""),
+        "passport_series": ser,
+        "passport_number": num,
+        "passport_issued_by": m.get("passport_issued_by", ""),
+        "passport_issue_date": m.get("passport_issue_date", ""),
+        "reg_who": "одного",
+        "reg_count": "1",
+        "address_locality": locality,
+        "res_street": m.get("res_street", ""),
+        "res_house": m.get("res_house", ""),
+        "res_korpus": m.get("res_korpus", ""),
+        "res_apartment": m.get("res_apartment", ""),
+        "from_place": from_place,
+        "basis": basis,
+        "sign_date": m.get("sign_date", ""),
+        "area": ZAYAV_AREA_DEFAULT,
+    }
+
+
 def derive_all(m: dict) -> dict:
     return {
         "contract": master_to_contract(m),
         "forma19": master_to_forma19(m),
         "forma24": master_to_forma24(m),
         "soobshenie": master_to_soobshenie(m),
+        "zayavlenie": master_to_zayavlenie(m),
     }
 
 

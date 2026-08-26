@@ -12,6 +12,7 @@ import FullPrint from "@/pages/FullPrint";
 import Diagnostics from "@/pages/Diagnostics";
 import Forma19 from "@/pages/Forma19";
 import Forma24 from "@/pages/Forma24";
+import Zayavlenie from "@/pages/Zayavlenie";
 import Package from "@/pages/Package";
 import Landing from "@/pages/Landing";
 import { IS_WEB, IS_DESKTOP } from "@/lib/env";
@@ -68,6 +69,7 @@ function App() {
           <Route path="full-print" element={<FullPrint />} />
           <Route path="forma19" element={<Forma19 />} />
           <Route path="forma24" element={<Forma24 />} />
+          <Route path="zayavlenie" element={<Zayavlenie />} />
           <Route path="package" element={<Package />} />
           <Route path="diagnostics" element={<Diagnostics />} />
           <Route path="settings" element={<Settings />} />

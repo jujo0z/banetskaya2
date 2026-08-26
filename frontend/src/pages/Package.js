@@ -22,6 +22,7 @@ const DOC_TOGGLES = [
   { key: "forma19", label: "Форма 19", icon: ClipboardList },
   { key: "forma24", label: "Форма 24", icon: ClipboardList },
   { key: "soobshenie", label: "Сообщение", icon: Stamp },
+  { key: "zayavlenie", label: "Заявление о регистрации", icon: FileSignature },
 ];
 
 export default function Package() {
@@ -34,6 +35,7 @@ export default function Package() {
     forma19: true,
     forma24: true,
     soobshenie: true,
+    zayavlenie: true,
   });
   const fileRef = React.useRef(null);
 

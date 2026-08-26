@@ -1605,6 +1605,69 @@ async def forma24_preview_png(req: Forma24Request):
 
 
 
+# ================= ЗАЯВЛЕНИЕ о регистрации по месту жительства =================
+class ZayavlenieRequest(BaseModel):
+    records: List[Dict[str, Any]] = []
+    duplex_flip: str = "long"
+    side: str = "front"
+
+
+@api_router.get("/zayavlenie/fields")
+async def zayavlenie_fields():
+    return {"groups": docsvc.ZAYAVLENIE_FIELDS, "keys": docsvc.ZAYAVLENIE_FIELD_KEYS}
+
+
+@api_router.get("/zayavlenie/defaults")
+async def zayavlenie_get_defaults():
+    doc = await db.app_settings.find_one({"key": "zayavlenie_defaults"}, {"_id": 0})
+    return {"defaults": (doc or {}).get("value", {})}
+
+
+@api_router.post("/zayavlenie/defaults")
+async def zayavlenie_save_defaults(payload: Forma19Defaults):
+    await db.app_settings.update_one(
+        {"key": "zayavlenie_defaults"},
+        {"$set": {"key": "zayavlenie_defaults", "value": payload.defaults}},
+        upsert=True,
+    )
+    return {"saved": True, "defaults": payload.defaults}
+
+
+@api_router.post("/zayavlenie/prefill")
+async def zayavlenie_prefill(payload: Forma19Prefill):
+    """Из строк-«людей» единого шаблона -> записи Заявления."""
+    return {"records": [masterdata.master_to_zayavlenie(m) for m in payload.students]}
+
+
+def _build_zayavlenie_pdf(req: "ZayavlenieRequest") -> bytes:
+    return docsvc.build_zayavlenie(people=req.records, duplex_flip=req.duplex_flip)
+
+
+@api_router.post("/zayavlenie/preview")
+async def zayavlenie_preview(req: ZayavlenieRequest):
+    try:
+        data = _build_zayavlenie_pdf(req)
+    except Exception as e:
+        logger.exception("zayavlenie generation failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
+    return StreamingResponse(io.BytesIO(data), media_type="application/pdf",
+                             headers={"Content-Disposition": "inline; filename=zayavlenie.pdf"})
+
+
+@api_router.post("/zayavlenie/preview-png")
+async def zayavlenie_preview_png(req: ZayavlenieRequest):
+    try:
+        pdf = _build_zayavlenie_pdf(req)
+        idx = 1 if str(req.side or "front").lower() == "back" else 0
+        png = docsvc.render_pdf_page_png(pdf, idx, scale=2.0)
+    except Exception as e:
+        logger.exception("zayavlenie preview failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка предпросмотра: {e}")
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+
+
 @api_router.get("/master-template")
 async def master_template():
     """Скачать единый Excel-шаблон «Данные» (все документы, пробная строка)."""
@@ -1635,6 +1698,7 @@ async def master_upload(file: UploadFile = File(...)):
         "forma19": [masterdata.master_to_forma19(m) for m in people],
         "forma24": [masterdata.master_to_forma24(m) for m in people],
         "soobshenie": [masterdata.master_to_soobshenie(m) for m in people],
+        "zayavlenie": [masterdata.master_to_zayavlenie(m) for m in people],
     }
 
 
@@ -1676,6 +1740,9 @@ async def _build_package_pdf(req: "PackageRequest") -> bytes:
             parts.append(docsvc.build_overlay(
                 [masterdata.master_to_soobshenie(m)],
                 layout=docsvc.SOOBSHENIE_LAYOUT, page_size="a4", with_form=True))
+        if _pkg_on(inc, "zayavlenie"):
+            parts.append(docsvc.build_zayavlenie(
+                [masterdata.master_to_zayavlenie(m)], duplex_flip=req.duplex_flip))
     if not parts:
         raise HTTPException(status_code=400, detail="Нет документов для пакета")
     return docsvc.merge_pdfs(parts)

@@ -31,6 +31,12 @@ const NAV_GROUPS = [
     ],
   },
   {
+    title: "Регистрация по месту жительства",
+    items: [
+      { to: "/zayavlenie", label: "Заявление о регистрации", icon: FileSignature, testid: "nav-zayavlenie" },
+    ],
+  },
+  {
     title: "Система",
     items: [
       { to: "/diagnostics", label: "Проверка системы", icon: Activity, testid: "nav-diagnostics" },

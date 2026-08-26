@@ -394,16 +394,131 @@ backend:
 
   - task: "App config: GET/POST /api/app-config (windows_download_url)"
     implemented: true
-    working: "NA"
+    working: true
     file: "server.py"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
           comment: "Новый эндпоинт для ссылки на установщик Windows. GET /api/app-config → {windows_download_url:''} по умолчанию. POST /api/app-config {windows_download_url:'https://...'} → {saved:true, windows_download_url:'...'}, сохраняется в app_settings key=app_config (upsert), читается обратно через GET. Пустая строка также сохраняется. Проверить GET(default)→POST(set)→GET(persisted)→POST(clear)→GET(empty)."
+        - working: true
+          agent: "testing"
+          comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (5/5, 100% success rate). ЭНДПОИНТ /api/app-config ПОЛНОСТЬЮ РАБОТАЕТ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ: (1) GET /api/app-config (default) → 200, windows_download_url='' (пустая строка по умолчанию) ✓. (2) POST /api/app-config {windows_download_url:'https://example.com/banetskaya-setup.exe'} → 200, saved=true, url='https://example.com/banetskaya-setup.exe' ✓. (3) GET /api/app-config (verify persistence) → 200, url='https://example.com/banetskaya-setup.exe' (персистентность в MongoDB app_settings подтверждена) ✓. (4) POST /api/app-config {windows_download_url:''} → 200, saved=true, url='' (очистка URL работает) ✓. (5) GET /api/app-config (verify empty) → 200, url='' (пустая строка сохранена корректно) ✓. Все операции GET(default)→POST(set)→GET(persisted)→POST(clear)→GET(empty) работают корректно. Эндпоинт готов к использованию."
 
+  - task: "Заявление о регистрации по месту жительства: векторная отрисовка + эндпоинты /api/zayavlenie/*"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py, master_data.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "НОВЫЙ ДОКУМЕНТ «Заявление о регистрации по месту жительства» (векторная отрисовка 1:1, A4-ландшафт: 2 заявления A5 в ряд, лицо=стр.1 двух человек, оборот=стр.2 тех же, дуплекс). Автозаполнение стр.1 из единого шаблона «Данные»; стр.2 пустая для руки, кроме площади (константа 5467,9). Паспорт разбивается на серию/номер. Эндпоинты: GET /api/zayavlenie/fields (сгруппированный список полей), GET/POST /api/zayavlenie/defaults (константы, хранятся в app_settings key=zayavlenie_defaults), POST /api/zayavlenie/prefill {students:[...]} → [zayavlenie records] (разбивка паспорта, area=5467,9, reg_who=одного, reg_count=1), POST /api/zayavlenie/preview {records, duplex_flip} → application/pdf (2 стр для 1-2 человек, 4 стр для 3-4), POST /api/zayavlenie/preview-png {side:'front'|'back'} → image/png. Интеграция с master-upload (ключ 'zayavlenie' в ответе) и package (include.zayavlenie, по умолчанию включён). ПРОВЕРИТЬ: (1) GET /api/zayavlenie/fields → 200, groups+keys (fio, passport_series, passport_number, area, sign_date и др.). (2) GET /api/zayavlenie/defaults → 200 {defaults:{}}. (3) POST /api/zayavlenie/defaults {defaults:{area:'5467,9'}} → 200 saved. (4) POST /api/zayavlenie/preview {records:[{...}]} → 200 PDF, страниц=2 (лицо+оборот) для 1-2 человек, 4 стр для 3. (5) POST /api/zayavlenie/preview-png side=front/back → 200 image/png. (6) POST /api/zayavlenie/prefill {students:[<master-строки>]} → 200 records с полями fio/passport_series/passport_number/area=5467,9/reg_who=одного. (7) GET /api/master-template → заполнить openpyxl-ом (даты как datetime), POST /api/master-upload → в ответе есть ключ 'zayavlenie' (массив), даты в формате ДД.ММ.ГГГГ, passport разбит на серию/номер, basis содержит 'договор найма' с номером, area=5467,9. (8) POST /api/package с include {zayavlenie:true} по master-строкам → 200 PDF, и что при include без zayavlenie он всё равно по умолчанию включён. Регрессия: GET /api/, /api/stats → 200."
+        - working: true
+          agent: "testing"
+          comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (15/15, 100% success rate). НОВЫЙ ДОКУМЕНТ «ЗАЯВЛЕНИЕ О РЕГИСТРАЦИИ ПО МЕСТУ ЖИТЕЛЬСТВА» ПОЛНОСТЬЮ РАБОТАЕТ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+          
+          ✅ TEST 1: GET /api/zayavlenie/fields
+             → 200, возвращает {groups:[...], keys:[...]}
+             → Найдено 4 группы с 16 ключами
+             → ВСЕ требуемые ключи присутствуют: fio, passport_series, passport_number, passport_issued_by, passport_issue_date, reg_who, reg_count, address_locality, res_street, res_house, res_korpus, res_apartment, from_place, basis, sign_date, area ✓
+             → Структура groups корректна (каждая группа содержит group и fields[{key,label}]) ✓
+          
+          ✅ TEST 2: GET /api/zayavlenie/defaults (initial)
+             → 200, {defaults:{}} (пустой объект по умолчанию) ✓
+          
+          ✅ TEST 3: POST /api/zayavlenie/defaults (save)
+             → {defaults:{area:'5467,9'}}
+             → 200, saved=true ✓
+          
+          ✅ TEST 4: GET /api/zayavlenie/defaults (verify persistence)
+             → 200, area='5467,9' (персистентность в MongoDB app_settings подтверждена) ✓
+          
+          ✅ TEST 5: POST /api/zayavlenie/preview (1 record)
+             → {records:[{fio:'Иванов Иван Иванович',passport_series:'MP',passport_number:'1234567',area:'5467,9',sign_date:'21.07.2025',reg_who:'одного',reg_count:'1'}]}
+             → 200, Content-Type application/pdf, валидный PDF начинается с %PDF
+             → Проверено через pymupdf: РОВНО 2 СТРАНИЦЫ (лицо + оборот для 1 человека) ✓
+          
+          ✅ TEST 6: POST /api/zayavlenie/preview (2 records)
+             → {records:[{fio:'Иванов...'},{fio:'Петров...'}]}
+             → 200, Content-Type application/pdf, валидный PDF начинается с %PDF
+             → Проверено через pymupdf: РОВНО 2 СТРАНИЦЫ (2 заявления A5 в ряд на 1 листе A4, лицо + оборот) ✓
+          
+          ✅ TEST 7: POST /api/zayavlenie/preview (3 records)
+             → {records:[{fio:'Иванов...'},{fio:'Петров...'},{fio:'Сидоров...'}]}
+             → 200, Content-Type application/pdf, валидный PDF начинается с %PDF
+             → Проверено через pymupdf: РОВНО 4 СТРАНИЦЫ (2 листа A4: лист 1 лицо + оборот, лист 2 лицо + оборот) ✓
+          
+          ✅ TEST 8: POST /api/zayavlenie/preview-png (front)
+             → {records:[{fio:'Тестов Тест Тестович',passport_series:'MP',passport_number:'1234567'}], side:'front'}
+             → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 83857 байт ✓
+          
+          ✅ TEST 9: POST /api/zayavlenie/preview-png (back)
+             → {records:[{fio:'Тестов Тест Тестович',passport_series:'MP',passport_number:'1234567'}], side:'back'}
+             → 200, Content-Type image/png, валидный PNG начинается с \\x89PNG, размер 70133 байт ✓
+             → ПОДТВЕРЖДЕНИЕ РАЗЛИЧИЯ: front (83857 байт) и back (70133 байт) — РАЗНЫЕ изображения (разница 13724 байт) ✓
+          
+          ✅ TEST 10: POST /api/zayavlenie/prefill
+             → {students:[<master-строка из master-upload>]}
+             → 200, records[0] содержит:
+                • fio='Иванов Иван Иванович' ✓
+                • passport_series='MP', passport_number='1234567' (паспорт разбит корректно) ✓
+                • area='5467,9' (константа применена) ✓
+                • reg_who='одного' ✓
+                • reg_count='1' ✓
+          
+          ✅ TEST 11: POST /api/master-upload (zayavlenie key)
+             → Заполнен Excel-шаблон через openpyxl с реальными данными:
+                • ФИО: 'Тестов Тест Тестович'
+                • Дата рождения: datetime(2000, 1, 15)
+                • Паспорт: 'MP1234567' (одной строкой)
+                • Номер договора: 'TEST-001'
+                • Дата подписания: datetime(2025, 7, 21)
+             → POST /api/master-upload с заполненным .xlsx
+             → 200, в ответе ПРИСУТСТВУЕТ ключ 'zayavlenie' (массив) ✓
+             → zayavlenie[0] содержит:
+                • passport_series='MP', passport_number='1234567' (паспорт РАЗБИТ корректно) ✓
+                • sign_date='21.07.2025' (дата в формате ДД.ММ.ГГГГ, БЕЗ ' 00:00:00') ✓
+                • area='5467,9' (константа применена) ✓
+                • basis='договор найма жилого помещения № TEST-001 от 21.07...' (содержит 'договор найма' и номер договора) ✓
+          
+          ✅ TEST 12: POST /api/package (with zayavlenie)
+             → {people:[<master-строка>], duplex_flip:'long', include:{contract:false, forma19:false, forma24:false, soobshenie:false, zayavlenie:true}}
+             → 200, Content-Type application/pdf, валидный PDF начинается с %PDF
+             → Проверено через pymupdf: РОВНО 2 СТРАНИЦЫ (только заявление: лицо + оборот) ✓
+          
+          ✅ TEST 13: POST /api/package (default includes zayavlenie)
+             → {people:[<master-строка>], duplex_flip:'long', include:{}}
+             → 200, Content-Type application/pdf, валидный PDF начинается с %PDF
+             → Проверено через pymupdf: РОВНО 9 СТРАНИЦ (договор 4 стр + Ф19+Ф24 2 стр + сообщение 1 стр + заявление 2 стр) ✓
+             → ПОДТВЕРЖДЕНИЕ: при пустом include заявление ВКЛЮЧЕНО ПО УМОЛЧАНИЮ ✓
+          
+          РЕГРЕССИЯ (2/2 PASS):
+          
+          ✅ R1: GET /api/
+             → 200 ✓
+          
+          ✅ R2: GET /api/stats
+             → 200 ✓
+          
+          ЗАКЛЮЧЕНИЕ:
+          
+          🎉 НОВЫЙ ДОКУМЕНТ «ЗАЯВЛЕНИЕ О РЕГИСТРАЦИИ ПО МЕСТУ ЖИТЕЛЬСТВА» ПОЛНОСТЬЮ ФУНКЦИОНАЛЕН:
+          • GET /api/zayavlenie/fields возвращает корректную структуру с 4 группами и 16 ключами
+          • GET/POST /api/zayavlenie/defaults работает с персистентностью в MongoDB
+          • POST /api/zayavlenie/preview генерирует корректный PDF: 2 страницы для 1-2 человек, 4 страницы для 3-4 человек (A4-ландшафт, 2 заявления A5 в ряд)
+          • POST /api/zayavlenie/preview-png рендерит лицевую и оборотную стороны как PNG (разные изображения)
+          • POST /api/zayavlenie/prefill корректно разбивает паспорт на серию/номер, применяет константы (area=5467,9, reg_who=одного, reg_count=1)
+          • POST /api/master-upload возвращает ключ 'zayavlenie' с корректными данными (паспорт разбит, даты в формате ДД.ММ.ГГГГ, basis содержит номер договора)
+          • POST /api/package интегрирован с заявлением: include.zayavlenie работает, по умолчанию заявление включено в пакет
+          • Все backend API полностью функциональны
+          • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+          
+          Новый документ готов к использованию."
 
   - task: "Единый Excel-шаблон и полный пакет документов: GET /api/master-template, POST /api/master-upload, POST /api/package"
     implemented: true
@@ -586,13 +701,12 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "3.1"
-  test_sequence: 16
+  version: "3.2"
+  test_sequence: 17
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Excel date parsing: даты формата 'дата' должны читаться как ДД.ММ.ГГГГ"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -600,16 +714,27 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: >
-        BUGFIX: при загрузке единого Excel-шаблона «Данные» ячейки формата «дата»
-        openpyxl отдавал datetime, и значение попадало в поля как "2006-08-03 00:00:00"
-        вместо "03.08.2006". Исправлено в master_data.py `_cell_str` (обработка
-        datetime/date → strftime %d.%m.%Y). Также усилен server.py `_cell_to_str`
-        (добавлена обработка чистого date).
-        ПРОШУ ПРОТЕСТИРОВАТЬ BACKEND: сгенерировать через POST /api/master-template
-        шаблон, ЗАПОЛНИТЬ его openpyxl-ом реальными датами (тип ячейки datetime),
-        загрузить через POST /api/master-upload и POST /api/generate/upload и
-        проверить, что в распарсенных людях/полях даты имеют формат ДД.ММ.ГГГГ
-        (напр. birth_date="03.08.2006"), а НЕ "2006-08-03 00:00:00".
+        НОВЫЙ ДОКУМЕНТ «Заявление о регистрации по месту жительства» (векторная
+        отрисовка 1:1, A4-ландшафт: 2 заявления A5 в ряд, лицо=стр.1 двух человек,
+        оборот=стр.2 тех же, дуплекс). Автозаполнение стр.1 из единого шаблона
+        «Данные»; стр.2 пустая для руки, кроме площади (константа 5467,9). Паспорт
+        разбивается на серию/номер.
+        ПРОШУ ПРОТЕСТИРОВАТЬ BACKEND:
+        1) GET /api/zayavlenie/fields → 200, groups+keys (fio, passport_series,
+           passport_number, area, sign_date и др.).
+        2) GET /api/zayavlenie/defaults → 200 {defaults:{}}.
+        3) POST /api/zayavlenie/defaults {defaults:{area:"5467,9"}} → 200 saved.
+        4) POST /api/zayavlenie/preview {records:[{...}]} → 200 PDF, страниц=2
+           (лицо+оборот) для 1-2 человек.
+        5) POST /api/zayavlenie/preview-png side=front/back → 200 image/png.
+        6) POST /api/zayavlenie/prefill {students:[<master-строки>]} → 200 records
+           с полями fio/passport_series/passport_number/area=5467,9/reg_who=одного.
+        7) GET /api/master-template → заполнить openpyxl-ом (даты как datetime),
+           POST /api/master-upload → в ответе есть ключ "zayavlenie" (массив),
+           даты в формате ДД.ММ.ГГГГ, passport разбит на серию/номер.
+        8) POST /api/package с include {zayavlenie:true} по master-строкам → 200 PDF,
+           и что при include без zayavlenie он всё равно по умолчанию включён.
+        Регрессия: GET /api/, /api/stats → 200.
         
         ФИКС ВЫРАВНИВАНИЯ ГРАНИЦ ДОКУМЕНТОВ ПРИ ДВУСТОРОННЕЙ ПЕЧАТИ ПОЛНОСТЬЮ РАБОТАЕТ.
         
@@ -1812,3 +1937,58 @@ agent_communication:
 agent_communication:
     - agent: "testing"
       message: "ТЕСТИРОВАНИЕ ФИКСА ПАРСИНГА ДАТ ИЗ EXCEL ЗАВЕРШЕНО УСПЕШНО. ВСЕ 13 ТЕСТОВ ПРОШЛИ (100% success rate). КРИТИЧЕСКИЙ ФИКС ПОДТВЕРЖДЁН: Даты из Excel (объекты datetime) корректно конвертируются в белорусский формат ДД.ММ.ГГГГ, а не остаются в виде 'YYYY-MM-DD 00:00:00'. Проверено 29 полей-дат во всех документах (master, contracts, forma19, forma24, soobshenie, students) — ВСЕ в формате ДД.ММ.ГГГГ. Функции _cell_str (master_data.py) и _cell_to_str (server.py) работают корректно. Регрессия основных эндпоинтов (GET /api/, GET /api/stats) без ошибок. Пакетная генерация документов (POST /api/package) работает корректно (PDF 207618 байт). ГЛАВНЫЙ КРИТЕРИЙ УСПЕХА ВЫПОЛНЕН: ни в одном поле нет 'YYYY-MM-DD 00:00:00' или ISO-даты — только 'ДД.ММ.ГГГГ'. РЕКОМЕНДАЦИЯ: Попросить main agent подвести итоги и завершить задачу (finish)."
+    - agent: "testing"
+      message: >
+        ✅ ТЕСТИРОВАНИЕ НОВОГО ДОКУМЕНТА «ЗАЯВЛЕНИЕ О РЕГИСТРАЦИИ ПО МЕСТУ ЖИТЕЛЬСТВА» И ЭНДПОИНТА /api/app-config ЗАВЕРШЕНО УСПЕШНО.
+        
+        ИТОГИ: 20/20 ТЕСТОВ ПРОШЛИ (100% success rate).
+        
+        === НОВЫЙ ДОКУМЕНТ «ЗАЯВЛЕНИЕ» (15/15 PASS) ===
+        
+        ✅ GET /api/zayavlenie/fields → 200, 4 группы, 16 ключей (все требуемые присутствуют)
+        ✅ GET /api/zayavlenie/defaults → 200, {defaults:{}} (по умолчанию)
+        ✅ POST /api/zayavlenie/defaults → 200, saved=true (area='5467,9')
+        ✅ GET /api/zayavlenie/defaults → 200, area='5467,9' (персистентность подтверждена)
+        ✅ POST /api/zayavlenie/preview (1 record) → 200 PDF, РОВНО 2 страницы (лицо + оборот)
+        ✅ POST /api/zayavlenie/preview (2 records) → 200 PDF, РОВНО 2 страницы (2 заявления A5 в ряд на 1 листе A4)
+        ✅ POST /api/zayavlenie/preview (3 records) → 200 PDF, РОВНО 4 страницы (2 листа A4)
+        ✅ POST /api/zayavlenie/preview-png (front) → 200 PNG, 83857 байт
+        ✅ POST /api/zayavlenie/preview-png (back) → 200 PNG, 70133 байт (РАЗНЫЕ изображения)
+        ✅ POST /api/zayavlenie/prefill → 200, паспорт разбит (MP/1234567), area='5467,9', reg_who='одного', reg_count='1'
+        ✅ POST /api/master-upload → 200, ключ 'zayavlenie' присутствует, паспорт разбит, даты в формате ДД.ММ.ГГГГ, basis содержит номер договора
+        ✅ POST /api/package (with zayavlenie) → 200 PDF, 2 страницы (только заявление)
+        ✅ POST /api/package (default includes zayavlenie) → 200 PDF, 9 страниц (договор 4 + Ф19+Ф24 2 + сообщение 1 + заявление 2)
+        ✅ GET /api/ → 200 (регрессия)
+        ✅ GET /api/stats → 200 (регрессия)
+        
+        === ЭНДПОИНТ /api/app-config (5/5 PASS) ===
+        
+        ✅ GET /api/app-config (default) → 200, windows_download_url='' (пустая строка)
+        ✅ POST /api/app-config (set URL) → 200, saved=true, url='https://example.com/banetskaya-setup.exe'
+        ✅ GET /api/app-config (verify persistence) → 200, url='https://example.com/banetskaya-setup.exe' (персистентность подтверждена)
+        ✅ POST /api/app-config (clear URL) → 200, saved=true, url='' (очистка работает)
+        ✅ GET /api/app-config (verify empty) → 200, url='' (пустая строка сохранена)
+        
+        === КЛЮЧЕВЫЕ РЕЗУЛЬТАТЫ ===
+        
+        НОВЫЙ ДОКУМЕНТ «ЗАЯВЛЕНИЕ»:
+        • Векторная отрисовка A4-ландшафт (2 заявления A5 в ряд) работает корректно
+        • Лицо и оборот рендерятся как отдельные страницы (2 стр для 1-2 человек, 4 стр для 3-4)
+        • Паспорт корректно разбивается на серию/номер (MP/1234567)
+        • Константы применяются (area='5467,9', reg_who='одного', reg_count='1')
+        • Даты в формате ДД.ММ.ГГГГ (без ' 00:00:00')
+        • Basis содержит номер договора ('договор найма жилого помещения № TEST-001')
+        • Интеграция с master-upload (ключ 'zayavlenie' в ответе)
+        • Интеграция с package (include.zayavlenie работает, по умолчанию включён)
+        • Preview-png рендерит front и back как разные изображения
+        
+        ЭНДПОИНТ /api/app-config:
+        • GET/POST работают корректно
+        • Персистентность в MongoDB app_settings подтверждена
+        • Пустая строка сохраняется корректно
+        • Цикл GET(default)→POST(set)→GET(persisted)→POST(clear)→GET(empty) работает
+        
+        РЕГРЕССИЙ НЕ ОБНАРУЖЕНО.
+        
+        РЕКОМЕНДАЦИЯ: Попросить main agent подвести итоги и завершить задачу (finish).
+
