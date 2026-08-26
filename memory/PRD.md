@@ -148,3 +148,12 @@ GET /api/printers (список принтеров Windows, supported=false в �
 
 ## Фича: страница «Полная печать» (июль 2025)
 Новый раздел в сайдбаре /full-print (pages/FullPrint.js), и в вебе, и в десктопе. Печатает ВЕСЬ документ на белом листе: бланк по скану (with_background=true) + данные, размер 147x103. Переиспользует сохранённую overlay-раскладку и поля. Веб: Предпросмотр/Открыть-Печать PDF/Скачать. Десктоп: выбор принтера + тихая печать (with_background). Backend: print-silent теперь уважает with_background; overlay/generate с фоном отдаёт валидный PDF (~1.1МБ). Overlay-печать (только данные) сохранена. Требует пересборки .exe для десктопа.
+
+## Implemented (2026-08 — Заявление о регистрации по месту жительства)
+- НОВЫЙ ДОКУМЕНТ: «Заявление о регистрации по месту жительства» — векторная отрисовка 1:1 (reportlab) по фото бланка (2 стр.). Раскладка: A4-ландшафт, 2 заявления A5 в ряд; лицо листа = стр.1 двух человек, оборот = стр.2 тех же (двусторонняя печать, duplex_flip long/short). Разрезав лист по центру — 2 готовых двусторонних заявления. Несколько человек = по 2 на лист.
+- Автозаполнение стр.1 из единого шаблона «Данные» (master_to_zayavlenie): ФИО, паспорт (серия/№ разбиваются через _split_passport), кем/когда выдан, адрес (нас.пункт + ул/дом/корп/кв из res_*), «прибыл из» (from_*), основание (договор найма № … от …), дата; reg_who="одного", reg_count="1" по умолчанию.
+- Стр.2 пустая для ручного заполнения, КРОМЕ общей площади = константа "5467,9" (ZAYAV_AREA_DEFAULT).
+- Backend: document_service.py — ZAYAVLENIE_FIELDS/KEYS, _draw_zayavlenie_page1/page2, build_zayavlenie(). server.py — /api/zayavlenie/{fields,defaults(GET/POST),prefill,preview,preview-png}; ключ "zayavlenie" в /api/master-upload; ветка zayavlenie в _build_package_pdf (+ чекбокс include, включён по умолчанию).
+- Frontend: pages/Zayavlenie.js (по образцу Forma24), lib/apiClient.js (zayavlenie* функции), маршрут /zayavlenie в App.js, пункт меню в Layout.js, чекбокс в Package.js.
+- Тесты backend: 20/20 (100%) — эндпоинты, кол-во страниц PDF (2 для 1-2 чел., 4 для 3), разбивка паспорта, даты ДД.ММ.ГГГГ, интеграция master-upload и пакет.
+- ДЕПЛОЙ на VPS (banetskaya.duckdns.org): backend-файлы + пересборка фронта (yarn build), systemctl restart banetskaya — проверено (API 200, UI живой). Бэкапы в /opt/banetskaya/_backup_*.
