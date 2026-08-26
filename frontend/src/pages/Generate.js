@@ -29,7 +29,9 @@ import {
   Download,
   Printer,
   Layers,
+  History,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { FIELDS, mapRowsToStudents } from "@/lib/fields";
 import { generateUpload, saveContractsBatch, batchDownload, batchPrint, downloadMasterTemplate } from "@/lib/apiClient";
@@ -57,7 +59,9 @@ export default function Generate() {
   const [duplexOpen, setDuplexOpen] = useState(false);
   const [duplexIds, setDuplexIds] = useState([]);
   const [preparingDuplex, setPreparingDuplex] = useState(false);
+  const [savingAll, setSavingAll] = useState(false);
   const fileRef = useRef();
+  const navigate = useNavigate();
 
   const students = useMemo(
     () =>
@@ -166,6 +170,36 @@ export default function Generate() {
       toast.error("Не удалось открыть на печать");
     } finally {
       setBatchPrinting(false);
+    }
+  }
+
+  // «Сформировать всё → в историю»: массово сохранить выделенные (или все, если
+  // ничего не отмечено) договоры в Историю, без скачивания архива.
+  async function handleGenerateAllToHistory() {
+    let idxs = [...selected];
+    const usingAll = idxs.length === 0;
+    if (usingAll) idxs = students.map((_, i) => i);
+    const items = idxs.map((i) => students[i]);
+    const ms = idxs.map((i) => masters[i] || {});
+    if (items.length === 0) return;
+    setSavingAll(true);
+    try {
+      const res = await saveContractsBatch(items, ms);
+      setSelected(new Set());
+      toast.success(
+        `Сформировано и записано в историю: ${res.count}${usingAll ? " (все записи)" : ""}.`,
+        {
+          action: {
+            label: "Открыть историю",
+            onClick: () => navigate("/history"),
+          },
+          duration: 6000,
+        }
+      );
+    } catch (err) {
+      toast.error("Ошибка формирования в историю");
+    } finally {
+      setSavingAll(false);
     }
   }
 
@@ -313,8 +347,24 @@ export default function Generate() {
             </Select>
             <Button
               className="rounded-none bg-[#E11D48] hover:bg-[#BE123C] text-white"
+              onClick={handleGenerateAllToHistory}
+              disabled={savingAll || students.length === 0}
+              title="Сформировать выделенные договоры (или все, если ничего не отмечено) и записать в Историю"
+              data-testid="generate-all-history-btn"
+            >
+              {savingAll ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <History className="h-4 w-4" />
+              )}
+              Сформировать всё → в историю ({selected.size || students.length})
+            </Button>
+            <Button
+              variant="outline"
+              className="rounded-none bg-[#E11D48]/10 border-[#E11D48]/40 hover:bg-[#E11D48]/20 text-foreground"
               onClick={handleBatch}
               disabled={selected.size === 0 || batching}
+              title="Сформировать выбранные и скачать архив (docx/pdf). Также пишутся в историю."
               data-testid="batch-generate-btn"
             >
               {batching ? (
@@ -322,7 +372,7 @@ export default function Generate() {
               ) : (
                 <FileArchive className="h-4 w-4" />
               )}
-              Сформировать выбранные ({selected.size})
+              Скачать архив выбранных ({selected.size})
             </Button>
             <Button
               variant="outline"
