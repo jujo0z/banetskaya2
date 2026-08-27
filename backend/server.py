@@ -1616,9 +1616,19 @@ class ZayavlenieLayout(BaseModel):
     layout: Dict[str, Any] = {}
 
 
+class ZayavlenieTemplate(BaseModel):
+    template: List[Dict[str, Any]] = []
+
+
 async def _zayav_layout_overrides():
     doc = await db.app_settings.find_one({"key": "zayavlenie_layout"}, {"_id": 0})
     return (doc or {}).get("value", {}) or {}
+
+
+async def _zayav_template_overrides():
+    doc = await db.app_settings.find_one({"key": "zayavlenie_template"}, {"_id": 0})
+    val = (doc or {}).get("value")
+    return val if isinstance(val, list) and val else None
 
 
 @api_router.get("/zayavlenie/fields")
@@ -1668,23 +1678,50 @@ async def zayavlenie_save_layout(payload: ZayavlenieLayout):
     return {"saved": True, "layout": docsvc._merge_zayav_layout(payload.layout)}
 
 
+@api_router.get("/zayavlenie/template")
+async def zayavlenie_get_template():
+    ov = await _zayav_template_overrides()
+    return {
+        "template": docsvc._resolve_zayav_template(ov),
+        "slots": docsvc.ZAYAV_OVERLAY_SLOTS,
+        "is_custom": ov is not None,
+        "page_count": 2,
+    }
+
+
+@api_router.post("/zayavlenie/template")
+async def zayavlenie_save_template(payload: ZayavlenieTemplate):
+    await db.app_settings.update_one(
+        {"key": "zayavlenie_template"},
+        {"$set": {"key": "zayavlenie_template", "value": payload.template}},
+        upsert=True,
+    )
+    return {"saved": True, "count": len(payload.template)}
+
+
+@api_router.post("/zayavlenie/template/reset")
+async def zayavlenie_reset_template():
+    await db.app_settings.delete_one({"key": "zayavlenie_template"})
+    return {"reset": True, "template": docsvc.get_zayav_default_template()}
+
+
 @api_router.get("/zayavlenie/background")
 async def zayavlenie_background(page: int = 1):
     png = docsvc.render_zayav_background_png(page)
     return Response(content=png, media_type="image/png",
-                    headers={"Cache-Control": "public, max-age=300"})
+                    headers={"Cache-Control": "public, max-age=60"})
 
 
-def _build_zayavlenie_pdf(req: "ZayavlenieRequest", layout=None) -> bytes:
-    return docsvc.build_zayavlenie(people=req.records, layout=layout,
+def _build_zayavlenie_pdf(req: "ZayavlenieRequest", template=None) -> bytes:
+    return docsvc.build_zayavlenie(people=req.records, template=template,
                                    duplex_flip=req.duplex_flip)
 
 
 @api_router.post("/zayavlenie/preview")
 async def zayavlenie_preview(req: ZayavlenieRequest):
     try:
-        ov = await _zayav_layout_overrides()
-        data = _build_zayavlenie_pdf(req, layout=ov)
+        tpl = await _zayav_template_overrides()
+        data = _build_zayavlenie_pdf(req, template=tpl)
     except Exception as e:
         logger.exception("zayavlenie generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -1695,8 +1732,8 @@ async def zayavlenie_preview(req: ZayavlenieRequest):
 @api_router.post("/zayavlenie/preview-png")
 async def zayavlenie_preview_png(req: ZayavlenieRequest):
     try:
-        ov = await _zayav_layout_overrides()
-        pdf = _build_zayavlenie_pdf(req, layout=ov)
+        tpl = await _zayav_template_overrides()
+        pdf = _build_zayavlenie_pdf(req, template=tpl)
         idx = 1 if str(req.side or "front").lower() == "back" else 0
         png = docsvc.render_pdf_page_png(pdf, idx, scale=2.0)
     except Exception as e:
@@ -1756,7 +1793,7 @@ def _pkg_on(include: Dict[str, bool], key: str) -> bool:
 async def _build_package_pdf(req: "PackageRequest") -> bytes:
     tpl = await _active_tpl()
     inc = req.include or {}
-    _zayav_lay = await _zayav_layout_overrides()
+    _zayav_tpl = await _zayav_template_overrides()
     parts: List[bytes] = []
     for m in (req.people or []):
         if _pkg_on(inc, "contract"):
@@ -1782,7 +1819,7 @@ async def _build_package_pdf(req: "PackageRequest") -> bytes:
                 layout=docsvc.SOOBSHENIE_LAYOUT, page_size="a4", with_form=True))
         if _pkg_on(inc, "zayavlenie"):
             parts.append(docsvc.build_zayavlenie(
-                [masterdata.master_to_zayavlenie(m)], layout=_zayav_lay,
+                [masterdata.master_to_zayavlenie(m)], template=_zayav_tpl,
                 duplex_flip=req.duplex_flip))
     if not parts:
         raise HTTPException(status_code=400, detail="Нет документов для пакета")

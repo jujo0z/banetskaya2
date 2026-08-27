@@ -2532,9 +2532,9 @@ def _draw_zayavlenie_page2(c, x0, y_bottom, zw_pt, zh_pt, rec):
 
 _SQRT2 = 1.41421356237
 
-def _zayav_static_page1(c, x0, y_bottom, zw_pt, zh_pt):
+def _zayav_static_page1(H):
     """Только статические элементы стр.1 (без данных) — «пустой бланк»."""
-    text, center, right, cap, rule, val, cval = _zayav_helpers(c, x0, y_bottom, zh_pt)
+    text, center, right, cap, rule = H
     XR = 45.0
     RB = 142.0
     CXR = (XR + RB) / 2.0
@@ -2610,9 +2610,9 @@ def _zayav_static_page1(c, x0, y_bottom, zw_pt, zh_pt):
     text(139, 184, "г.", 6.6)
 
 
-def _zayav_static_page2(c, x0, y_bottom, zw_pt, zh_pt):
+def _zayav_static_page2(H):
     """Только статические элементы стр.2 (без данных)."""
-    text, center, right, cap, rule, val, cval = _zayav_helpers(c, x0, y_bottom, zh_pt)
+    text, center, right, cap, rule = H
     RB = 142.0
     text(7, 12, "Подпись собственника либо нанимателя жилого помещения,", 6.5)
     text(7, 15.8, "предоставившего гражданину жилое помещение:", 6.5)
@@ -2794,100 +2794,185 @@ def zayav_overlay_text(rec):
     }
 
 
-def _zayav_draw_static_a4(c):
-    """Обе страницы пустого бланка на A4-портрет (масштаб A5→A4)."""
-    scale = (210.0 * MM) / (ZAYAV_ZONE_MM[0] * MM)  # 210/148.5 = √2
-    zw_pt, zh_pt = ZAYAV_ZONE_MM[0] * MM, ZAYAV_ZONE_MM[1] * MM
-    for fn in (_zayav_static_page1, _zayav_static_page2):
-        c.saveState()
-        c.scale(scale, scale)
-        fn(c, 0, 0, zw_pt, zh_pt)
-        c.restoreState()
-        c.showPage()
+_SQRT2 = 1.41421356237
+_ZW_MM, _ZH_MM = ZAYAV_ZONE_MM  # 148.5, 210
+_HEX_DARK = "#17171f"
+_HEX_GREY = "#4d4d5c"
+_HEX_INK = "#0a0d52"
 
 
-def build_zayav_static_pdf():
-    from reportlab.pdfgen import canvas
-    _ensure_fonts()
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(210 * MM, 297 * MM))
-    _zayav_draw_static_a4(c)
-    c.save()
-    buf.seek(0)
-    return buf.getvalue()
+def _hex_rgb(h):
+    h = (h or "#000000").lstrip("#")
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
+    try:
+        return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
+    except Exception:
+        return (0.0, 0.0, 0.0)
+
+
+def _cap_helpers(elems, page):
+    """Хелперы-«рекордеры»: вместо рисования складывают элементы шаблона.
+    Координаты мм (зона A5) -> проценты страницы; кегль A5 pt -> A4 pt."""
+    def _push_text(x, y, s, size, align, bold=False, italic=False, color=_HEX_DARK):
+        if s is None or str(s) == "":
+            return
+        elems.append({
+            "type": "text", "page": page,
+            "x": round(x / _ZW_MM * 100, 3), "y": round(y / _ZH_MM * 100, 3),
+            "align": align, "text": str(s),
+            "size": round(size * _SQRT2, 2),
+            "bold": bool(bold), "italic": bool(italic), "color": color,
+        })
+
+    def text(x, y, s, size=6.8, bold=False, color=None):
+        _push_text(x, y, s, size, "left", bold, False, _HEX_DARK)
+
+    def center(x, y, s, size=6.8, bold=False, color=None):
+        _push_text(x, y, s, size, "center", bold, False, _HEX_DARK)
+
+    def right(x, y, s, size=6.8, bold=False, color=None):
+        _push_text(x, y, s, size, "right", bold, False, _HEX_DARK)
+
+    def cap(x, y, s, size=3.6):
+        _push_text(x, y, s, size, "center", False, True, _HEX_GREY)
+
+    def rule(x1, x2, y, w=0.5):
+        elems.append({
+            "type": "line", "page": page,
+            "x": round(x1 / _ZW_MM * 100, 3), "y": round(y / _ZH_MM * 100, 3),
+            "w": round((x2 - x1) / _ZW_MM * 100, 3),
+            "thickness": round(float(w), 2), "color": _HEX_DARK,
+        })
+
+    return (text, center, right, cap, rule)
+
+
+_ZAYAV_TEMPLATE_DEFAULT = None
+
+
+def _build_zayav_default_template():
+    elems = []
+    _zayav_static_page1(_cap_helpers(elems, 1))
+    _zayav_static_page2(_cap_helpers(elems, 2))
+    # поля-данные из ZAYAV_LAYOUT_DEFAULT (переводим бокс -> якорь)
+    for pg, slots in ZAYAV_LAYOUT_DEFAULT.items():
+        for slot, cfg in slots.items():
+            al = cfg.get("align", "left")
+            if al == "center":
+                ax = cfg["x"] + cfg["w"] / 2.0
+            elif al == "right":
+                ax = cfg["x"] + cfg["w"]
+            else:
+                ax = cfg["x"]
+            elems.append({
+                "type": "field", "page": int(pg), "field": slot,
+                "x": round(ax, 3), "y": cfg["y"], "align": al,
+                "size": cfg["size"], "bold": bool(cfg.get("bold")), "italic": False,
+                "w": cfg["w"], "color": _HEX_INK,
+            })
+    for i, e in enumerate(elems):
+        e["id"] = "el%03d" % i
+    return elems
+
+
+def get_zayav_default_template():
+    global _ZAYAV_TEMPLATE_DEFAULT
+    if _ZAYAV_TEMPLATE_DEFAULT is None:
+        _ZAYAV_TEMPLATE_DEFAULT = _build_zayav_default_template()
+    import copy
+    return copy.deepcopy(_ZAYAV_TEMPLATE_DEFAULT)
+
+
+def _resolve_zayav_template(template):
+    if isinstance(template, list) and template:
+        return template
+    return get_zayav_default_template()
 
 
 _ZAYAV_BG_CACHE = {}
 
 
 def render_zayav_background_png(page=1, scale=2.1):
-    """PNG чистого бланка (стр.1 или стр.2) — фон предпросмотра. Кэшируется."""
+    """PNG чистого бланка (без данных) — совместимость со старым эндпоинтом."""
     page = 2 if int(page) == 2 else 1
     key = (page, round(float(scale), 2))
     if key in _ZAYAV_BG_CACHE:
         return _ZAYAV_BG_CACHE[key]
-    pdf = build_zayav_static_pdf()
+    pdf = build_zayavlenie([{}])  # пустая запись -> только бланк
     png = render_pdf_page_png(pdf, page - 1, scale=scale)
     _ZAYAV_BG_CACHE[key] = png
     return png
 
 
-def build_zayavlenie(people, layout=None, duplex_flip="long", draw_guides=False):
-    """PDF «Заявлений»: A4-портрет, по 2 страницы на человека (стр.1 + стр.2).
-    Фон — чистый бланк (векторно), данные накладываются по конфигурации координат
-    (проценты страницы) — те же координаты используются в предпросмотре на фронте."""
+def build_zayavlenie(people, template=None, layout=None, duplex_flip="long", draw_guides=False):
+    """PDF «Заявлений» из РЕДАКТИРУЕМОГО ШАБЛОНА (список элементов).
+    A4-портрет, по 2 страницы на человека. Элементы: text | line | field.
+    field.field -> значение из zayav_overlay_text(rec). Те же элементы рисует фронт."""
     from reportlab.pdfgen import canvas
     from reportlab.pdfbase.pdfmetrics import stringWidth
 
     _ensure_fonts()
     pw, ph = 210 * MM, 297 * MM
-    lay = _merge_zayav_layout(layout)
+    tpl = _resolve_zayav_template(template)
     people = list(people or []) or [{}]
-    scale = (210.0 * MM) / (ZAYAV_ZONE_MM[0] * MM)
-    zw_pt, zh_pt = ZAYAV_ZONE_MM[0] * MM, ZAYAV_ZONE_MM[1] * MM
+    by_page = {1: [], 2: []}
+    for el in tpl:
+        try:
+            p = int(el.get("page", 1) or 1)
+        except Exception:
+            p = 1
+        if p in by_page:
+            by_page[p].append(el)
 
-    def draw_static(fn):
-        c.saveState()
-        c.scale(scale, scale)
-        fn(c, 0, 0, zw_pt, zh_pt)
-        c.restoreState()
-
-    def draw_values(page, rec):
-        vals = zayav_overlay_text(rec)
-        slots = lay.get(str(page), {}) or {}
-        for slot, cfg in slots.items():
-            txt = vals.get(slot, "")
-            if txt is None or str(txt).strip() == "":
-                continue
-            txt = str(txt)
-            font = _serif(bool(cfg.get("bold")))
-            size = float(cfg.get("size", 9) or 9)
-            x = float(cfg.get("x", 0) or 0) / 100.0 * pw
-            y = float(cfg.get("y", 0) or 0) / 100.0 * ph
-            w = float(cfg.get("w", 20) or 20) / 100.0 * pw
-            align = cfg.get("align", "left")
+    def draw_element(el, vals):
+        t = el.get("type", "text")
+        col = _hex_rgb(el.get("color", "#000000"))
+        if t == "line":
+            x = float(el.get("x", 0) or 0) / 100.0 * pw
+            y = float(el.get("y", 0) or 0) / 100.0 * ph
+            w = float(el.get("w", 0) or 0) / 100.0 * pw
+            c.setStrokeColorRGB(*col)
+            c.setLineWidth(float(el.get("thickness", 0.5) or 0.5))
+            c.line(x, ph - y, x + w, ph - y)
+            return
+        if t == "field":
+            txt = vals.get(el.get("field"), "")
+        else:
+            txt = el.get("text", "")
+        if txt is None or str(txt).strip() == "":
+            return
+        txt = str(txt)
+        if el.get("font") == "sans":
+            font = _font(bool(el.get("bold")))
+        else:
+            font = _serif(bool(el.get("bold")), bool(el.get("italic")))
+        size = float(el.get("size", 9) or 9)
+        w = float(el.get("w", 0) or 0) / 100.0 * pw
+        if w > 0:
             tw = stringWidth(txt, font, size)
-            if w > 0 and tw > w:
+            if tw > w:
                 size = max(4.0, size * w / tw)
-            c.setFont(font, size)
-            c.setFillColorRGB(0.03, 0.05, 0.32)
-            yb = ph - y  # baseline от верхнего края
-            if align == "center":
-                c.drawCentredString(x + w / 2.0, yb, txt)
-            elif align == "right":
-                c.drawRightString(x + w, yb, txt)
-            else:
-                c.drawString(x, yb, txt)
+        c.setFont(font, size)
+        c.setFillColorRGB(*col)
+        x = float(el.get("x", 0) or 0) / 100.0 * pw
+        yb = ph - float(el.get("y", 0) or 0) / 100.0 * ph
+        align = el.get("align", "left")
+        if align == "center":
+            c.drawCentredString(x, yb, txt)
+        elif align == "right":
+            c.drawRightString(x, yb, txt)
+        else:
+            c.drawString(x, yb, txt)
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(pw, ph))
     for rec in people:
-        draw_static(_zayav_static_page1)
-        draw_values(1, rec)
-        c.showPage()
-        draw_static(_zayav_static_page2)
-        draw_values(2, rec)
-        c.showPage()
+        vals = zayav_overlay_text(rec)
+        for page in (1, 2):
+            for el in by_page[page]:
+                draw_element(el, vals)
+            c.showPage()
     c.save()
     buf.seek(0)
     return buf.getvalue()

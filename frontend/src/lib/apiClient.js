@@ -543,6 +543,18 @@ export async function saveZayavlenieLayout(layout) {
   const { data } = await api.post("/zayavlenie/layout", { layout });
   return data;
 }
+export async function getZayavlenieTemplate() {
+  const { data } = await api.get("/zayavlenie/template");
+  return data;
+}
+export async function saveZayavlenieTemplate(template) {
+  const { data } = await api.post("/zayavlenie/template", { template });
+  return data;
+}
+export async function resetZayavlenieTemplate() {
+  const { data } = await api.post("/zayavlenie/template/reset");
+  return data;
+}
 
 
 // ---- Полный пакет документов (договор + Ф19 + Ф24 + сообщение) ----

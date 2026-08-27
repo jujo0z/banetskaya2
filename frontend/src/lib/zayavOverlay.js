@@ -49,3 +49,35 @@ export function zayavOverlayText(rec) {
     minors_count: g("minors_count"),
   };
 }
+
+// Слот-наложение -> поле записи (для правки данных ПРЯМО в бланке).
+// Прямое редактирование (input прямо на документе):
+export const SLOT_FIELD = {
+  applicant: "fio", // редактируем ФИО (год рождения — в панели слева)
+  doc_name: "doc_name",
+  passport_series: "passport_series",
+  passport_number: "passport_number",
+  passport_issued_by: "passport_issued_by",
+  passport_issue_date: "passport_issue_date",
+  reg_who: "reg_who",
+  reg_count: "reg_count",
+  address_locality: "address_locality",
+  res_street: "res_street",
+  res_house: "res_house",
+  res_korpus: "res_korpus",
+  res_apartment: "res_apartment",
+  stay_term: "stay_term",
+  from_place: "from_place",
+  basis: "basis",
+  area: "area",
+  occupancy_count: "occupancy_count",
+  minors_count: "minors_count",
+};
+
+// Слоты, которые вычисляются (дата) — клик фокусирует поле в панели слева.
+export const SLOT_FOCUS = {
+  sign_day: "sign_date",
+  sign_month: "sign_date",
+  sign_year: "sign_date",
+};
+

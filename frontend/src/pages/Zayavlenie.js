@@ -5,37 +5,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  FileSignature,
-  Printer,
-  Download,
-  Upload,
-  Plus,
-  Copy,
-  Trash2,
-  Eraser,
-  Save,
-  Wand2,
-  ChevronDown,
-  SlidersHorizontal,
+  FileSignature, Printer, Download, Upload, Plus, Copy, Trash2, Eraser, Save,
+  Wand2, ChevronDown, PenSquare, Type, Minus, Bold, Italic,
+  AlignLeft, AlignCenter, AlignRight, RotateCcw,
 } from "lucide-react";
 import {
-  zayavlenieFields,
-  getZayavlenieDefaults,
-  saveZayavlenieDefaults,
-  zayavleniePrefill,
-  openZayavleniePdf,
-  downloadZayavleniePdf,
-  masterUpload,
-  downloadMasterTemplate,
-  getZayavlenieLayout,
-  saveZayavlenieLayout,
-  zayavlenieBackgroundUrl,
+  zayavlenieFields, getZayavlenieDefaults, saveZayavlenieDefaults, zayavleniePrefill,
+  openZayavleniePdf, downloadZayavleniePdf, masterUpload, downloadMasterTemplate,
+  getZayavlenieTemplate, saveZayavlenieTemplate, resetZayavlenieTemplate,
 } from "@/lib/apiClient";
 import ZayavPreview from "@/components/ZayavPreview";
 import { zayavOverlayText } from "@/lib/zayavOverlay";
 
 const recordLabel = (r, i) => (r.fio && String(r.fio).trim()) || `Заявление ${i + 1}`;
-
 const stripEmpty = (obj) => {
   const out = {};
   Object.entries(obj || {}).forEach(([k, v]) => {
@@ -43,10 +25,8 @@ const stripEmpty = (obj) => {
   });
   return out;
 };
+const uid = () => "u" + Math.random().toString(36).slice(2, 9);
 
-// «Заявление о регистрации по месту пребывания». Отрисовка: чистый бланк-фон
-// (A4-портрет, 2 страницы) + слой данных по координатам (проценты страницы).
-// Preview и PDF используют одну систему координат. Есть режим «Настройка полей».
 export default function Zayavlenie() {
   const [groups, setGroups] = useState([]);
   const [defaults, setDefaults] = useState({});
@@ -57,44 +37,34 @@ export default function Zayavlenie() {
   const [uploading, setUploading] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
 
-  // раскладка (координаты слотов) + режим настройки
-  const [layout, setLayout] = useState(null);      // {"1":{slot:cfg}, "2":{...}}
-  const [slotsMeta, setSlotsMeta] = useState([]);   // [{slot,page,label}]
-  const [page, setPage] = useState(1);              // 1 | 2
+  // ---- шаблон (редактируемый бланк) ----
+  const [template, setTemplate] = useState([]);
+  const [slotsMeta, setSlotsMeta] = useState([]);
+  const [page, setPage] = useState(1);
   const [editMode, setEditMode] = useState(false);
-  const [selectedSlot, setSelectedSlot] = useState(null);
-  const [savingLayout, setSavingLayout] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [savingTpl, setSavingTpl] = useState(false);
 
   const location = useLocation();
   const fileRef = useRef(null);
 
-  const rec = records[activeIdx] || {};
+  const pIdx = activeIdx >= 0 ? activeIdx : 0;
+  const rec = records[pIdx] || {};
   const values = useMemo(() => zayavOverlayText(rec), [rec]);
-
-  // слоты текущей страницы + подмешанные подписи (label) для редактора/плейсхолдеров
-  const curSlots = useMemo(() => {
-    const src = (layout && layout[String(page)]) || {};
-    const meta = {};
-    (slotsMeta || []).forEach((s) => (meta[s.slot] = s.label));
-    const out = {};
-    Object.entries(src).forEach(([k, cfg]) => {
-      out[k] = { ...cfg, label: meta[k] || k };
-    });
-    return out;
-  }, [layout, page, slotsMeta]);
+  const pageElements = useMemo(() => template.filter((e) => Number(e.page) === page), [template, page]);
+  const selectedEl = useMemo(() => template.find((e) => e.id === selectedId) || null, [template, selectedId]);
 
   useEffect(() => {
     (async () => {
       try {
-        const [f, d, lay] = await Promise.all([
-          zayavlenieFields(),
-          getZayavlenieDefaults(),
-          getZayavlenieLayout(),
+        const [f, d, tpl] = await Promise.all([
+          zayavlenieFields(), getZayavlenieDefaults(), getZayavlenieTemplate(),
         ]);
         setGroups(f.groups || []);
         setDefaults(d || {});
-        setLayout(lay.layout || { 1: {}, 2: {} });
-        setSlotsMeta(lay.slots || []);
+        setTemplate((tpl.template || []).map((e) => ({ ...e, id: e.id || uid() })));
+        setSlotsMeta(tpl.slots || []);
         const prefillList = location.state?.prefillList || null;
         if (Array.isArray(prefillList) && prefillList.length) {
           const recs = await zayavleniePrefill(prefillList);
@@ -111,6 +81,7 @@ export default function Zayavlenie() {
     })();
   }, []);
 
+  // ---- Excel / defaults / records (без изменений логики) ----
   const onUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -118,12 +89,11 @@ export default function Zayavlenie() {
     try {
       const data = await masterUpload(file);
       const recs = data.zayavlenie || [];
-      if (!recs.length) {
-        toast.error("В файле не найдено данных");
-      } else {
+      if (!recs.length) toast.error("В файле не найдено данных");
+      else {
         setRecords(recs.map((r) => ({ ...defaults, ...r })));
         setActiveIdx(0);
-        toast.success(`Загружено: ${recs.length} — данные подставлены`);
+        toast.success(`Загружено: ${recs.length}`);
       }
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Ошибка загрузки Excel");
@@ -132,109 +102,66 @@ export default function Zayavlenie() {
       if (fileRef.current) fileRef.current.value = "";
     }
   };
-
   const onDownloadTemplate = async () => {
-    try {
-      await downloadMasterTemplate();
-      toast.success("Шаблон Excel скачан");
-    } catch {
-      toast.error("Не удалось скачать шаблон");
-    }
+    try { await downloadMasterTemplate(); toast.success("Шаблон Excel скачан"); }
+    catch { toast.error("Не удалось скачать шаблон"); }
   };
-
   const setDefaultVal = (key, val) => setDefaults((d) => ({ ...d, [key]: val }));
-  const applyDefaultsToAll = () =>
-    setRecords((rs) => rs.map((r) => ({ ...defaults, ...stripEmpty(r) })));
+  const applyDefaultsToAll = () => setRecords((rs) => rs.map((r) => ({ ...defaults, ...stripEmpty(r) })));
   const doSaveDefaults = async () => {
     setSavingDefaults(true);
+    try { await saveZayavlenieDefaults(stripEmpty(defaults)); applyDefaultsToAll(); toast.success("Постоянные значения сохранены"); }
+    catch { toast.error("Не удалось сохранить"); }
+    finally { setSavingDefaults(false); }
+  };
+  const setRecordVal = (idx, key, val) => setRecords((rs) => rs.map((r, i) => (i === idx ? { ...r, [key]: val } : r)));
+  const addRecord = () => setRecords((rs) => { const n = [...rs, { ...defaults }]; setActiveIdx(n.length - 1); return n; });
+  const duplicateRecord = (idx) => setRecords((rs) => { const n = [...rs]; n.splice(idx + 1, 0, { ...rs[idx] }); setActiveIdx(idx + 1); return n; });
+  const removeRecord = (idx) => setRecords((rs) => { if (rs.length <= 1) return [{ ...defaults }]; const n = rs.filter((_, i) => i !== idx); setActiveIdx((a) => Math.min(a, n.length - 1)); return n; });
+  const clearRecordAt = (idx) => setRecords((rs) => rs.map((r, i) => (i === idx ? { ...defaults } : r)));
+
+  const doOpen = async () => { try { await openZayavleniePdf(records); toast("PDF открыт — печать в масштабе 100%"); } catch { toast.error("Ошибка открытия PDF"); } };
+  const doDownload = async () => { try { await downloadZayavleniePdf(records); } catch { toast.error("Ошибка скачивания"); } };
+
+  // ---- Редактор шаблона ----
+  const updateEl = (id, patch) => setTemplate((t) => t.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  const deleteEl = (id) => { setTemplate((t) => t.filter((e) => e.id !== id)); setSelectedId(null); };
+  const dupEl = (id) => setTemplate((t) => {
+    const el = t.find((e) => e.id === id); if (!el) return t;
+    const copy = { ...el, id: uid(), x: Math.min(96, (el.x || 0) + 2), y: Math.min(97, (el.y || 0) + 2) };
+    setSelectedId(copy.id); return [...t, copy];
+  });
+  const addText = () => setTemplate((t) => {
+    const el = { id: uid(), type: "text", page, x: 20, y: 20, align: "left", text: "Новый текст", size: 9, bold: false, italic: false, font: "serif", color: "#17171f" };
+    setSelectedId(el.id); return [...t, el];
+  });
+  const addLine = () => setTemplate((t) => {
+    const el = { id: uid(), type: "line", page, x: 10, y: 30, w: 60, thickness: 0.5, color: "#17171f" };
+    setSelectedId(el.id); return [...t, el];
+  });
+  const commitText = (id, text) => { updateEl(id, { text }); setEditingId(null); };
+  const doSaveTpl = async () => {
+    setSavingTpl(true);
+    try { await saveZayavlenieTemplate(template.map(({ ...e }) => e)); toast.success("Шаблон сохранён"); }
+    catch { toast.error("Не удалось сохранить шаблон"); }
+    finally { setSavingTpl(false); }
+  };
+  const doResetTpl = async () => {
+    if (!window.confirm("Сбросить бланк к оригинальному виду? Все правки шаблона будут удалены.")) return;
+    setSavingTpl(true);
     try {
-      await saveZayavlenieDefaults(stripEmpty(defaults));
-      applyDefaultsToAll();
-      toast.success("Постоянные значения сохранены и применены");
-    } catch (e) {
-      toast.error("Не удалось сохранить");
-    } finally {
-      setSavingDefaults(false);
-    }
+      const res = await resetZayavlenieTemplate();
+      setTemplate((res.template || []).map((e) => ({ ...e, id: e.id || uid() })));
+      setSelectedId(null); setEditingId(null);
+      toast.success("Шаблон сброшен к оригиналу");
+    } catch { toast.error("Не удалось сбросить"); }
+    finally { setSavingTpl(false); }
   };
 
-  const setRecordVal = (idx, key, val) =>
-    setRecords((rs) => rs.map((r, i) => (i === idx ? { ...r, [key]: val } : r)));
-  const addRecord = () =>
-    setRecords((rs) => {
-      const next = [...rs, { ...defaults }];
-      setActiveIdx(next.length - 1);
-      return next;
-    });
-  const duplicateRecord = (idx) =>
-    setRecords((rs) => {
-      const next = [...rs];
-      next.splice(idx + 1, 0, { ...rs[idx] });
-      setActiveIdx(idx + 1);
-      return next;
-    });
-  const removeRecord = (idx) =>
-    setRecords((rs) => {
-      if (rs.length <= 1) return [{ ...defaults }];
-      const next = rs.filter((_, i) => i !== idx);
-      setActiveIdx((a) => Math.min(a, next.length - 1));
-      return next;
-    });
-  const clearRecordAt = (idx) =>
-    setRecords((rs) => rs.map((r, i) => (i === idx ? { ...defaults } : r)));
+  if (loading) return <div className="p-8 text-muted-foreground">Загрузка…</div>;
 
-  const doOpen = async () => {
-    try {
-      await openZayavleniePdf(records);
-      toast("PDF открыт — печатайте «Фактический размер» (100%)");
-    } catch (e) {
-      toast.error("Ошибка открытия PDF");
-    }
-  };
-  const doDownload = async () => {
-    try {
-      await downloadZayavleniePdf(records);
-    } catch (e) {
-      toast.error("Ошибка скачивания");
-    }
-  };
-
-  // ---- Редактор координат ----
-  const patchSlot = (slot, patch) =>
-    setLayout((L) => {
-      const p = String(page);
-      const cur = (L && L[p] && L[p][slot]) || {};
-      return { ...L, [p]: { ...(L[p] || {}), [slot]: { ...cur, ...patch } } };
-    });
-  const doSaveLayout = async () => {
-    setSavingLayout(true);
-    try {
-      await saveZayavlenieLayout(layout);
-      toast.success("Раскладка полей сохранена");
-    } catch (e) {
-      toast.error("Не удалось сохранить раскладку");
-    } finally {
-      setSavingLayout(false);
-    }
-  };
-  const doResetLayout = async () => {
-    setSavingLayout(true);
-    try {
-      const res = await saveZayavlenieLayout({});
-      setLayout(res.layout || { 1: {}, 2: {} });
-      toast.success("Раскладка сброшена к стандартной");
-    } catch (e) {
-      toast.error("Не удалось сбросить");
-    } finally {
-      setSavingLayout(false);
-    }
-  };
-
-  const selCfg = selectedSlot ? curSlots[selectedSlot] : null;
-
-  if (loading) {
-    return <div className="p-8 text-muted-foreground">Загрузка…</div>;
-  }
+  const isText = selectedEl && (selectedEl.type === "text" || selectedEl.type === "field");
+  const isLine = selectedEl && selectedEl.type === "line";
 
   return (
     <div className="p-6 lg:p-8 space-y-6" data-testid="zayavlenie-page">
@@ -243,87 +170,43 @@ export default function Zayavlenie() {
           <FileSignature className="h-8 w-8 text-[#E11D48]" /> Заявление о регистрации
         </h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-          «Заявление о регистрации по месту пребывания» на чистой бумаге A4 (2 страницы на человека).
-          Данные накладываются поверх официального бланка. Печатайте <b>двусторонне</b> (стр. 1 — лицо,
-          стр. 2 — оборот). Страница 2 частично заполняется от руки (площадь и число проживающих подставляются).
+          «По месту пребывания», A4 (2 страницы). Весь бланк — <b>редактируемый шаблон</b>: включите
+          «Редактор шаблона», чтобы менять надписи, двигать/добавлять/удалять текст и линии, а также
+          поля данных. Что видите в предпросмотре — то и печатается в PDF.
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)] gap-6">
-        {/* ---- Controls ---- */}
+        {/* ---- Left controls ---- */}
         <div className="space-y-4">
-          {/* Excel upload */}
+          {/* Excel */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-2">
-            <div className="text-sm font-semibold flex items-center gap-2">
-              <Upload className="h-4 w-4 text-[#E11D48]" /> Загрузка из Excel
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xlsm"
-              onChange={onUpload}
-              className="hidden"
-              data-testid="zayav-file-input"
-            />
-            <Button
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-              variant="outline"
-              className="w-full"
-              data-testid="zayav-upload-btn"
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              {uploading ? "Загрузка…" : "Выбрать .xlsx файл"}
+            <div className="text-sm font-semibold flex items-center gap-2"><Upload className="h-4 w-4 text-[#E11D48]" /> Загрузка из Excel</div>
+            <input ref={fileRef} type="file" accept=".xlsx,.xlsm" onChange={onUpload} className="hidden" data-testid="zayav-file-input" />
+            <Button onClick={() => fileRef.current?.click()} disabled={uploading} variant="outline" className="w-full" data-testid="zayav-upload-btn">
+              <Upload className="h-4 w-4 mr-2" />{uploading ? "Загрузка…" : "Выбрать .xlsx файл"}
             </Button>
-            <Button
-              onClick={onDownloadTemplate}
-              variant="ghost"
-              className="w-full text-[#E11D48] hover:text-[#E11D48]"
-              data-testid="zayav-download-template-btn"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Скачать шаблон Excel
+            <Button onClick={onDownloadTemplate} variant="ghost" className="w-full text-[#E11D48] hover:text-[#E11D48]" data-testid="zayav-download-template-btn">
+              <Download className="h-4 w-4 mr-2" />Скачать шаблон Excel
             </Button>
-            <p className="text-[11px] text-muted-foreground">
-              Единый шаблон «Данные»: одна строка = один человек. Заявитель, паспорт, адрес и дата
-              подставляются автоматически.
-            </p>
           </div>
 
-          {/* Постоянные значения */}
-          <div className="rounded-lg border border-[#E11D48]/30 bg-[#E11D48]/5 p-4 space-y-2" data-testid="zayav-defaults-box">
-            <button
-              type="button"
-              onClick={() => setShowDefaults((s) => !s)}
-              className="flex w-full items-center justify-between text-sm font-semibold"
-              data-testid="zayav-defaults-toggle"
-            >
-              <span className="flex items-center gap-2">
-                <Wand2 className="h-4 w-4 text-[#E11D48]" /> Постоянные значения
-              </span>
+          {/* Defaults */}
+          <div className="rounded-lg border border-[#E11D48]/30 bg-[#E11D48]/5 p-4 space-y-2">
+            <button type="button" onClick={() => setShowDefaults((s) => !s)} className="flex w-full items-center justify-between text-sm font-semibold" data-testid="zayav-defaults-toggle">
+              <span className="flex items-center gap-2"><Wand2 className="h-4 w-4 text-[#E11D48]" /> Постоянные значения</span>
               <ChevronDown className={`h-4 w-4 transition-transform ${showDefaults ? "" : "-rotate-90"}`} />
             </button>
-            <p className="text-[11px] text-muted-foreground">
-              Задайте один раз (площадь, адрес общежития и т.п.) — подставятся во все заявления.
-              Данные из Excel имеют приоритет.
-            </p>
             {showDefaults && (
-              <div className="space-y-3 pt-2 max-h-[420px] overflow-auto pr-1">
+              <div className="space-y-3 pt-2 max-h-[360px] overflow-auto pr-1">
                 {groups.map((g) => (
                   <div key={g.group}>
-                    <div className="text-[10px] uppercase tracking-wider text-[#E11D48] font-semibold mb-1.5">
-                      {g.group}
-                    </div>
+                    <div className="text-[10px] uppercase tracking-wider text-[#E11D48] font-semibold mb-1.5">{g.group}</div>
                     <div className="space-y-1.5">
                       {g.fields.map((f) => (
                         <div key={f.key}>
                           <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
-                          <Input
-                            value={defaults[f.key] || ""}
-                            onChange={(e) => setDefaultVal(f.key, e.target.value)}
-                            className="h-8 text-sm"
-                            data-testid={`zayav-default-${f.key}`}
-                          />
+                          <Input value={defaults[f.key] || ""} onChange={(e) => setDefaultVal(f.key, e.target.value)} className="h-8 text-sm" data-testid={`zayav-default-${f.key}`} />
                         </div>
                       ))}
                     </div>
@@ -331,58 +214,35 @@ export default function Zayavlenie() {
                 ))}
               </div>
             )}
-            <Button
-              onClick={doSaveDefaults}
-              disabled={savingDefaults}
-              className="w-full bg-[#E11D48] hover:bg-[#BE123C]"
-              data-testid="zayav-save-defaults"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              {savingDefaults ? "Сохранение…" : "Сохранить и применить ко всем"}
+            <Button onClick={doSaveDefaults} disabled={savingDefaults} className="w-full bg-[#E11D48] hover:bg-[#BE123C]" data-testid="zayav-save-defaults">
+              <Save className="h-4 w-4 mr-2" />{savingDefaults ? "…" : "Сохранить и применить"}
             </Button>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={doOpen} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="zayav-open">
-              <Printer className="h-4 w-4 mr-2" /> Открыть/Печать
-            </Button>
-            <Button onClick={doDownload} variant="outline" data-testid="zayav-download">
-              <Download className="h-4 w-4 mr-2" /> Скачать PDF
-            </Button>
+            <Button onClick={doOpen} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="zayav-open"><Printer className="h-4 w-4 mr-2" /> Печать</Button>
+            <Button onClick={doDownload} variant="outline" data-testid="zayav-download"><Download className="h-4 w-4 mr-2" /> Скачать PDF</Button>
           </div>
 
-          {/* Records manager */}
+          {/* Records */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold">Заявления ({records.length})</div>
-              <Button size="sm" variant="outline" onClick={addRecord} data-testid="zayav-add-record">
-                <Plus className="h-4 w-4 mr-1" /> Добавить
-              </Button>
+              <Button size="sm" variant="outline" onClick={addRecord} data-testid="zayav-add-record"><Plus className="h-4 w-4 mr-1" /> Добавить</Button>
             </div>
-            <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
+            <div className="space-y-2 max-h-[460px] overflow-auto pr-1">
               {records.map((r, idx) => {
                 const open = idx === activeIdx;
                 return (
                   <div key={idx} className="rounded-md border border-white/10 bg-black/20" data-testid={`zayav-record-${idx}`}>
                     <div className="flex items-center gap-1 px-2 py-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setActiveIdx(open ? -1 : idx)}
-                        className="flex items-center gap-2 flex-1 min-w-0 text-left text-sm"
-                        data-testid={`zayav-record-toggle-${idx}`}
-                      >
+                      <button type="button" onClick={() => setActiveIdx(open ? -1 : idx)} className="flex items-center gap-2 flex-1 min-w-0 text-left text-sm" data-testid={`zayav-record-toggle-${idx}`}>
                         <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
                         <span className="truncate">{recordLabel(r, idx)}</span>
                       </button>
-                      <button type="button" title="Дублировать" onClick={() => duplicateRecord(idx)} className="p-1.5 text-muted-foreground hover:text-white" data-testid={`zayav-record-dup-${idx}`}>
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
-                      <button type="button" title="Очистить" onClick={() => clearRecordAt(idx)} className="p-1.5 text-muted-foreground hover:text-white">
-                        <Eraser className="h-3.5 w-3.5" />
-                      </button>
-                      <button type="button" title="Удалить" onClick={() => removeRecord(idx)} className="p-1.5 text-muted-foreground hover:text-[#E11D48]" data-testid={`zayav-record-del-${idx}`}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <button type="button" title="Дублировать" onClick={() => duplicateRecord(idx)} className="p-1.5 text-muted-foreground hover:text-white"><Copy className="h-3.5 w-3.5" /></button>
+                      <button type="button" title="Очистить" onClick={() => clearRecordAt(idx)} className="p-1.5 text-muted-foreground hover:text-white"><Eraser className="h-3.5 w-3.5" /></button>
+                      <button type="button" title="Удалить" onClick={() => removeRecord(idx)} className="p-1.5 text-muted-foreground hover:text-[#E11D48]" data-testid={`zayav-record-del-${idx}`}><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
                     {open && (
                       <div className="px-3 pb-3 pt-1 space-y-3 border-t border-white/10">
@@ -393,12 +253,7 @@ export default function Zayavlenie() {
                               {g.fields.map((f) => (
                                 <div key={f.key}>
                                   <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
-                                  <Input
-                                    value={r[f.key] || ""}
-                                    onChange={(e) => setRecordVal(idx, f.key, e.target.value)}
-                                    className="h-8 text-sm"
-                                    data-testid={`zayav-input-${idx}-${f.key}`}
-                                  />
+                                  <Input value={r[f.key] || ""} onChange={(e) => setRecordVal(idx, f.key, e.target.value)} className="h-8 text-sm" data-testid={`zayav-input-${idx}-${f.key}`} />
                                 </div>
                               ))}
                             </div>
@@ -412,74 +267,88 @@ export default function Zayavlenie() {
             </div>
           </div>
 
-          {/* Настройка полей (редактор координат) */}
+          {/* Template editor toolbar */}
           {editMode && (
-            <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 p-4 space-y-3" data-testid="zayav-field-editor">
-              <div className="text-sm font-semibold flex items-center gap-2 text-amber-300">
-                <SlidersHorizontal className="h-4 w-4" /> Настройка полей — стр. {page}
+            <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 p-4 space-y-3" data-testid="zayav-tpl-editor">
+              <div className="text-sm font-semibold flex items-center gap-2 text-amber-300"><PenSquare className="h-4 w-4" /> Редактор шаблона — стр. {page}</div>
+              <div className="grid grid-cols-2 gap-2">
+                <Button size="sm" variant="outline" onClick={addText} data-testid="zayav-add-text"><Type className="h-4 w-4 mr-1" /> Текст</Button>
+                <Button size="sm" variant="outline" onClick={addLine} data-testid="zayav-add-line"><Minus className="h-4 w-4 mr-1" /> Линия</Button>
               </div>
-              <p className="text-[11px] text-muted-foreground">
-                Кликните поле в предпросмотре и перетащите мышью, либо задайте координаты числами.
-                Значения в % от страницы. Работает и для preview, и для PDF.
-              </p>
-              {selCfg ? (
-                <div className="space-y-2">
-                  <div className="text-[12px] font-semibold text-white">{selCfg.label || selectedSlot}</div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      ["x", "X, %"],
-                      ["y", "Y, %"],
-                      ["w", "Ширина, %"],
-                      ["size", "Кегль (pt A4)"],
-                    ].map(([k, lbl]) => (
-                      <div key={k}>
-                        <Label className="text-[10px] text-muted-foreground">{lbl}</Label>
-                        <Input
-                          type="number"
-                          step="0.1"
-                          value={selCfg[k] ?? ""}
-                          onChange={(e) => patchSlot(selectedSlot, { [k]: parseFloat(e.target.value) })}
-                          className="h-8 text-sm"
-                          data-testid={`zayav-edit-${k}`}
-                        />
-                      </div>
-                    ))}
+              <p className="text-[11px] text-muted-foreground">Клик — выбрать, тащить — двигать, 2× клик по тексту — редактировать надпись.</p>
+
+              {selectedEl ? (
+                <div className="space-y-2 border-t border-white/10 pt-2">
+                  <div className="text-[12px] font-semibold text-white flex items-center justify-between">
+                    <span>{selectedEl.type === "field" ? `Поле: ${selectedEl.field}` : selectedEl.type === "line" ? "Линия" : "Текст"}</span>
+                    <span className="flex gap-1">
+                      <button title="Дублировать" onClick={() => dupEl(selectedEl.id)} className="p-1 text-muted-foreground hover:text-white"><Copy className="h-3.5 w-3.5" /></button>
+                      <button title="Удалить" onClick={() => deleteEl(selectedEl.id)} className="p-1 text-muted-foreground hover:text-[#E11D48]" data-testid="zayav-el-delete"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <Label className="text-[10px] text-muted-foreground">Выравнивание</Label>
-                      <select
-                        value={selCfg.align || "left"}
-                        onChange={(e) => patchSlot(selectedSlot, { align: e.target.value })}
-                        className="h-8 w-full rounded-md bg-black/30 border border-white/10 text-sm px-2"
-                        data-testid="zayav-edit-align"
-                      >
-                        <option value="left">влево</option>
-                        <option value="center">по центру</option>
-                        <option value="right">вправо</option>
+
+                  {selectedEl.type === "text" && (
+                    <div>
+                      <Label className="text-[10px] text-muted-foreground">Текст надписи</Label>
+                      <Input value={selectedEl.text || ""} onChange={(e) => updateEl(selectedEl.id, { text: e.target.value })} className="h-8 text-sm" data-testid="zayav-el-text" />
+                    </div>
+                  )}
+                  {selectedEl.type === "field" && (
+                    <div>
+                      <Label className="text-[10px] text-muted-foreground">Какое поле данных</Label>
+                      <select value={selectedEl.field} onChange={(e) => updateEl(selectedEl.id, { field: e.target.value })} className="h-8 w-full rounded-md bg-black/30 border border-white/10 text-sm px-2" data-testid="zayav-el-field">
+                        {slotsMeta.map((s) => (<option key={s.slot} value={s.slot}>{s.label}</option>))}
                       </select>
                     </div>
-                    <label className="flex items-center gap-1 text-[12px] mt-4">
-                      <input
-                        type="checkbox"
-                        checked={!!selCfg.bold}
-                        onChange={(e) => patchSlot(selectedSlot, { bold: e.target.checked })}
-                        data-testid="zayav-edit-bold"
-                      />
-                      жирный
-                    </label>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><Label className="text-[10px] text-muted-foreground">X, %</Label>
+                      <Input type="number" step="0.1" value={selectedEl.x ?? ""} onChange={(e) => updateEl(selectedEl.id, { x: parseFloat(e.target.value) })} className="h-8 text-sm" data-testid="zayav-el-x" /></div>
+                    <div><Label className="text-[10px] text-muted-foreground">Y, %</Label>
+                      <Input type="number" step="0.1" value={selectedEl.y ?? ""} onChange={(e) => updateEl(selectedEl.id, { y: parseFloat(e.target.value) })} className="h-8 text-sm" data-testid="zayav-el-y" /></div>
                   </div>
+
+                  {isText && (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div><Label className="text-[10px] text-muted-foreground">Кегль (pt)</Label>
+                          <Input type="number" step="0.1" value={selectedEl.size ?? ""} onChange={(e) => updateEl(selectedEl.id, { size: parseFloat(e.target.value) })} className="h-8 text-sm" data-testid="zayav-el-size" /></div>
+                        <div><Label className="text-[10px] text-muted-foreground">Макс. ширина, % (0 = авто)</Label>
+                          <Input type="number" step="0.5" value={selectedEl.w ?? 0} onChange={(e) => updateEl(selectedEl.id, { w: parseFloat(e.target.value) })} className="h-8 text-sm" /></div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <button title="Жирный" onClick={() => updateEl(selectedEl.id, { bold: !selectedEl.bold })} className={`p-1.5 rounded border border-white/10 ${selectedEl.bold ? "bg-white/20" : ""}`} data-testid="zayav-el-bold"><Bold className="h-3.5 w-3.5" /></button>
+                        <button title="Курсив" onClick={() => updateEl(selectedEl.id, { italic: !selectedEl.italic })} className={`p-1.5 rounded border border-white/10 ${selectedEl.italic ? "bg-white/20" : ""}`}><Italic className="h-3.5 w-3.5" /></button>
+                        <span className="w-px h-5 bg-white/10 mx-1" />
+                        {[["left", AlignLeft], ["center", AlignCenter], ["right", AlignRight]].map(([a, Ic]) => (
+                          <button key={a} title={a} onClick={() => updateEl(selectedEl.id, { align: a })} className={`p-1.5 rounded border border-white/10 ${selectedEl.align === a ? "bg-white/20" : ""}`}><Ic className="h-3.5 w-3.5" /></button>
+                        ))}
+                        <span className="w-px h-5 bg-white/10 mx-1" />
+                        <select value={selectedEl.font || "serif"} onChange={(e) => updateEl(selectedEl.id, { font: e.target.value })} className="h-7 rounded bg-black/30 border border-white/10 text-xs px-1">
+                          <option value="serif">Times</option>
+                          <option value="sans">Arial</option>
+                        </select>
+                        <input type="color" value={selectedEl.color || "#17171f"} onChange={(e) => updateEl(selectedEl.id, { color: e.target.value })} className="h-7 w-8 rounded border border-white/10 bg-transparent" title="Цвет" />
+                      </div>
+                    </>
+                  )}
+                  {isLine && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div><Label className="text-[10px] text-muted-foreground">Длина, %</Label>
+                        <Input type="number" step="0.5" value={selectedEl.w ?? ""} onChange={(e) => updateEl(selectedEl.id, { w: parseFloat(e.target.value) })} className="h-8 text-sm" /></div>
+                      <div><Label className="text-[10px] text-muted-foreground">Толщина (pt)</Label>
+                        <Input type="number" step="0.1" value={selectedEl.thickness ?? ""} onChange={(e) => updateEl(selectedEl.id, { thickness: parseFloat(e.target.value) })} className="h-8 text-sm" /></div>
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="text-[12px] text-muted-foreground">Поле не выбрано — кликните по полю в предпросмотре.</div>
+                <div className="text-[12px] text-muted-foreground border-t border-white/10 pt-2">Выберите элемент в бланке или добавьте новый.</div>
               )}
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <Button onClick={doSaveLayout} disabled={savingLayout} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="zayav-save-layout">
-                  <Save className="h-4 w-4 mr-1" /> {savingLayout ? "…" : "Сохранить раскладку"}
-                </Button>
-                <Button onClick={doResetLayout} disabled={savingLayout} variant="outline" data-testid="zayav-reset-layout">
-                  Сбросить
-                </Button>
+
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
+                <Button onClick={doSaveTpl} disabled={savingTpl} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="zayav-save-tpl"><Save className="h-4 w-4 mr-1" /> {savingTpl ? "…" : "Сохранить шаблон"}</Button>
+                <Button onClick={doResetTpl} disabled={savingTpl} variant="outline" data-testid="zayav-reset-tpl"><RotateCcw className="h-4 w-4 mr-1" /> Сбросить</Button>
               </div>
             </div>
           )}
@@ -488,53 +357,30 @@ export default function Zayavlenie() {
         {/* ---- Preview ---- */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold text-muted-foreground">
-              Предпросмотр — {page === 2 ? "страница 2 (оборот)" : "страница 1 (лицо)"}
-            </div>
+            <div className="text-sm font-semibold text-muted-foreground">Предпросмотр — {page === 2 ? "страница 2 (оборот)" : "страница 1 (лицо)"}</div>
             <div className="flex items-center gap-2">
               <div className="flex rounded-md border border-white/10 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setPage(1)}
-                  className={`px-3 py-1.5 text-xs transition ${page === 1 ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`}
-                  data-testid="zayav-page-1-btn"
-                >
-                  Стр. 1
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPage(2)}
-                  className={`px-3 py-1.5 text-xs transition ${page === 2 ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`}
-                  data-testid="zayav-page-2-btn"
-                >
-                  Стр. 2
-                </button>
+                <button type="button" onClick={() => setPage(1)} className={`px-3 py-1.5 text-xs transition ${page === 1 ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`} data-testid="zayav-page-1-btn">Стр. 1</button>
+                <button type="button" onClick={() => setPage(2)} className={`px-3 py-1.5 text-xs transition ${page === 2 ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`} data-testid="zayav-page-2-btn">Стр. 2</button>
               </div>
-              <Button
-                size="sm"
-                variant={editMode ? "default" : "ghost"}
-                onClick={() => {
-                  setEditMode((v) => !v);
-                  setSelectedSlot(null);
-                }}
-                className={editMode ? "bg-amber-500 hover:bg-amber-600 text-black" : ""}
-                data-testid="zayav-toggle-edit"
-              >
-                <SlidersHorizontal className="h-4 w-4 mr-1" /> {editMode ? "Готово" : "Настройка полей"}
+              <Button size="sm" variant={editMode ? "default" : "ghost"} onClick={() => { setEditMode((v) => !v); setSelectedId(null); setEditingId(null); }} className={editMode ? "bg-amber-500 hover:bg-amber-600 text-black" : ""} data-testid="zayav-toggle-edit">
+                <PenSquare className="h-4 w-4 mr-1" /> {editMode ? "Готово" : "Редактор шаблона"}
               </Button>
             </div>
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-2xl overflow-auto" style={{ maxHeight: "84vh" }}>
-            <div className="mx-auto" style={{ maxWidth: 720 }}>
+            <div className="mx-auto ring-1 ring-black/10" style={{ maxWidth: 720 }}>
               <ZayavPreview
                 page={page}
-                backgroundUrl={zayavlenieBackgroundUrl(page)}
-                slots={curSlots}
+                elements={pageElements}
                 values={values}
                 editMode={editMode}
-                selectedSlot={selectedSlot}
-                onSelectSlot={setSelectedSlot}
-                onChangeSlot={patchSlot}
+                selectedId={selectedId}
+                editingId={editingId}
+                onSelect={setSelectedId}
+                onStartTextEdit={setEditingId}
+                onCommitText={commitText}
+                onChange={updateEl}
               />
             </div>
           </div>

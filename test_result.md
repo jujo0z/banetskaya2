@@ -417,7 +417,10 @@ backend:
     status_history:
         - working: "NA"
           agent: "main"
-          comment: "ПЕРЕРАБОТКА ОТОБРАЖЕНИЯ (2026-08-27). Форма переведена на «по месту ПРЕБЫВАНИЯ» и НОВУЮ АРХИТЕКТУРУ: чистый бланк рисуется векторно на A4-ПОРТРЕТ (2 страницы на человека; раскладка масштабирована с зоны A5 148.5×210 на A4 210×297 — пропорции 1:√2 идентичны), данные накладываются ПОВЕРХ по конфигурации координат (проценты страницы). ОДНИ и те же координаты в PDF и в HTML-предпросмотре фронта. build_zayavlenie ТЕПЕРЬ A4-портрет per person=стр.1+стр.2 (было A4-ландшафт 2×A5). Новые функции в document_service: _zayav_static_page1/2, ZAYAV_LAYOUT_DEFAULT (22 слота: 19 на стр.1 + 3 на стр.2), zayav_overlay_text, build_zayav_static_pdf, render_zayav_background_png(page), _merge_zayav_layout, ZAYAV_OVERLAY_SLOTS. Исправлена опечатка бланка: подпись основания '...по месту пребывания' (было 'жительства'). Шрифт Liberation Serif (Times), TTF в assets/fonts. НОВЫЕ ЭНДПОИНТЫ (/api): GET /zayavlenie/layout → {layout:{'1':{slot:{x,y,w,align,size,bold}},'2':{...}}, slots:[{slot,page,label}], page_count:2}; POST /zayavlenie/layout {layout} → {saved:true, layout} (persist в app_settings key=zayavlenie_layout, merge с дефолтами); GET /zayavlenie/background?page=1|2 → image/png (чистый бланк). ОБНОВЛЕНЫ preview (A4-портрет, 2 стр/чел, использует сохранённую раскладку), preview-png (front→стр1, back→стр2), package. ПРОВЕРИТЬ: (1) GET /api/zayavlenie/layout → 200, layout['1'] ≥19 слотов (applicant, passport_series, passport_number, res_street, basis, sign_day), layout['2'] содержит area/occupancy_count/minors_count; slots — массив с label. (2) POST /api/zayavlenie/layout {layout:{'1':{applicant:{x:31.0,y:11.0,w:65,align:'center',size:10,bold:false}}}} → 200 saved=true; повторный GET → applicant.x==31.0 И прочие слоты на месте (merge). (3) GET /api/zayavlenie/background?page=1 → 200 image/png (\\x89PNG, >5000 байт); page=2 → 200 image/png (другое). (4) POST /api/zayavlenie/preview {records:[{fio:'Иванов Иван Иванович',birth_year:'2006',passport_series:'MP',passport_number:'1234567',res_street:'пр-т Дзержинского',res_house:'85',from_place:'г. Гомель',basis:'договор найма № 12 от 01.09.2024',sign_date:'01.09.2024',area:'5467,9',occupancy_count:'250',minors_count:'3'}]} → 200 application/pdf, РОВНО 2 страницы A4-ПОРТРЕТ (rect≈595.28×841.89 pt через pymupdf); стр.0 текст содержит 'ЗАЯВЛЕНИЕ','по месту пребывания','Иванов Иван Иванович','пр-т Дзержинского'; стр.1 содержит 'Общая площадь' и '5467,9'. (5) POST /api/zayavlenie/preview-png side='front' → 200 image/png; side='back' → 200 image/png (другое). (6) POST /api/zayavlenie/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'MP1234567'}]} → 200 records (регрессия). (7) РЕГРЕССИЯ пакета: GET /api/master-template → заполнить openpyxl → POST /api/master-upload → 200 (ключ 'zayavlenie'); POST /api/package {people:[master[0]], include:{zayavlenie:true}} → 200 application/pdf. (8) Регрессия: GET /api/_ping, GET /api/stats → 200. ВАЖНО: старые тесты про 'A4-ландшафт/A5' и заголовок 'по месту жительства' больше НЕ актуальны — теперь A4-портрет и 'по месту пребывания'."
+          comment: "РЕДАКТОР ШАБЛОНА (2026-08-27, вторая итерация). Бланк переведён в РЕДАКТИРУЕМЫЙ ШАБЛОН — список элементов (type: text|line|field). ДАННЫЕ (ФИО, паспорт, адрес и т.п.) тоже элементы type=field (field указывает на слот из zayav_overlay_text). Тот же список элементов рисуется и в PDF (reportlab), и в предпросмотре на фронте. Элемент: {id,type,page(1|2),x(%),y(%),align,size(pt A4),bold,italic,font('serif'|'sans'),color; для text: text; для field: field; для line: w(%),thickness(pt)}. Дефолтный шаблон строится из старого статического бланка (81 text + 46 line) + 22 поля (из ZAYAV_LAYOUT_DEFAULT, перевод бокс→якорь) = 149 элементов. build_zayavlenie(people, template=None, ...) рисует по шаблону; layout-параметр устарел. НОВЫЕ ЭНДПОИНТЫ: GET /api/zayavlenie/template → {template:[...149 эл...], slots:[{slot,page,label}], is_custom:bool, page_count:2}; POST /api/zayavlenie/template {template:[...]} → {saved:true,count}; POST /api/zayavlenie/template/reset → {reset:true, template:[дефолт]} (удаляет app_settings key=zayavlenie_template). Старые /zayavlenie/layout оставлены (не используются). preview/preview-png/package теперь используют сохранённый template. ПРОВЕРИТЬ: (1) GET /api/zayavlenie/template → 200; template — массив ~149 элементов; типы включают text/line/field; есть field-элементы applicant, passport_series, area; slots — массив с label; is_custom=false на чистой БД. (2) POST /api/zayavlenie/template {template:[{id:'t1',type:'text',page:1,x:10,y:10,align:'left',text:'ТЕСТ ШАПКА',size:10,bold:true}]} → 200 saved=true count=1. Затем GET → template ровно из 1 элемента, is_custom=true. Затем POST /api/zayavlenie/template/reset → 200 reset=true, template снова ~149 элементов; повторный GET → is_custom=false. (3) POST /api/zayavlenie/preview {records:[{fio:'Иванов Иван Иванович',birth_year:'2006',passport_series:'MP',passport_number:'1234567',res_street:'пр-т Дзержинского',res_house:'85',from_place:'г. Гомель',basis:'договор найма № 12 от 01.09.2024',sign_date:'01.09.2024',area:'5467,9',occupancy_count:'250',minors_count:'3'}]} → 200 application/pdf; через pymupdf РОВНО 2 страницы A4-портрет (rect≈595.28×841.89); стр.0 текст содержит 'ЗАЯВЛЕНИЕ','по месту пребывания','Иванов Иван Иванович','пр-т Дзержинского'; стр.1 содержит 'Общая площадь' и '5467,9'. ВАЖНО: тест (2) сохраняет кастомный шаблон из 1 элемента — ОБЯЗАТЕЛЬНО вызвать reset в конце, иначе preview будет почти пустым; если делаешь preview после сохранения кастомного — сначала reset. (4) GET /api/zayavlenie/background?page=1 и page=2 → 200 image/png (совместимость). (5) POST /api/zayavlenie/preview-png side=front/back → 200 image/png. (6) POST /api/zayavlenie/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'MP1234567'}]} → 200 records (регрессия). (7) РЕГРЕССИЯ пакета: GET /api/master-template → openpyxl заполнить → POST /api/master-upload → 200 (ключ 'zayavlenie'); POST /api/package {people:[master_row], include:{zayavlenie:true}} → 200 application/pdf. (8) GET /api/_ping, /api/stats → 200."
+        - working: "NA"
+          agent: "main"
+          comment: "(итерация 1, устарела — координатный layout) ПЕРЕРАБОТКА ОТОБРАЖЕНИЯ (2026-08-27)."
         - working: true
           agent: "main"
           comment: "(предыдущая версия — векторная 1:1, A4-ландшафт 2×A5, 'по месту жительства'. Переработано, см. запись выше.) Оригинальный комментарий сохранён ниже для истории."
@@ -932,14 +935,14 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: >
-        (2026-08-27) ПЕРЕРАБОТКА ОТОБРАЖЕНИЯ «Заявления». Прошу протестировать ТОЛЬКО
-        backend-эндпоинты /api/zayavlenie/* (см. задачу с needs_retesting:true, приоритет high,
-        она первая в backend-секции). Ключевое: build_zayavlenie теперь A4-ПОРТРЕТ, 2 страницы
-        на человека (лицо+оборот), заголовок «о регистрации по месту ПРЕБЫВАНИЯ»; данные
-        накладываются по конфигурации координат. Новые эндпоинты: GET/POST /api/zayavlenie/layout,
-        GET /api/zayavlenie/background?page=1|2. Полный чек-лист (8 пунктов) — в комментарии задачи.
-        СТАРЫЕ ожидания «A4-ландшафт / 2×A5 / жительства» больше НЕ актуальны. Числа страниц и
-        размеры (595.28×841.89) проверять через pymupdf. Фронтенд НЕ тестировать без разрешения.
+        (2026-08-27, итерация 2) Бланк «Заявления» стал РЕДАКТИРУЕМЫМ ШАБЛОНОМ (список элементов
+        text/line/field; поля данных — тоже элементы). Прошу протестировать ТОЛЬКО backend
+        /api/zayavlenie/* (задача с needs_retesting:true, high, первая в backend-секции). Новые
+        эндпоинты: GET/POST /api/zayavlenie/template и POST /api/zayavlenie/template/reset. Полный
+        чек-лист (8 пунктов) — в комментарии задачи. КРИТИЧНО: пункт про сохранение кастомного
+        шаблона ОБЯЗАН завершиться вызовом /template/reset, иначе preview станет почти пустым.
+        Числа страниц/размеры — через pymupdf. Фронтенд НЕ тестировать без разрешения.
+
 
     - agent: "main"
       message: >
@@ -2276,4 +2279,104 @@ agent_communication:
         РЕГРЕССИЙ НЕ ОБНАРУЖЕНО.
         
         РЕКОМЕНДАЦИЯ: Попросить main agent подвести итоги и завершить задачу (finish).
+
+        - working: true
+          agent: "testing"
+          comment: "✅ ВСЕ ТЕСТЫ РЕДАКТИРУЕМОГО ШАБЛОНА ПРОШЛИ УСПЕШНО (8/8, 100% success rate). НОВАЯ СТРУКТУРА TEMPLATE (text/line/field элементы) ПОЛНОСТЬЮ РАБОТАЕТ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+          
+          ✅ TEST 1: GET /api/zayavlenie/template
+             → 200, возвращает {template:[...], slots:[...], is_custom:bool, page_count:2}
+             → Template содержит РОВНО 149 элементов ✓
+             → Типы элементов: 'text', 'line', 'field' (все 3 типа присутствуют) ✓
+             → Field-элементы (22 шт): найдены ВСЕ требуемые поля: 'applicant', 'passport_series', 'area' ✓
+             → Slots: массив из 22 объектов с ключами {slot, page, label} ✓
+             → is_custom=false (на чистой БД) ✓
+             → page_count=2 ✓
+          
+          ✅ TEST 2: SAVE+RESET template (КРИТИЧЕСКИЙ ТЕСТ ПОРЯДКА)
+             → Step 2a: POST /api/zayavlenie/template {template:[{id:'t1',type:'text',page:1,x:10,y:10,align:'left',text:'ТЕСТ ШАПКА',size:10,bold:true}]}
+                • 200, saved=true, count=1 ✓
+             → Step 2b: GET /api/zayavlenie/template
+                • Template содержит РОВНО 1 элемент ✓
+                • is_custom=true ✓
+             → Step 2c: POST /api/zayavlenie/template/reset (БЕЗ ТЕЛА)
+                • 200, reset=true ✓
+                • Response содержит template с 149 элементами ✓
+             → Step 2d: GET /api/zayavlenie/template
+                • Template снова содержит 149 элементов ✓
+                • is_custom=false (шаблон сброшен) ✓
+             → ПОРЯДОК ОПЕРАЦИЙ ПОДТВЕРЖДЁН: save → verify custom → reset → verify default ✓
+          
+          ✅ TEST 3: POST /api/zayavlenie/preview (ПОСЛЕ RESET!)
+             → {records:[{fio:'Иванов Иван Иванович',birth_year:'2006',passport_series:'MP',passport_number:'1234567',res_street:'пр-т Дзержинского',res_house:'85',from_place:'г. Гомель',basis:'договор найма № 12 от 01.09.2024',sign_date:'01.09.2024',area:'5467,9',occupancy_count:'250',minors_count:'3'}]}
+             → 200, Content-Type application/pdf, валидный PDF начинается с %PDF ✓
+             → Размер PDF: 102630 байт ✓
+             → Проверено через pymupdf: РОВНО 2 СТРАНИЦЫ ✓
+             → Размеры страниц: Page 0 = 595.28×841.89 pt (A4-портрет), Page 1 = 595.28×841.89 pt ✓
+             → Текст страницы 0 содержит ВСЕ требуемые подстроки:
+                • 'ЗАЯВЛЕНИЕ' ✓
+                • 'по месту пребывания' ✓
+                • 'Иванов Иван Иванович' ✓
+                • 'пр-т Дзержинского' ✓
+             → Текст страницы 1 содержит ВСЕ требуемые подстроки:
+                • 'Общая площадь' ✓
+                • '5467,9' ✓
+          
+          ✅ TEST 4: GET /api/zayavlenie/background
+             → page=1: 200, Content-Type image/png, валидный PNG (\\x89PNG), размер 110040 байт ✓
+             → page=2: 200, Content-Type image/png, валидный PNG (\\x89PNG), размер 82748 байт ✓
+             → Совместимость со старым эндпоинтом подтверждена ✓
+          
+          ✅ TEST 5: POST /api/zayavlenie/preview-png
+             → side='front': 200, Content-Type image/png, валидный PNG (\\x89PNG), размер 115700 байт ✓
+             → side='back': 200, Content-Type image/png, валидный PNG (\\x89PNG), размер 80375 байт ✓
+             → ПОДТВЕРЖДЕНИЕ РАЗЛИЧИЯ: front и back — РАЗНЫЕ изображения (разница 35325 байт, 30.5%) ✓
+          
+          ✅ TEST 6: POST /api/zayavlenie/prefill (РЕГРЕССИЯ)
+             → {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'MP1234567'}]}
+             → 200, возвращает {records:[...]} ✓
+             → records[0] содержит корректные данные (birth_year='2007', area='5467,9') ✓
+             → Регрессия НЕ СЛОМАНА ✓
+          
+          ✅ TEST 7: РЕГРЕССИЯ ПАКЕТА (master-upload + package)
+             → Step 7.1: GET /api/master-template → 200, XLSX 9250 байт ✓
+             → Step 7.2: Заполнен шаблон через openpyxl (49 заголовков, 1 строка данных с datetime объектами) ✓
+             → Step 7.3: POST /api/master-upload → 200, ключ 'zayavlenie' ПРИСУТСТВУЕТ в ответе ✓
+             → Step 7.4: POST /api/package {people:[master[0]], include:{zayavlenie:true}}
+                • 200, Content-Type application/pdf, валидный PDF начинается с %PDF ✓
+                • Размер пакета: 285525 байт ✓
+                • Проверено через pymupdf: 9 СТРАНИЦ (> 0) ✓
+             → Интеграция с пакетом РАБОТАЕТ ✓
+          
+          ✅ TEST 8: HEALTH REGRESSION
+             → GET /api/_ping → 200, {ok:true} ✓
+             → GET /api/stats → 200, JSON с ключами {total, drafts, this_month, datasets, recent} ✓
+             → Регрессия основных эндпоинтов ПОДТВЕРЖДЕНА ✓
+          
+          FINAL VERIFICATION:
+             → is_custom=false (шаблон сброшен в конце тестирования) ✓
+          
+          ЗАКЛЮЧЕНИЕ:
+          
+          🎉 РЕДАКТИРУЕМЫЙ ШАБЛОН ЗАЯВЛЕНИЯ ПОЛНОСТЬЮ ФУНКЦИОНАЛЕН:
+          • GET /api/zayavlenie/template возвращает 149 элементов (text/line/field) с корректной структурой
+          • POST /api/zayavlenie/template сохраняет кастомный шаблон (is_custom=true)
+          • POST /api/zayavlenie/template/reset восстанавливает дефолтный шаблон (is_custom=false)
+          • POST /api/zayavlenie/preview генерирует корректный PDF с РОВНО 2 страницами A4-портрет (595.28×841.89 pt)
+          • Текст PDF содержит ВСЕ требуемые подстроки на обеих страницах
+          • GET /api/zayavlenie/background (page=1,2) возвращает валидные PNG
+          • POST /api/zayavlenie/preview-png (side=front/back) возвращает РАЗНЫЕ изображения
+          • POST /api/zayavlenie/prefill работает корректно (регрессия не сломана)
+          • POST /api/master-upload возвращает ключ 'zayavlenie'
+          • POST /api/package генерирует пакет с заявлением (9 страниц)
+          • GET /api/_ping и /api/stats работают (health regression OK)
+          • Все backend API полностью функциональны
+          • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+          
+          КРИТИЧЕСКОЕ ЗАМЕЧАНИЕ:
+          • ОБЯЗАТЕЛЬНО вызывать POST /api/zayavlenie/template/reset ПЕРЕД любым preview после сохранения кастомного шаблона, иначе PDF будет почти пустым (содержать только кастомные элементы)
+          • Порядок операций в TEST 2 КРИТИЧЕН: save → verify → reset → verify
+          • Финальная проверка подтвердила: is_custom=false (шаблон сброшен)
+          
+          Редактируемый шаблон готов к использованию."
 

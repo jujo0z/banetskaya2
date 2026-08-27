@@ -1,37 +1,36 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 
-// Размеры A4 в пунктах (совпадают с backend reportlab)
 const A4_W_PT = 595.2756;
 const SERIF = '"Times New Roman", "Liberation Serif", "PT Serif", serif';
+const SANS = '"Arial", "Liberation Sans", system-ui, sans-serif';
 
-// Измерение ширины строки в px тем же шрифтом (для авто-уменьшения)
-function measureWidth(text, fontPx, bold) {
-  if (!measureWidth._c) {
-    measureWidth._c = document.createElement("canvas").getContext("2d");
-  }
+function measureWidth(text, fontPx, bold, fam) {
+  if (!measureWidth._c) measureWidth._c = document.createElement("canvas").getContext("2d");
   const c = measureWidth._c;
-  c.font = `${bold ? "700" : "400"} ${fontPx}px ${SERIF}`;
+  c.font = `${bold ? "700" : "400"} ${fontPx}px ${fam}`;
   return c.measureText(text || "").width;
 }
 
 /**
- * Предпросмотр одной страницы «Заявления»:
- * фон = чистый бланк (изображение) + слой данных по координатам (% страницы).
- * Та же система координат используется в PDF на бэкенде.
+ * Страница «Заявления» = список редактируемых элементов шаблона.
+ * type: 'text' | 'field' | 'line'.  mode: 'view' | 'edit'.
  */
 export default function ZayavPreview({
   page,
-  backgroundUrl,
-  slots,          // { slotKey: {x,y,w,align,size,bold,label} }  (только для этой страницы)
-  values,         // { slotKey: text }
+  elements,       // элементы ТОЛЬКО этой страницы
+  values,         // {field: text} — значения данных
   editMode = false,
-  selectedSlot = null,
-  onSelectSlot = () => {},
-  onChangeSlot = () => {},
+  selectedId = null,
+  editingId = null,
+  onSelect = () => {},
+  onStartTextEdit = () => {},
+  onCommitText = () => {},
+  onChange = () => {},
 }) {
   const ref = useRef(null);
   const [W, setW] = useState(800);
   const dragRef = useRef(null);
+  const editRef = useRef(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -44,25 +43,35 @@ export default function ZayavPreview({
       ro.observe(el);
     }
     window.addEventListener("resize", update);
-    return () => {
-      if (ro) ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
+    return () => { if (ro) ro.disconnect(); window.removeEventListener("resize", update); };
   }, []);
 
-  const onPointerMove = useCallback(
-    (e) => {
-      const d = dragRef.current;
-      if (!d) return;
-      const dx = ((e.clientX - d.startX) / d.rw) * 100;
-      const dy = ((e.clientY - d.startY) / d.rh) * 100;
-      onChangeSlot(d.slot, {
-        x: Math.max(0, Math.min(100, +(d.ox + dx).toFixed(2))),
-        y: Math.max(0, Math.min(100, +(d.oy + dy).toFixed(2))),
-      });
-    },
-    [onChangeSlot]
-  );
+  useEffect(() => {
+    if (editingId && editRef.current) {
+      const node = editRef.current;
+      node.focus();
+      // курсор в конец
+      const r = document.createRange();
+      r.selectNodeContents(node);
+      r.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+  }, [editingId]);
+
+  const onPointerMove = useCallback((e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = ((e.clientX - d.startX) / d.rw) * 100;
+    const dy = ((e.clientY - d.startY) / d.rh) * 100;
+    if (!d.moved && Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) < 3) return;
+    d.moved = true;
+    onChange(d.id, {
+      x: Math.max(0, Math.min(100, +(d.ox + dx).toFixed(2))),
+      y: Math.max(0, Math.min(100, +(d.oy + dy).toFixed(2))),
+    });
+  }, [onChange]);
 
   const onPointerUp = useCallback(() => {
     dragRef.current = null;
@@ -70,78 +79,121 @@ export default function ZayavPreview({
     window.removeEventListener("pointerup", onPointerUp);
   }, [onPointerMove]);
 
-  const onPointerDown = (e, slot, cfg) => {
-    if (!editMode) return;
+  const startDrag = (e, el) => {
+    if (!editMode || editingId === el.id) return;
     e.preventDefault();
     e.stopPropagation();
-    onSelectSlot(slot);
+    onSelect(el.id);
     const rect = ref.current.getBoundingClientRect();
-    dragRef.current = {
-      slot,
-      startX: e.clientX,
-      startY: e.clientY,
-      ox: cfg.x,
-      oy: cfg.y,
-      rw: rect.width,
-      rh: rect.height,
-    };
+    dragRef.current = { id: el.id, startX: e.clientX, startY: e.clientY, ox: el.x, oy: el.y, rw: rect.width, rh: rect.height, moved: false };
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+  };
+
+  const pxPerPt = W / A4_W_PT;
+
+  const renderTextLike = (el) => {
+    const fam = el.font === "sans" ? SANS : SERIF;
+    const isField = el.type === "field";
+    const val = isField ? (values ? values[el.field] : "") : el.text;
+    const hasVal = val != null && String(val).trim() !== "";
+    const shown = hasVal ? String(val) : (isField ? (editMode ? `《${el.field}》` : "") : (el.text || ""));
+    if (!editMode && shown === "") return null;
+
+    let fontPx = (el.size || 9) * pxPerPt;
+    if (el.w && el.w > 0) {
+      const boxW = (el.w / 100) * W;
+      const tw = measureWidth(shown || " ", fontPx, el.bold, fam);
+      if (tw > boxW) fontPx = Math.max(4 * pxPerPt, fontPx * (boxW / tw));
+    }
+    const align = el.align || "left";
+    const tx = align === "center" ? "-50%" : align === "right" ? "-100%" : "0";
+    const isSel = editMode && selectedId === el.id;
+    const editing = editingId === el.id;
+
+    const common = {
+      position: "absolute",
+      left: `${el.x}%`,
+      top: `${el.y}%`,
+      transform: `translate(${tx}, -0.82em)`,
+      transformOrigin: "left top",
+      fontFamily: fam,
+      fontSize: `${fontPx}px`,
+      lineHeight: 1,
+      fontWeight: el.bold ? 700 : 400,
+      fontStyle: el.italic ? "italic" : "normal",
+      color: el.color || (isField ? "#0a0d52" : "#17171f"),
+      whiteSpace: "nowrap",
+    };
+
+    if (editing && !isField) {
+      return (
+        <div
+          key={el.id}
+          ref={editRef}
+          contentEditable
+          suppressContentEditableWarning
+          onBlur={(e) => onCommitText(el.id, e.currentTarget.textContent)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } }}
+          data-testid={`zayav-el-${el.id}`}
+          style={{ ...common, outline: "1px solid #2563eb", background: "rgba(37,99,235,.12)", cursor: "text", minWidth: 6 }}
+        >
+          {el.text}
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={el.id}
+        onPointerDown={(e) => startDrag(e, el)}
+        onDoubleClick={() => { if (editMode && !isField) onStartTextEdit(el.id); }}
+        title={isField ? `Поле: ${el.field}` : (editMode ? "2× клик — редактировать текст" : "")}
+        data-testid={`zayav-el-${el.id}`}
+        style={{
+          ...common,
+          cursor: editMode ? "move" : "default",
+          outline: isSel ? "1px dashed #E11D48" : (editMode ? "1px dotted rgba(120,120,140,.35)" : "none"),
+          background: isSel ? "rgba(225,29,72,.08)" : (editMode && isField ? "rgba(37,99,235,.05)" : "transparent"),
+        }}
+      >
+        {shown === "" ? "\u00A0" : shown}
+      </div>
+    );
+  };
+
+  const renderLine = (el) => {
+    const isSel = editMode && selectedId === el.id;
+    const thick = Math.max(1, (el.thickness || 0.5) * pxPerPt);
+    return (
+      <div
+        key={el.id}
+        onPointerDown={(e) => startDrag(e, el)}
+        data-testid={`zayav-el-${el.id}`}
+        title={editMode ? "Линия" : ""}
+        style={{
+          position: "absolute",
+          left: `${el.x}%`,
+          top: `${el.y}%`,
+          width: `${el.w}%`,
+          height: `${thick}px`,
+          background: el.color || "#17171f",
+          cursor: editMode ? "move" : "default",
+          outline: isSel ? "1px dashed #E11D48" : "none",
+          outlineOffset: "2px",
+        }}
+      />
+    );
   };
 
   return (
     <div
       ref={ref}
+      onPointerDown={(e) => { if (editMode && e.target === ref.current) onSelect(null); }}
       style={{ position: "relative", width: "100%", aspectRatio: "210 / 297", background: "#fff" }}
       data-testid={`zayav-page-${page}`}
     >
-      <img
-        src={backgroundUrl}
-        alt=""
-        draggable={false}
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", userSelect: "none", pointerEvents: "none" }}
-      />
-      {Object.entries(slots || {}).map(([slot, cfg]) => {
-        const raw = values ? values[slot] : "";
-        const hasVal = raw != null && String(raw).trim() !== "";
-        const text = hasVal ? String(raw) : editMode ? cfg.label || slot : "";
-        if (text === "") return null;
-        let fontPx = (cfg.size || 9) * (W / A4_W_PT);
-        const boxW = ((cfg.w || 20) / 100) * W;
-        const tw = measureWidth(text, fontPx, cfg.bold);
-        if (boxW > 0 && tw > boxW) {
-          fontPx = Math.max(4 * (W / A4_W_PT), fontPx * (boxW / tw));
-        }
-        const isSel = editMode && selectedSlot === slot;
-        return (
-          <div
-            key={slot}
-            onPointerDown={(e) => onPointerDown(e, slot, cfg)}
-            title={cfg.label || slot}
-            data-testid={`zayav-slot-${slot}`}
-            style={{
-              position: "absolute",
-              left: `${cfg.x}%`,
-              top: `${cfg.y}%`,
-              width: `${cfg.w}%`,
-              transform: "translateY(-0.82em)",
-              fontFamily: SERIF,
-              fontSize: `${fontPx}px`,
-              lineHeight: 1,
-              fontWeight: cfg.bold ? 700 : 400,
-              textAlign: cfg.align || "left",
-              whiteSpace: "nowrap",
-              color: hasVal ? "#0a0d52" : "#9ca3af",
-              cursor: editMode ? "move" : "default",
-              outline: isSel ? "1px dashed #E11D48" : editMode ? "1px dotted rgba(225,29,72,.35)" : "none",
-              background: isSel ? "rgba(225,29,72,.08)" : "transparent",
-              overflow: "visible",
-            }}
-          >
-            {text}
-          </div>
-        );
-      })}
+      {(elements || []).map((el) => (el.type === "line" ? renderLine(el) : renderTextLike(el)))}
     </div>
   );
 }

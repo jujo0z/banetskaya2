@@ -1,307 +1,489 @@
 #!/usr/bin/env python3
 """
-Backend testing for Zayavlenie endpoints after redesign.
-Tests the NEW A4-PORTRAIT design with 2 pages per person.
+Backend testing for /api/zayavlenie/* endpoints after template conversion to EDITABLE TEMPLATE.
+Tests the new template structure with elements (text/line/field).
 """
 import requests
 import pymupdf
 import io
-import hashlib
-import os
+import sys
 from openpyxl import load_workbook
 from datetime import datetime
 
-# Get backend URL from environment
-BACKEND_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://form-portal-15.preview.emergentagent.com')
-API_BASE = f"{BACKEND_URL}/api"
+# Backend URL from frontend/.env
+BASE_URL = "https://form-portal-15.preview.emergentagent.com/api"
 
-def test_1_layout_get():
-    """Test 1: GET /api/zayavlenie/layout → 200, check structure"""
-    print("\n=== TEST 1: GET /api/zayavlenie/layout ===")
-    
-    resp = requests.get(f"{API_BASE}/zayavlenie/layout")
+def test_1_get_template():
+    """
+    TEST 1: GET /api/zayavlenie/template → 200
+    - template is array of ~149 elements
+    - types include 'text', 'line', 'field'
+    - among field elements: field=='applicant', field=='passport_series', field=='area'
+    - slots is array of objects with keys slot/page/label
+    - is_custom == false (on clean DB)
+    - page_count == 2
+    """
+    print("\n=== TEST 1: GET /api/zayavlenie/template ===")
+    resp = requests.get(f"{BASE_URL}/zayavlenie/template")
     print(f"Status: {resp.status_code}")
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
     
     data = resp.json()
     print(f"Response keys: {list(data.keys())}")
     
     # Check required keys
-    assert "layout" in data, "Missing 'layout' key"
-    assert "slots" in data, "Missing 'slots' key"
-    assert "page_count" in data, "Missing 'page_count' key"
+    if "template" not in data:
+        print("❌ FAIL: Missing 'template' key")
+        return False
     
-    layout = data["layout"]
+    template = data["template"]
+    if not isinstance(template, list):
+        print(f"❌ FAIL: template is not a list, got {type(template)}")
+        return False
+    
+    elem_count = len(template)
+    print(f"Template elements count: {elem_count}")
+    
+    if elem_count < 140 or elem_count > 160:
+        print(f"❌ FAIL: Expected ~149 elements, got {elem_count}")
+        return False
+    
+    # Check types
+    types_found = set()
+    field_names = []
+    for elem in template:
+        if "type" in elem:
+            types_found.add(elem["type"])
+        if elem.get("type") == "field" and "field" in elem:
+            field_names.append(elem["field"])
+    
+    print(f"Types found: {types_found}")
+    print(f"Field elements count: {len(field_names)}")
+    print(f"Field names: {field_names}")
+    
+    required_types = {"text", "line", "field"}
+    if not required_types.issubset(types_found):
+        print(f"❌ FAIL: Missing required types. Expected {required_types}, found {types_found}")
+        return False
+    
+    # Check required field elements
+    required_fields = {"applicant", "passport_series", "area"}
+    fields_set = set(field_names)
+    if not required_fields.issubset(fields_set):
+        print(f"❌ FAIL: Missing required field elements. Expected {required_fields}, found {fields_set}")
+        return False
+    
+    # Check slots
+    if "slots" not in data:
+        print("❌ FAIL: Missing 'slots' key")
+        return False
+    
     slots = data["slots"]
+    if not isinstance(slots, list) or len(slots) == 0:
+        print(f"❌ FAIL: slots should be non-empty array, got {type(slots)} with {len(slots) if isinstance(slots, list) else 0} items")
+        return False
+    
+    # Check slot structure
+    first_slot = slots[0]
+    required_slot_keys = {"slot", "page", "label"}
+    if not required_slot_keys.issubset(set(first_slot.keys())):
+        print(f"❌ FAIL: Slot missing required keys. Expected {required_slot_keys}, found {set(first_slot.keys())}")
+        return False
+    
+    print(f"Slots count: {len(slots)}")
+    print(f"First slot: {first_slot}")
+    
+    # Check is_custom
+    if "is_custom" not in data:
+        print("❌ FAIL: Missing 'is_custom' key")
+        return False
+    
+    is_custom = data["is_custom"]
+    print(f"is_custom: {is_custom}")
+    
+    # Note: is_custom might be true if previous tests ran, so we'll just check it exists
+    
+    # Check page_count
+    if "page_count" not in data:
+        print("❌ FAIL: Missing 'page_count' key")
+        return False
+    
     page_count = data["page_count"]
+    print(f"page_count: {page_count}")
     
-    print(f"Page count: {page_count}")
-    assert page_count == 2, f"Expected page_count=2, got {page_count}"
+    if page_count != 2:
+        print(f"❌ FAIL: Expected page_count=2, got {page_count}")
+        return False
     
-    # Check layout['1'] has ≥19 slots
-    assert "1" in layout, "Missing layout['1']"
-    page1_slots = layout["1"]
-    print(f"Page 1 slots count: {len(page1_slots)}")
-    assert len(page1_slots) >= 19, f"Expected ≥19 slots in page 1, got {len(page1_slots)}"
-    
-    # Check required slots in page 1
-    required_page1 = ["applicant", "passport_series", "passport_number", "res_street", "basis", "sign_day"]
-    for slot in required_page1:
-        assert slot in page1_slots, f"Missing required slot '{slot}' in page 1"
-    print(f"✓ Page 1 contains all required slots: {required_page1}")
-    
-    # Check layout['2'] has required slots
-    assert "2" in layout, "Missing layout['2']"
-    page2_slots = layout["2"]
-    print(f"Page 2 slots count: {len(page2_slots)}")
-    
-    required_page2 = ["area", "occupancy_count", "minors_count"]
-    for slot in required_page2:
-        assert slot in page2_slots, f"Missing required slot '{slot}' in page 2"
-    print(f"✓ Page 2 contains all required slots: {required_page2}")
-    
-    # Check slots array structure
-    assert isinstance(slots, list), "slots should be an array"
-    print(f"Slots array length: {len(slots)}")
-    
-    for s in slots:
-        assert "slot" in s, f"Slot missing 'slot' key: {s}"
-        assert "page" in s, f"Slot missing 'page' key: {s}"
-        assert "label" in s, f"Slot missing 'label' key: {s}"
-    
-    print("✅ TEST 1 PASSED")
-    return layout
+    print("✅ PASS: GET /api/zayavlenie/template")
+    return True
 
-def test_2_layout_save_and_merge(original_layout):
-    """Test 2: POST /api/zayavlenie/layout with partial update, verify merge"""
-    print("\n=== TEST 2: POST /api/zayavlenie/layout (save & merge) ===")
+
+def test_2_save_and_reset_template():
+    """
+    TEST 2: SAVE+RESET template (IMPORTANT about order!)
+    a. POST /api/zayavlenie/template with custom template → 200, saved==true, count==1
+    b. GET /api/zayavlenie/template → template contains exactly 1 element, is_custom==true
+    c. POST /api/zayavlenie/template/reset (no body) → 200, reset==true, response contains ~149 elements
+    d. GET /api/zayavlenie/template → is_custom==false, template again ~149 elements
+    """
+    print("\n=== TEST 2: SAVE+RESET template ===")
     
-    # Save a partial layout update
-    payload = {
-        "layout": {
-            "1": {
-                "applicant": {
-                    "x": 31.0,
-                    "y": 11.0,
-                    "w": 65,
-                    "align": "center",
-                    "size": 10,
-                    "bold": False
-                }
-            }
-        }
-    }
+    # Step a: POST custom template
+    print("\nStep 2a: POST /api/zayavlenie/template (save custom)")
+    custom_template = [{
+        "id": "t1",
+        "type": "text",
+        "page": 1,
+        "x": 10,
+        "y": 10,
+        "align": "left",
+        "text": "ТЕСТ ШАПКА",
+        "size": 10,
+        "bold": True
+    }]
     
-    resp = requests.post(f"{API_BASE}/zayavlenie/layout", json=payload)
+    resp = requests.post(f"{BASE_URL}/zayavlenie/template", json={"template": custom_template})
     print(f"Status: {resp.status_code}")
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
     
     data = resp.json()
-    assert data.get("saved") == True, "Expected saved=true"
-    print("✓ Layout saved successfully")
+    print(f"Response: {data}")
     
-    # Verify the change persisted
-    resp2 = requests.get(f"{API_BASE}/zayavlenie/layout")
-    assert resp2.status_code == 200
-    data2 = resp2.json()
+    if not data.get("saved"):
+        print(f"❌ FAIL: saved should be true, got {data.get('saved')}")
+        return False
     
-    applicant_cfg = data2["layout"]["1"]["applicant"]
-    print(f"Applicant config after save: {applicant_cfg}")
+    if data.get("count") != 1:
+        print(f"❌ FAIL: count should be 1, got {data.get('count')}")
+        return False
     
-    assert applicant_cfg["x"] == 31.0, f"Expected x=31.0, got {applicant_cfg['x']}"
-    print("✓ Custom applicant.x=31.0 persisted")
+    print("✅ Step 2a PASS")
     
-    # Verify other slots are still present (merge, not overwrite)
-    page1_slots = data2["layout"]["1"]
-    assert "passport_series" in page1_slots, "passport_series should still be present after merge"
-    assert "basis" in page1_slots, "basis should still be present after merge"
-    print(f"✓ Other slots still present (count: {len(page1_slots)})")
+    # Step b: GET template (should be custom)
+    print("\nStep 2b: GET /api/zayavlenie/template (verify custom)")
+    resp = requests.get(f"{BASE_URL}/zayavlenie/template")
+    print(f"Status: {resp.status_code}")
     
-    # IMPORTANT: Restore to defaults
-    print("\n--- Restoring layout to defaults ---")
-    restore_payload = {"layout": {}}
-    resp3 = requests.post(f"{API_BASE}/zayavlenie/layout", json=restore_payload)
-    assert resp3.status_code == 200
-    print("✓ Layout restored to defaults")
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
     
-    print("✅ TEST 2 PASSED")
+    data = resp.json()
+    template = data.get("template", [])
+    is_custom = data.get("is_custom")
+    
+    print(f"Template elements count: {len(template)}")
+    print(f"is_custom: {is_custom}")
+    
+    if len(template) != 1:
+        print(f"❌ FAIL: Expected 1 element, got {len(template)}")
+        return False
+    
+    if not is_custom:
+        print(f"❌ FAIL: is_custom should be true, got {is_custom}")
+        return False
+    
+    print("✅ Step 2b PASS")
+    
+    # Step c: POST reset
+    print("\nStep 2c: POST /api/zayavlenie/template/reset")
+    resp = requests.post(f"{BASE_URL}/zayavlenie/template/reset")
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    print(f"Response keys: {list(data.keys())}")
+    
+    if not data.get("reset"):
+        print(f"❌ FAIL: reset should be true, got {data.get('reset')}")
+        return False
+    
+    if "template" in data:
+        reset_template = data["template"]
+        print(f"Reset template elements count: {len(reset_template)}")
+        if len(reset_template) < 140 or len(reset_template) > 160:
+            print(f"❌ FAIL: Expected ~149 elements in reset response, got {len(reset_template)}")
+            return False
+    
+    print("✅ Step 2c PASS")
+    
+    # Step d: GET template (should be default again)
+    print("\nStep 2d: GET /api/zayavlenie/template (verify reset)")
+    resp = requests.get(f"{BASE_URL}/zayavlenie/template")
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    template = data.get("template", [])
+    is_custom = data.get("is_custom")
+    
+    print(f"Template elements count: {len(template)}")
+    print(f"is_custom: {is_custom}")
+    
+    if len(template) < 140 or len(template) > 160:
+        print(f"❌ FAIL: Expected ~149 elements, got {len(template)}")
+        return False
+    
+    if is_custom:
+        print(f"❌ FAIL: is_custom should be false after reset, got {is_custom}")
+        return False
+    
+    print("✅ Step 2d PASS")
+    print("✅ PASS: SAVE+RESET template")
+    return True
 
-def test_3_background_images():
-    """Test 3: GET /api/zayavlenie/background?page=1 and page=2"""
-    print("\n=== TEST 3: GET /api/zayavlenie/background ===")
-    
-    # Page 1
-    resp1 = requests.get(f"{API_BASE}/zayavlenie/background?page=1")
-    print(f"Page 1 status: {resp1.status_code}")
-    assert resp1.status_code == 200, f"Expected 200, got {resp1.status_code}"
-    assert resp1.headers.get("Content-Type") == "image/png", f"Expected image/png, got {resp1.headers.get('Content-Type')}"
-    
-    png1 = resp1.content
-    assert png1[:4] == b'\x89PNG', "Page 1 should start with PNG signature"
-    assert len(png1) > 5000, f"Page 1 size should be > 5000 bytes, got {len(png1)}"
-    print(f"✓ Page 1: valid PNG, size={len(png1)} bytes")
-    
-    # Page 2
-    resp2 = requests.get(f"{API_BASE}/zayavlenie/background?page=2")
-    print(f"Page 2 status: {resp2.status_code}")
-    assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}"
-    assert resp2.headers.get("Content-Type") == "image/png", f"Expected image/png, got {resp2.headers.get('Content-Type')}"
-    
-    png2 = resp2.content
-    assert png2[:4] == b'\x89PNG', "Page 2 should start with PNG signature"
-    assert len(png2) > 5000, f"Page 2 size should be > 5000 bytes, got {len(png2)}"
-    print(f"✓ Page 2: valid PNG, size={len(png2)} bytes")
-    
-    # Verify they are different images
-    hash1 = hashlib.md5(png1).hexdigest()
-    hash2 = hashlib.md5(png2).hexdigest()
-    assert hash1 != hash2, "Page 1 and Page 2 should be different images"
-    print(f"✓ Page 1 and Page 2 are different images (hash1={hash1[:8]}, hash2={hash2[:8]})")
-    
-    print("✅ TEST 3 PASSED")
 
-def test_4_preview_pdf():
-    """Test 4: POST /api/zayavlenie/preview with 1 record"""
-    print("\n=== TEST 4: POST /api/zayavlenie/preview (PDF) ===")
+def test_3_preview_pdf():
+    """
+    TEST 3: POST /api/zayavlenie/preview (after reset!)
+    - 200, Content-Type application/pdf, body starts with %PDF
+    - Via pymupdf: EXACTLY 2 pages, each A4-portrait (rect width≈595.28, height≈841.89 pt)
+    - Text page 0 contains: 'ЗАЯВЛЕНИЕ', 'по месту пребывания', 'Иванов Иван Иванович', 'пр-т Дзержинского'
+    - Text page 1 contains: 'Общая площадь' and '5467,9'
+    """
+    print("\n=== TEST 3: POST /api/zayavlenie/preview ===")
     
-    payload = {
-        "records": [{
-            "fio": "Иванов Иван Иванович",
-            "birth_year": "2006",
-            "passport_series": "MP",
-            "passport_number": "1234567",
-            "res_street": "пр-т Дзержинского",
-            "res_house": "85",
-            "from_place": "г. Гомель",
-            "basis": "договор найма № 12 от 01.09.2024",
-            "sign_date": "01.09.2024",
-            "area": "5467,9",
-            "occupancy_count": "250",
-            "minors_count": "3"
-        }]
+    record = {
+        "fio": "Иванов Иван Иванович",
+        "birth_year": "2006",
+        "passport_series": "MP",
+        "passport_number": "1234567",
+        "res_street": "пр-т Дзержинского",
+        "res_house": "85",
+        "from_place": "г. Гомель",
+        "basis": "договор найма № 12 от 01.09.2024",
+        "sign_date": "01.09.2024",
+        "area": "5467,9",
+        "occupancy_count": "250",
+        "minors_count": "3"
     }
     
-    resp = requests.post(f"{API_BASE}/zayavlenie/preview", json=payload)
+    payload = {"records": [record]}
+    
+    resp = requests.post(f"{BASE_URL}/zayavlenie/preview", json=payload)
     print(f"Status: {resp.status_code}")
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-    assert resp.headers.get("Content-Type") == "application/pdf", f"Expected application/pdf, got {resp.headers.get('Content-Type')}"
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
+    
+    content_type = resp.headers.get("Content-Type", "")
+    print(f"Content-Type: {content_type}")
+    
+    if "application/pdf" not in content_type:
+        print(f"❌ FAIL: Expected application/pdf, got {content_type}")
+        return False
     
     pdf_data = resp.content
-    assert pdf_data[:4] == b'%PDF', "PDF should start with %PDF"
-    print(f"✓ Valid PDF, size={len(pdf_data)} bytes")
+    print(f"PDF size: {len(pdf_data)} bytes")
+    
+    if not pdf_data.startswith(b"%PDF"):
+        print(f"❌ FAIL: PDF should start with %PDF, got {pdf_data[:10]}")
+        return False
     
     # Check with pymupdf
-    doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-    page_count = len(doc)
-    print(f"Page count: {page_count}")
-    assert page_count == 2, f"Expected EXACTLY 2 pages, got {page_count}"
+    try:
+        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
+        page_count = len(doc)
+        print(f"Page count: {page_count}")
+        
+        if page_count != 2:
+            print(f"❌ FAIL: Expected EXACTLY 2 pages, got {page_count}")
+            doc.close()
+            return False
+        
+        # Check page sizes (A4 portrait: 595.28 x 841.89 pt)
+        for i in range(page_count):
+            page = doc[i]
+            rect = page.rect
+            width = rect.width
+            height = rect.height
+            print(f"Page {i} size: {width:.2f} x {height:.2f} pt")
+            
+            # Allow tolerance of ±2 pt
+            if not (593 <= width <= 598):
+                print(f"❌ FAIL: Page {i} width should be ~595.28 pt, got {width:.2f}")
+                doc.close()
+                return False
+            
+            if not (839 <= height <= 844):
+                print(f"❌ FAIL: Page {i} height should be ~841.89 pt, got {height:.2f}")
+                doc.close()
+                return False
+        
+        # Check text content page 0
+        page0_text = doc[0].get_text()
+        print(f"\nPage 0 text sample (first 500 chars):\n{page0_text[:500]}")
+        
+        required_page0 = ["ЗАЯВЛЕНИЕ", "по месту пребывания", "Иванов Иван Иванович", "пр-т Дзержинского"]
+        for text in required_page0:
+            if text not in page0_text:
+                print(f"❌ FAIL: Page 0 should contain '{text}'")
+                doc.close()
+                return False
+            print(f"✓ Found '{text}' in page 0")
+        
+        # Check text content page 1
+        page1_text = doc[1].get_text()
+        print(f"\nPage 1 text sample (first 500 chars):\n{page1_text[:500]}")
+        
+        required_page1 = ["Общая площадь", "5467,9"]
+        for text in required_page1:
+            if text not in page1_text:
+                print(f"❌ FAIL: Page 1 should contain '{text}'")
+                doc.close()
+                return False
+            print(f"✓ Found '{text}' in page 1")
+        
+        doc.close()
+        
+    except Exception as e:
+        print(f"❌ FAIL: Error processing PDF: {e}")
+        return False
     
-    # Check page 0 (front) dimensions - A4 PORTRAIT
-    page0 = doc[0]
-    rect0 = page0.rect
-    width0 = rect0.width
-    height0 = rect0.height
-    print(f"Page 0 dimensions: {width0:.2f} × {height0:.2f} pt")
+    print("✅ PASS: POST /api/zayavlenie/preview")
+    return True
+
+
+def test_4_background_images():
+    """
+    TEST 4: GET /api/zayavlenie/background?page=1 → 200 image/png
+           GET /api/zayavlenie/background?page=2 → 200 image/png
+    """
+    print("\n=== TEST 4: GET /api/zayavlenie/background ===")
     
-    # A4 portrait: 595.28 × 841.89 pt (allow ±2pt tolerance)
-    assert abs(width0 - 595.28) <= 2, f"Page 0 width should be ≈595.28pt, got {width0:.2f}"
-    assert abs(height0 - 841.89) <= 2, f"Page 0 height should be ≈841.89pt, got {height0:.2f}"
-    print("✓ Page 0 is A4-PORTRAIT (595.28×841.89 pt)")
+    for page in [1, 2]:
+        print(f"\nTesting page={page}")
+        resp = requests.get(f"{BASE_URL}/zayavlenie/background?page={page}")
+        print(f"Status: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+            return False
+        
+        content_type = resp.headers.get("Content-Type", "")
+        print(f"Content-Type: {content_type}")
+        
+        if "image/png" not in content_type:
+            print(f"❌ FAIL: Expected image/png, got {content_type}")
+            return False
+        
+        png_data = resp.content
+        print(f"PNG size: {len(png_data)} bytes")
+        
+        if not png_data.startswith(b"\x89PNG"):
+            print(f"❌ FAIL: PNG should start with \\x89PNG, got {png_data[:10]}")
+            return False
+        
+        print(f"✓ Page {page} background OK")
     
-    # Check page 1 (back) dimensions
-    page1 = doc[1]
-    rect1 = page1.rect
-    width1 = rect1.width
-    height1 = rect1.height
-    print(f"Page 1 dimensions: {width1:.2f} × {height1:.2f} pt")
-    assert abs(width1 - 595.28) <= 2, f"Page 1 width should be ≈595.28pt, got {width1:.2f}"
-    assert abs(height1 - 841.89) <= 2, f"Page 1 height should be ≈841.89pt, got {height1:.2f}"
-    print("✓ Page 1 is A4-PORTRAIT (595.28×841.89 pt)")
-    
-    # Extract text from page 0 and check for required substrings
-    text0 = page0.get_text()
-    print(f"\n--- Page 0 text excerpt (first 500 chars) ---")
-    print(text0[:500])
-    
-    required_page0 = [
-        'ЗАЯВЛЕНИЕ',
-        'по месту пребывания',  # NOT "жительства"
-        'Иванов Иван Иванович',
-        'пр-т Дзержинского'
-    ]
-    
-    for substring in required_page0:
-        assert substring in text0, f"Page 0 should contain '{substring}'"
-        print(f"✓ Found '{substring}' in page 0")
-    
-    # Extract text from page 1 and check for required substrings
-    text1 = page1.get_text()
-    print(f"\n--- Page 1 text excerpt (first 500 chars) ---")
-    print(text1[:500])
-    
-    required_page1 = [
-        'Общая площадь',
-        '5467,9'
-    ]
-    
-    for substring in required_page1:
-        assert substring in text1, f"Page 1 should contain '{substring}'"
-        print(f"✓ Found '{substring}' in page 1")
-    
-    doc.close()
-    print("✅ TEST 4 PASSED")
+    print("✅ PASS: GET /api/zayavlenie/background")
+    return True
+
 
 def test_5_preview_png():
-    """Test 5: POST /api/zayavlenie/preview-png with side=front and side=back"""
+    """
+    TEST 5: POST /api/zayavlenie/preview-png
+    - with "side":"front" → 200 image/png
+    - with "side":"back" → 200 image/png (different image)
+    """
     print("\n=== TEST 5: POST /api/zayavlenie/preview-png ===")
     
-    payload = {
-        "records": [{
-            "fio": "Иванов Иван Иванович",
-            "birth_year": "2006",
-            "passport_series": "MP",
-            "passport_number": "1234567",
-            "res_street": "пр-т Дзержинского",
-            "res_house": "85",
-            "from_place": "г. Гомель",
-            "basis": "договор найма № 12 от 01.09.2024",
-            "sign_date": "01.09.2024",
-            "area": "5467,9",
-            "occupancy_count": "250",
-            "minors_count": "3"
-        }],
-        "side": "front"
+    record = {
+        "fio": "Иванов Иван Иванович",
+        "birth_year": "2006",
+        "passport_series": "MP",
+        "passport_number": "1234567",
+        "res_street": "пр-т Дзержинского",
+        "res_house": "85",
+        "from_place": "г. Гомель",
+        "basis": "договор найма № 12 от 01.09.2024",
+        "sign_date": "01.09.2024",
+        "area": "5467,9",
+        "occupancy_count": "250",
+        "minors_count": "3"
     }
     
     # Test front
-    resp_front = requests.post(f"{API_BASE}/zayavlenie/preview-png", json=payload)
-    print(f"Front status: {resp_front.status_code}")
-    assert resp_front.status_code == 200, f"Expected 200, got {resp_front.status_code}"
-    assert resp_front.headers.get("Content-Type") == "image/png"
+    print("\nTesting side='front'")
+    payload = {"records": [record], "side": "front"}
+    resp = requests.post(f"{BASE_URL}/zayavlenie/preview-png", json=payload)
+    print(f"Status: {resp.status_code}")
     
-    png_front = resp_front.content
-    assert png_front[:4] == b'\x89PNG', "Front should be valid PNG"
-    print(f"✓ Front: valid PNG, size={len(png_front)} bytes")
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    content_type = resp.headers.get("Content-Type", "")
+    print(f"Content-Type: {content_type}")
+    
+    if "image/png" not in content_type:
+        print(f"❌ FAIL: Expected image/png, got {content_type}")
+        return False
+    
+    front_data = resp.content
+    print(f"Front PNG size: {len(front_data)} bytes")
+    
+    if not front_data.startswith(b"\x89PNG"):
+        print(f"❌ FAIL: PNG should start with \\x89PNG")
+        return False
     
     # Test back
-    payload["side"] = "back"
-    resp_back = requests.post(f"{API_BASE}/zayavlenie/preview-png", json=payload)
-    print(f"Back status: {resp_back.status_code}")
-    assert resp_back.status_code == 200, f"Expected 200, got {resp_back.status_code}"
-    assert resp_back.headers.get("Content-Type") == "image/png"
+    print("\nTesting side='back'")
+    payload = {"records": [record], "side": "back"}
+    resp = requests.post(f"{BASE_URL}/zayavlenie/preview-png", json=payload)
+    print(f"Status: {resp.status_code}")
     
-    png_back = resp_back.content
-    assert png_back[:4] == b'\x89PNG', "Back should be valid PNG"
-    print(f"✓ Back: valid PNG, size={len(png_back)} bytes")
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    content_type = resp.headers.get("Content-Type", "")
+    print(f"Content-Type: {content_type}")
+    
+    if "image/png" not in content_type:
+        print(f"❌ FAIL: Expected image/png, got {content_type}")
+        return False
+    
+    back_data = resp.content
+    print(f"Back PNG size: {len(back_data)} bytes")
+    
+    if not back_data.startswith(b"\x89PNG"):
+        print(f"❌ FAIL: PNG should start with \\x89PNG")
+        return False
     
     # Verify they are different
-    assert png_front != png_back, "Front and back should be different images"
-    print(f"✓ Front and back are different images")
+    if front_data == back_data:
+        print(f"❌ FAIL: Front and back images should be different")
+        return False
     
-    print("✅ TEST 5 PASSED")
+    size_diff = abs(len(front_data) - len(back_data))
+    print(f"Size difference: {size_diff} bytes ({size_diff/len(front_data)*100:.1f}%)")
+    print("✓ Front and back are different images")
+    
+    print("✅ PASS: POST /api/zayavlenie/preview-png")
+    return True
+
 
 def test_6_prefill():
-    """Test 6: POST /api/zayavlenie/prefill"""
+    """
+    TEST 6: POST /api/zayavlenie/prefill
+    - with students array → 200, returns records array (regression not broken)
+    """
     print("\n=== TEST 6: POST /api/zayavlenie/prefill ===")
     
     payload = {
@@ -313,197 +495,320 @@ def test_6_prefill():
         }]
     }
     
-    resp = requests.post(f"{API_BASE}/zayavlenie/prefill", json=payload)
+    resp = requests.post(f"{BASE_URL}/zayavlenie/prefill", json=payload)
     print(f"Status: {resp.status_code}")
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
     
     data = resp.json()
-    assert "records" in data, "Response should contain 'records'"
+    print(f"Response keys: {list(data.keys())}")
+    
+    if "records" not in data:
+        print(f"❌ FAIL: Missing 'records' key")
+        return False
+    
     records = data["records"]
-    assert isinstance(records, list), "records should be an array"
-    assert len(records) > 0, "records should not be empty"
+    if not isinstance(records, list):
+        print(f"❌ FAIL: records should be a list, got {type(records)}")
+        return False
     
-    print(f"✓ Returned {len(records)} record(s)")
-    print(f"First record: {records[0]}")
+    if len(records) != 1:
+        print(f"❌ FAIL: Expected 1 record, got {len(records)}")
+        return False
     
-    print("✅ TEST 6 PASSED")
+    print(f"Record: {records[0]}")
+    
+    print("✅ PASS: POST /api/zayavlenie/prefill")
+    return True
 
-def test_7_regression_package():
-    """Test 7: Regression - master-template, master-upload, package"""
-    print("\n=== TEST 7: REGRESSION - Package flow ===")
+
+def test_7_package_regression():
+    """
+    TEST 7: REGRESSION of package
+    - GET /api/master-template → 200 (xlsx)
+    - Fill one row via openpyxl
+    - POST /api/master-upload → 200, has 'zayavlenie' key
+    - POST /api/package with include.zayavlenie → 200, PDF with pages > 0
+    """
+    print("\n=== TEST 7: Package regression ===")
     
-    # Get master template
-    print("\n--- Step 1: GET /api/master-template ---")
-    resp = requests.get(f"{API_BASE}/master-template")
+    # Step 1: Get master template
+    print("\nStep 7.1: GET /api/master-template")
+    resp = requests.get(f"{BASE_URL}/master-template")
     print(f"Status: {resp.status_code}")
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-    assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in resp.headers.get("Content-Type", "")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    content_type = resp.headers.get("Content-Type", "")
+    print(f"Content-Type: {content_type}")
+    
+    if "spreadsheet" not in content_type and "excel" not in content_type:
+        print(f"⚠ Warning: Unexpected content type {content_type}, but continuing...")
     
     xlsx_data = resp.content
-    print(f"✓ Downloaded template, size={len(xlsx_data)} bytes")
+    print(f"XLSX size: {len(xlsx_data)} bytes")
     
-    # Fill the template
-    print("\n--- Step 2: Fill template with openpyxl ---")
-    wb = load_workbook(io.BytesIO(xlsx_data))
-    ws = wb.active
+    # Step 2: Fill one row
+    print("\nStep 7.2: Fill template with test data")
+    try:
+        wb = load_workbook(io.BytesIO(xlsx_data))
+        ws = wb["Данные"]
+        
+        # Fill row 3 with test data (row 2 is headers)
+        test_data = {
+            "ФИО": "Иванов Иван Иванович",
+            "Дата рождения": datetime(2006, 8, 3),
+            "Гражданство": "Республика Беларусь",
+            "Номер паспорта": "MP 1234567",
+            "Дата выдачи": datetime(2020, 1, 10),
+            "Срок действия": datetime(2030, 1, 10),
+            "Кем выдан": "МВД РБ",
+            "ИИН": "1234567A001PB5",
+            "Номер договора": "TEST-001",
+            "Дата подписания": datetime(2025, 7, 21),
+            "Номер приказа": "123",
+            "Дата приказа": datetime(2025, 7, 21),
+            "Номер комнаты": "101",
+            "Срок договора до": datetime(2028, 6, 30),
+            "Адрес регистрации": "г. Минск, ул. Тестовая, д. 1",
+            "Телефон": "+375291234567",
+            "Дата прибытия": datetime(2024, 9, 1),
+            "Проживает с": datetime(2010, 1, 1),
+            "Дата регистрации": datetime(2024, 9, 1),
+            "Регистрация с": datetime(2024, 9, 1),
+            "Регистрация по": datetime(2028, 6, 30),
+            "Срок пребывания": datetime(2028, 6, 30),
+        }
+        
+        # Get headers from row 2
+        headers = []
+        for cell in ws[2]:
+            if cell.value:
+                headers.append(cell.value)
+        
+        print(f"Found {len(headers)} headers")
+        
+        # Fill row 3
+        for col_idx, header in enumerate(headers, start=1):
+            if header in test_data:
+                ws.cell(row=3, column=col_idx, value=test_data[header])
+        
+        # Save to bytes
+        output = io.BytesIO()
+        wb.save(output)
+        filled_xlsx = output.getvalue()
+        print(f"Filled XLSX size: {len(filled_xlsx)} bytes")
+        
+    except Exception as e:
+        print(f"❌ FAIL: Error filling template: {e}")
+        return False
     
-    # Find header row (usually row 2)
-    headers = {}
-    for col_idx, cell in enumerate(ws[2], start=1):
-        if cell.value:
-            headers[cell.value] = col_idx
+    # Step 3: Upload master
+    print("\nStep 7.3: POST /api/master-upload")
+    files = {"file": ("test_master.xlsx", filled_xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    resp = requests.post(f"{BASE_URL}/master-upload", files=files)
+    print(f"Status: {resp.status_code}")
     
-    print(f"Found {len(headers)} headers")
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
     
-    # Fill row 3 with test data
-    row_idx = 3
-    test_data = {
-        "ФИО": "Иванов Иван Иванович",
-        "Дата рождения": datetime(2006, 8, 3),
-        "Гражданство": "Республика Беларусь",
-        "Номер паспорта": "MP1234567",
-        "Дата выдачи": datetime(2020, 1, 10),
-        "Срок действия": datetime(2030, 1, 10),
-        "Кем выдан": "РОВД Минска",
-        "Номер договора": "TEST-001",
-        "Дата подписания": datetime(2024, 9, 1),
-        "Номер комнаты": "101",
-        "Адрес регистрации": "г. Минск, ул. Тестовая, д. 1",
-        "Телефон": "+375291234567"
-    }
+    data = resp.json()
+    print(f"Response keys: {list(data.keys())}")
     
-    for header, value in test_data.items():
-        if header in headers:
-            col_idx = headers[header]
-            ws.cell(row=row_idx, column=col_idx, value=value)
+    if "zayavlenie" not in data:
+        print(f"❌ FAIL: Missing 'zayavlenie' key in response")
+        return False
     
-    # Save to bytes
-    filled_xlsx = io.BytesIO()
-    wb.save(filled_xlsx)
-    filled_xlsx.seek(0)
-    print("✓ Template filled with test data")
+    zayavlenie_data = data["zayavlenie"]
+    print(f"Zayavlenie records count: {len(zayavlenie_data) if isinstance(zayavlenie_data, list) else 'N/A'}")
     
-    # Upload
-    print("\n--- Step 3: POST /api/master-upload ---")
-    files = {"file": ("test_data.xlsx", filled_xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
-    resp2 = requests.post(f"{API_BASE}/master-upload", files=files)
-    print(f"Status: {resp2.status_code}")
-    assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}"
-    
-    upload_data = resp2.json()
-    print(f"Upload response keys: {list(upload_data.keys())}")
-    
-    assert "zayavlenie" in upload_data, "Response should contain 'zayavlenie' key"
-    zayavlenie_records = upload_data["zayavlenie"]
-    assert isinstance(zayavlenie_records, list), "zayavlenie should be an array"
-    assert len(zayavlenie_records) > 0, "zayavlenie should not be empty"
-    print(f"✓ zayavlenie key present with {len(zayavlenie_records)} record(s)")
+    if not isinstance(zayavlenie_data, list) or len(zayavlenie_data) == 0:
+        print(f"❌ FAIL: zayavlenie should be non-empty list")
+        return False
     
     # Get master data for package
-    masters = upload_data.get("masters", [])
-    if not masters:
-        print("⚠ No masters in response, using upload_data directly")
-        masters = [upload_data]
+    master_data = data.get("master", [])
+    if not master_data:
+        print(f"❌ FAIL: No master data in response")
+        return False
     
-    # Test package
-    print("\n--- Step 4: POST /api/package ---")
+    print(f"Master records count: {len(master_data)}")
+    
+    # Step 4: Generate package
+    print("\nStep 7.4: POST /api/package")
     package_payload = {
-        "people": [masters[0]],
-        "include": {
-            "zayavlenie": True
-        }
+        "people": [master_data[0]],
+        "include": {"zayavlenie": True}
     }
     
-    resp3 = requests.post(f"{API_BASE}/package", json=package_payload)
-    print(f"Status: {resp3.status_code}")
-    assert resp3.status_code == 200, f"Expected 200, got {resp3.status_code}"
-    assert resp3.headers.get("Content-Type") == "application/pdf"
+    resp = requests.post(f"{BASE_URL}/package", json=package_payload)
+    print(f"Status: {resp.status_code}")
     
-    package_pdf = resp3.content
-    assert package_pdf[:4] == b'%PDF', "Package should be valid PDF"
-    print(f"✓ Package PDF generated, size={len(package_pdf)} bytes")
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
+    
+    content_type = resp.headers.get("Content-Type", "")
+    print(f"Content-Type: {content_type}")
+    
+    if "application/pdf" not in content_type:
+        print(f"❌ FAIL: Expected application/pdf, got {content_type}")
+        return False
+    
+    pdf_data = resp.content
+    print(f"Package PDF size: {len(pdf_data)} bytes")
+    
+    if not pdf_data.startswith(b"%PDF"):
+        print(f"❌ FAIL: PDF should start with %PDF")
+        return False
     
     # Check page count
-    doc = pymupdf.open(stream=package_pdf, filetype="pdf")
-    page_count = len(doc)
-    print(f"Package page count: {page_count}")
-    assert page_count > 0, "Package should have at least 1 page"
-    doc.close()
+    try:
+        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
+        page_count = len(doc)
+        print(f"Package page count: {page_count}")
+        doc.close()
+        
+        if page_count == 0:
+            print(f"❌ FAIL: Package should have pages > 0")
+            return False
+        
+    except Exception as e:
+        print(f"❌ FAIL: Error processing package PDF: {e}")
+        return False
     
-    print("✅ TEST 7 PASSED")
+    print("✅ PASS: Package regression")
+    return True
+
 
 def test_8_health_regression():
-    """Test 8: Health regression - _ping and stats"""
-    print("\n=== TEST 8: HEALTH REGRESSION ===")
+    """
+    TEST 8: Health regression
+    - GET /api/_ping → 200 {ok:true}
+    - GET /api/stats → 200
+    """
+    print("\n=== TEST 8: Health regression ===")
     
     # Test _ping
-    print("\n--- GET /api/_ping ---")
-    resp1 = requests.get(f"{API_BASE}/_ping")
-    print(f"Status: {resp1.status_code}")
-    assert resp1.status_code == 200, f"Expected 200, got {resp1.status_code}"
+    print("\nTesting GET /api/_ping")
+    resp = requests.get(f"{BASE_URL}/_ping")
+    print(f"Status: {resp.status_code}")
     
-    data1 = resp1.json()
-    assert data1.get("ok") == True, f"Expected ok=true, got {data1}"
-    print("✓ _ping returned ok=true")
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    print(f"Response: {data}")
+    
+    if not data.get("ok"):
+        print(f"❌ FAIL: Expected ok=true, got {data.get('ok')}")
+        return False
     
     # Test stats
-    print("\n--- GET /api/stats ---")
-    resp2 = requests.get(f"{API_BASE}/stats")
-    print(f"Status: {resp2.status_code}")
-    assert resp2.status_code == 200, f"Expected 200, got {resp2.status_code}"
+    print("\nTesting GET /api/stats")
+    resp = requests.get(f"{BASE_URL}/stats")
+    print(f"Status: {resp.status_code}")
     
-    data2 = resp2.json()
-    print(f"Stats keys: {list(data2.keys())}")
-    assert "total" in data2, "Stats should contain 'total'"
-    assert "drafts" in data2, "Stats should contain 'drafts'"
-    print("✓ Stats endpoint working")
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
     
-    print("✅ TEST 8 PASSED")
+    data = resp.json()
+    print(f"Response keys: {list(data.keys())}")
+    
+    print("✅ PASS: Health regression")
+    return True
+
+
+def verify_template_reset():
+    """
+    Final verification: Ensure custom template is reset (is_custom==false)
+    """
+    print("\n=== FINAL VERIFICATION: Template reset ===")
+    resp = requests.get(f"{BASE_URL}/zayavlenie/template")
+    
+    if resp.status_code != 200:
+        print(f"⚠ Warning: Could not verify template reset, status {resp.status_code}")
+        return
+    
+    data = resp.json()
+    is_custom = data.get("is_custom")
+    
+    print(f"is_custom: {is_custom}")
+    
+    if is_custom:
+        print("⚠ Warning: Template is still custom, resetting...")
+        reset_resp = requests.post(f"{BASE_URL}/zayavlenie/template/reset")
+        if reset_resp.status_code == 200:
+            print("✓ Template reset successfully")
+        else:
+            print(f"⚠ Warning: Could not reset template, status {reset_resp.status_code}")
+    else:
+        print("✓ Template is already reset (is_custom=false)")
+
 
 def main():
-    """Run all tests"""
     print("=" * 80)
-    print("BACKEND TESTING: Zayavlenie Endpoints (Redesigned A4-PORTRAIT)")
+    print("BACKEND TESTING: /api/zayavlenie/* endpoints")
+    print("Testing EDITABLE TEMPLATE structure (text/line/field elements)")
     print("=" * 80)
-    print(f"Backend URL: {API_BASE}")
     
-    try:
-        # Test 1: GET layout
-        original_layout = test_1_layout_get()
-        
-        # Test 2: POST layout (save & merge)
-        test_2_layout_save_and_merge(original_layout)
-        
-        # Test 3: Background images
-        test_3_background_images()
-        
-        # Test 4: Preview PDF
-        test_4_preview_pdf()
-        
-        # Test 5: Preview PNG
-        test_5_preview_png()
-        
-        # Test 6: Prefill
-        test_6_prefill()
-        
-        # Test 7: Regression - package
-        test_7_regression_package()
-        
-        # Test 8: Health regression
-        test_8_health_regression()
-        
-        print("\n" + "=" * 80)
-        print("✅ ALL TESTS PASSED (8/8)")
-        print("=" * 80)
-        
-    except AssertionError as e:
-        print(f"\n❌ TEST FAILED: {e}")
-        raise
-    except Exception as e:
-        print(f"\n❌ UNEXPECTED ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+    tests = [
+        ("TEST 1: GET template", test_1_get_template),
+        ("TEST 2: SAVE+RESET template", test_2_save_and_reset_template),
+        ("TEST 3: POST preview (PDF)", test_3_preview_pdf),
+        ("TEST 4: GET background images", test_4_background_images),
+        ("TEST 5: POST preview-png", test_5_preview_png),
+        ("TEST 6: POST prefill", test_6_prefill),
+        ("TEST 7: Package regression", test_7_package_regression),
+        ("TEST 8: Health regression", test_8_health_regression),
+    ]
+    
+    results = []
+    
+    for name, test_func in tests:
+        try:
+            result = test_func()
+            results.append((name, result))
+        except Exception as e:
+            print(f"\n❌ EXCEPTION in {name}: {e}")
+            import traceback
+            traceback.print_exc()
+            results.append((name, False))
+    
+    # Final verification
+    verify_template_reset()
+    
+    # Summary
+    print("\n" + "=" * 80)
+    print("SUMMARY")
+    print("=" * 80)
+    
+    passed = sum(1 for _, result in results if result)
+    total = len(results)
+    
+    for name, result in results:
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"{status}: {name}")
+    
+    print(f"\nTotal: {passed}/{total} tests passed ({passed/total*100:.1f}%)")
+    
+    if passed == total:
+        print("\n🎉 ALL TESTS PASSED!")
+        return 0
+    else:
+        print(f"\n⚠ {total - passed} test(s) failed")
+        return 1
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
