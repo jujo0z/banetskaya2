@@ -7,12 +7,13 @@ import { Label } from "@/components/ui/label";
 import {
   FileSignature, Printer, Download, Upload, Plus, Copy, Trash2, Eraser, Save,
   Wand2, ChevronDown, PenSquare, Type, Minus, Bold, Italic, Underline,
-  AlignLeft, AlignCenter, AlignRight, RotateCcw,
+  AlignLeft, AlignCenter, AlignRight, RotateCcw, CheckSquare, Square,
 } from "lucide-react";
 import {
   zayavlenieFields, getZayavlenieDefaults, saveZayavlenieDefaults, zayavleniePrefill,
   openZayavleniePdf, downloadZayavleniePdf, masterUpload, downloadMasterTemplate,
   getZayavlenieTemplate, saveZayavlenieTemplate, resetZayavlenieTemplate,
+  getZayavlenieRecords, saveZayavlenieRecords,
 } from "@/lib/apiClient";
 import ZayavPreview from "@/components/ZayavPreview";
 import { zayavOverlayText } from "@/lib/zayavOverlay";
@@ -48,18 +49,21 @@ export default function Zayavlenie() {
 
   const location = useLocation();
   const fileRef = useRef(null);
+  const loadedRef = useRef(false);
+  const saveTimer = useRef(null);
 
   const pIdx = activeIdx >= 0 ? activeIdx : 0;
   const rec = records[pIdx] || {};
   const values = useMemo(() => zayavOverlayText(rec), [rec]);
   const pageElements = useMemo(() => template.filter((e) => Number(e.page) === page), [template, page]);
   const selectedEl = useMemo(() => template.find((e) => e.id === selectedId) || null, [template, selectedId]);
+  const selectedCount = useMemo(() => records.filter((r) => r.__print !== false).length, [records]);
 
   useEffect(() => {
     (async () => {
       try {
-        const [f, d, tpl] = await Promise.all([
-          zayavlenieFields(), getZayavlenieDefaults(), getZayavlenieTemplate(),
+        const [f, d, tpl, saved] = await Promise.all([
+          zayavlenieFields(), getZayavlenieDefaults(), getZayavlenieTemplate(), getZayavlenieRecords(),
         ]);
         setGroups(f.groups || []);
         setDefaults(d || {});
@@ -70,6 +74,9 @@ export default function Zayavlenie() {
           const recs = await zayavleniePrefill(prefillList);
           setRecords(recs.map((r) => ({ ...(d || {}), ...r })));
           toast.success(`Подставлено заявлений: ${recs.length}`);
+        } else if (Array.isArray(saved) && saved.length) {
+          setRecords(saved);
+          toast.success(`Загружено сохранённых заявлений: ${saved.length}`);
         } else {
           setRecords([{ ...(d || {}) }]);
         }
@@ -77,9 +84,20 @@ export default function Zayavlenie() {
         toast.error("Не удалось загрузить данные Заявления");
       } finally {
         setLoading(false);
+        setTimeout(() => { loadedRef.current = true; }, 400);
       }
     })();
   }, []);
+
+  // Авто-сохранение списка заявлений в БД («загрузить один раз»)
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveZayavlenieRecords(records).catch(() => {});
+    }, 900);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [records]);
 
   // ---- Excel / defaults / records (без изменений логики) ----
   const onUpload = async (e) => {
@@ -120,8 +138,21 @@ export default function Zayavlenie() {
   const removeRecord = (idx) => setRecords((rs) => { if (rs.length <= 1) return [{ ...defaults }]; const n = rs.filter((_, i) => i !== idx); setActiveIdx((a) => Math.min(a, n.length - 1)); return n; });
   const clearRecordAt = (idx) => setRecords((rs) => rs.map((r, i) => (i === idx ? { ...defaults } : r)));
 
-  const doOpen = async () => { try { await openZayavleniePdf(records); toast("PDF открыт — печать в масштабе 100%"); } catch { toast.error("Ошибка открытия PDF"); } };
-  const doDownload = async () => { try { await downloadZayavleniePdf(records); } catch { toast.error("Ошибка скачивания"); } };
+  const toggleSelect = (idx) => setRecords((rs) => rs.map((r, i) => (i === idx ? { ...r, __print: r.__print === false } : r)));
+  const setAllSelected = (val) => setRecords((rs) => rs.map((r) => ({ ...r, __print: val })));
+  const selectedRecords = () => records.filter((r) => r.__print !== false).map(({ __print, ...r }) => r);
+
+  const doOpen = async () => {
+    const sel = selectedRecords();
+    if (!sel.length) { toast.error("Отметьте хотя бы одно заявление для печати"); return; }
+    try { await openZayavleniePdf(sel); toast(`PDF (${sel.length}) открыт — печать в масштабе 100%`); }
+    catch { toast.error("Ошибка открытия PDF"); }
+  };
+  const doDownload = async () => {
+    const sel = selectedRecords();
+    if (!sel.length) { toast.error("Отметьте хотя бы одно заявление"); return; }
+    try { await downloadZayavleniePdf(sel); } catch { toast.error("Ошибка скачивания"); }
+  };
 
   // ---- Редактор шаблона ----
   const updateEl = (id, patch) => setTemplate((t) => t.map((e) => (e.id === id ? { ...e, ...patch } : e)));
@@ -220,22 +251,29 @@ export default function Zayavlenie() {
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={doOpen} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="zayav-open"><Printer className="h-4 w-4 mr-2" /> Печать</Button>
-            <Button onClick={doDownload} variant="outline" data-testid="zayav-download"><Download className="h-4 w-4 mr-2" /> Скачать PDF</Button>
+            <Button onClick={doOpen} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="zayav-open"><Printer className="h-4 w-4 mr-2" /> Печать ({selectedCount})</Button>
+            <Button onClick={doDownload} variant="outline" data-testid="zayav-download"><Download className="h-4 w-4 mr-2" /> Скачать ({selectedCount})</Button>
           </div>
 
           {/* Records */}
           <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold">Заявления ({records.length})</div>
-              <Button size="sm" variant="outline" onClick={addRecord} data-testid="zayav-add-record"><Plus className="h-4 w-4 mr-1" /> Добавить</Button>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold">Заявления ({records.length}) · выбрано {selectedCount}</div>
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={() => setAllSelected(true)} className="text-[11px] px-1.5 py-1 rounded border border-white/10 hover:bg-white/10 flex items-center gap-1" title="Выбрать все" data-testid="zayav-select-all"><CheckSquare className="h-3.5 w-3.5" /> Все</button>
+                <button type="button" onClick={() => setAllSelected(false)} className="text-[11px] px-1.5 py-1 rounded border border-white/10 hover:bg-white/10 flex items-center gap-1" title="Снять выбор" data-testid="zayav-select-none"><Square className="h-3.5 w-3.5" /> Снять</button>
+                <Button size="sm" variant="outline" onClick={addRecord} data-testid="zayav-add-record"><Plus className="h-4 w-4 mr-1" /> Добавить</Button>
+              </div>
             </div>
+            <p className="text-[11px] text-muted-foreground">Отметьте галочками, какие заявления печатать. Список сохраняется автоматически — грузить Excel заново не нужно.</p>
             <div className="space-y-2 max-h-[460px] overflow-auto pr-1">
               {records.map((r, idx) => {
                 const open = idx === activeIdx;
+                const checked = r.__print !== false;
                 return (
-                  <div key={idx} className="rounded-md border border-white/10 bg-black/20" data-testid={`zayav-record-${idx}`}>
+                  <div key={idx} className={`rounded-md border ${checked ? "border-[#E11D48]/40" : "border-white/10"} bg-black/20`} data-testid={`zayav-record-${idx}`}>
                     <div className="flex items-center gap-1 px-2 py-1.5">
+                      <input type="checkbox" checked={checked} onChange={() => toggleSelect(idx)} className="h-4 w-4 accent-[#E11D48] cursor-pointer" title="Печатать это заявление" data-testid={`zayav-record-check-${idx}`} />
                       <button type="button" onClick={() => setActiveIdx(open ? -1 : idx)} className="flex items-center gap-2 flex-1 min-w-0 text-left text-sm" data-testid={`zayav-record-toggle-${idx}`}>
                         <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
                         <span className="truncate">{recordLabel(r, idx)}</span>

@@ -1620,6 +1620,10 @@ class ZayavlenieTemplate(BaseModel):
     template: List[Dict[str, Any]] = []
 
 
+class ZayavlenieRecords(BaseModel):
+    records: List[Dict[str, Any]] = []
+
+
 async def _zayav_layout_overrides():
     doc = await db.app_settings.find_one({"key": "zayavlenie_layout"}, {"_id": 0})
     return (doc or {}).get("value", {}) or {}
@@ -1703,6 +1707,22 @@ async def zayavlenie_save_template(payload: ZayavlenieTemplate):
 async def zayavlenie_reset_template():
     await db.app_settings.delete_one({"key": "zayavlenie_template"})
     return {"reset": True, "template": docsvc.get_zayav_default_template()}
+
+
+@api_router.get("/zayavlenie/records")
+async def zayavlenie_get_records():
+    doc = await db.app_settings.find_one({"key": "zayavlenie_records"}, {"_id": 0})
+    return {"records": (doc or {}).get("value", []) or []}
+
+
+@api_router.post("/zayavlenie/records")
+async def zayavlenie_save_records(payload: ZayavlenieRecords):
+    await db.app_settings.update_one(
+        {"key": "zayavlenie_records"},
+        {"$set": {"key": "zayavlenie_records", "value": payload.records}},
+        upsert=True,
+    )
+    return {"saved": True, "count": len(payload.records)}
 
 
 @api_router.get("/zayavlenie/background")

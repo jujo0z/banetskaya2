@@ -555,6 +555,14 @@ export async function resetZayavlenieTemplate() {
   const { data } = await api.post("/zayavlenie/template/reset");
   return data;
 }
+export async function getZayavlenieRecords() {
+  const { data } = await api.get("/zayavlenie/records");
+  return data.records || [];
+}
+export async function saveZayavlenieRecords(records) {
+  const { data } = await api.post("/zayavlenie/records", { records });
+  return data;
+}
 
 
 // ---- Полный пакет документов (договор + Ф19 + Ф24 + сообщение) ----

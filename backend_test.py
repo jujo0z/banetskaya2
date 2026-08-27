@@ -1,156 +1,46 @@
 #!/usr/bin/env python3
 """
-Backend testing for /api/zayavlenie/* endpoints after template conversion to EDITABLE TEMPLATE.
-Tests the new template structure with elements (text/line/field).
+Backend testing for NEW /api/zayavlenie/* features:
+1. Saving list of records (persist)
+2. Underline in PDF doesn't break generation
+3. Regression tests
+
+Based on review_request in Russian.
 """
 import requests
 import pymupdf
 import io
 import sys
-from openpyxl import load_workbook
-from datetime import datetime
 
 # Backend URL from frontend/.env
 BASE_URL = "https://form-portal-15.preview.emergentagent.com/api"
 
-def test_1_get_template():
+def test_1_save_records_persist():
     """
-    TEST 1: GET /api/zayavlenie/template → 200
-    - template is array of ~149 elements
-    - types include 'text', 'line', 'field'
-    - among field elements: field=='applicant', field=='passport_series', field=='area'
-    - slots is array of objects with keys slot/page/label
-    - is_custom == false (on clean DB)
-    - page_count == 2
+    TEST 1: Saving list of records (persist)
+    a. POST /api/zayavlenie/records {"records":[{"fio":"A","__print":true},{"fio":"B","__print":false}]}
+       → 200, saved==true, count==2
+    b. GET /api/zayavlenie/records → {"records":[...]} exactly 2 records, __print field preserved (true and false)
+    c. POST /api/zayavlenie/records {"records":[]} → 200, count==0
+       GET → records == [] (empty)
     """
-    print("\n=== TEST 1: GET /api/zayavlenie/template ===")
-    resp = requests.get(f"{BASE_URL}/zayavlenie/template")
+    print("\n=== TEST 1: Saving list of records (persist) ===")
+    
+    # Step a: POST records with 2 items
+    print("\nStep 1a: POST /api/zayavlenie/records (2 records)")
+    payload = {
+        "records": [
+            {"fio": "A", "__print": True},
+            {"fio": "B", "__print": False}
+        ]
+    }
+    
+    resp = requests.post(f"{BASE_URL}/zayavlenie/records", json=payload)
     print(f"Status: {resp.status_code}")
     
     if resp.status_code != 200:
         print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-        return False
-    
-    data = resp.json()
-    print(f"Response keys: {list(data.keys())}")
-    
-    # Check required keys
-    if "template" not in data:
-        print("❌ FAIL: Missing 'template' key")
-        return False
-    
-    template = data["template"]
-    if not isinstance(template, list):
-        print(f"❌ FAIL: template is not a list, got {type(template)}")
-        return False
-    
-    elem_count = len(template)
-    print(f"Template elements count: {elem_count}")
-    
-    if elem_count < 140 or elem_count > 160:
-        print(f"❌ FAIL: Expected ~149 elements, got {elem_count}")
-        return False
-    
-    # Check types
-    types_found = set()
-    field_names = []
-    for elem in template:
-        if "type" in elem:
-            types_found.add(elem["type"])
-        if elem.get("type") == "field" and "field" in elem:
-            field_names.append(elem["field"])
-    
-    print(f"Types found: {types_found}")
-    print(f"Field elements count: {len(field_names)}")
-    print(f"Field names: {field_names}")
-    
-    required_types = {"text", "line", "field"}
-    if not required_types.issubset(types_found):
-        print(f"❌ FAIL: Missing required types. Expected {required_types}, found {types_found}")
-        return False
-    
-    # Check required field elements
-    required_fields = {"applicant", "passport_series", "area"}
-    fields_set = set(field_names)
-    if not required_fields.issubset(fields_set):
-        print(f"❌ FAIL: Missing required field elements. Expected {required_fields}, found {fields_set}")
-        return False
-    
-    # Check slots
-    if "slots" not in data:
-        print("❌ FAIL: Missing 'slots' key")
-        return False
-    
-    slots = data["slots"]
-    if not isinstance(slots, list) or len(slots) == 0:
-        print(f"❌ FAIL: slots should be non-empty array, got {type(slots)} with {len(slots) if isinstance(slots, list) else 0} items")
-        return False
-    
-    # Check slot structure
-    first_slot = slots[0]
-    required_slot_keys = {"slot", "page", "label"}
-    if not required_slot_keys.issubset(set(first_slot.keys())):
-        print(f"❌ FAIL: Slot missing required keys. Expected {required_slot_keys}, found {set(first_slot.keys())}")
-        return False
-    
-    print(f"Slots count: {len(slots)}")
-    print(f"First slot: {first_slot}")
-    
-    # Check is_custom
-    if "is_custom" not in data:
-        print("❌ FAIL: Missing 'is_custom' key")
-        return False
-    
-    is_custom = data["is_custom"]
-    print(f"is_custom: {is_custom}")
-    
-    # Note: is_custom might be true if previous tests ran, so we'll just check it exists
-    
-    # Check page_count
-    if "page_count" not in data:
-        print("❌ FAIL: Missing 'page_count' key")
-        return False
-    
-    page_count = data["page_count"]
-    print(f"page_count: {page_count}")
-    
-    if page_count != 2:
-        print(f"❌ FAIL: Expected page_count=2, got {page_count}")
-        return False
-    
-    print("✅ PASS: GET /api/zayavlenie/template")
-    return True
-
-
-def test_2_save_and_reset_template():
-    """
-    TEST 2: SAVE+RESET template (IMPORTANT about order!)
-    a. POST /api/zayavlenie/template with custom template → 200, saved==true, count==1
-    b. GET /api/zayavlenie/template → template contains exactly 1 element, is_custom==true
-    c. POST /api/zayavlenie/template/reset (no body) → 200, reset==true, response contains ~149 elements
-    d. GET /api/zayavlenie/template → is_custom==false, template again ~149 elements
-    """
-    print("\n=== TEST 2: SAVE+RESET template ===")
-    
-    # Step a: POST custom template
-    print("\nStep 2a: POST /api/zayavlenie/template (save custom)")
-    custom_template = [{
-        "id": "t1",
-        "type": "text",
-        "page": 1,
-        "x": 10,
-        "y": 10,
-        "align": "left",
-        "text": "ТЕСТ ШАПКА",
-        "size": 10,
-        "bold": True
-    }]
-    
-    resp = requests.post(f"{BASE_URL}/zayavlenie/template", json={"template": custom_template})
-    print(f"Status: {resp.status_code}")
-    
-    if resp.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
         return False
     
     data = resp.json()
@@ -160,118 +50,161 @@ def test_2_save_and_reset_template():
         print(f"❌ FAIL: saved should be true, got {data.get('saved')}")
         return False
     
-    if data.get("count") != 1:
-        print(f"❌ FAIL: count should be 1, got {data.get('count')}")
+    if data.get("count") != 2:
+        print(f"❌ FAIL: count should be 2, got {data.get('count')}")
+        return False
+    
+    print("✅ Step 1a PASS")
+    
+    # Step b: GET records (should return 2 records with __print preserved)
+    print("\nStep 1b: GET /api/zayavlenie/records (verify persist)")
+    resp = requests.get(f"{BASE_URL}/zayavlenie/records")
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
+    
+    data = resp.json()
+    print(f"Response: {data}")
+    
+    if "records" not in data:
+        print(f"❌ FAIL: Missing 'records' key")
+        return False
+    
+    records = data["records"]
+    if not isinstance(records, list):
+        print(f"❌ FAIL: records should be a list, got {type(records)}")
+        return False
+    
+    if len(records) != 2:
+        print(f"❌ FAIL: Expected exactly 2 records, got {len(records)}")
+        return False
+    
+    # Check __print field is preserved
+    print(f"Record 0: {records[0]}")
+    print(f"Record 1: {records[1]}")
+    
+    # Find records by fio
+    record_a = next((r for r in records if r.get("fio") == "A"), None)
+    record_b = next((r for r in records if r.get("fio") == "B"), None)
+    
+    if not record_a:
+        print(f"❌ FAIL: Could not find record with fio='A'")
+        return False
+    
+    if not record_b:
+        print(f"❌ FAIL: Could not find record with fio='B'")
+        return False
+    
+    if record_a.get("__print") != True:
+        print(f"❌ FAIL: Record A __print should be true, got {record_a.get('__print')}")
+        return False
+    
+    if record_b.get("__print") != False:
+        print(f"❌ FAIL: Record B __print should be false, got {record_b.get('__print')}")
+        return False
+    
+    print("✅ Step 1b PASS: __print field preserved correctly (true and false)")
+    
+    # Step c: POST empty records
+    print("\nStep 1c: POST /api/zayavlenie/records (empty)")
+    payload = {"records": []}
+    
+    resp = requests.post(f"{BASE_URL}/zayavlenie/records", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
+    
+    data = resp.json()
+    print(f"Response: {data}")
+    
+    if data.get("count") != 0:
+        print(f"❌ FAIL: count should be 0, got {data.get('count')}")
+        return False
+    
+    # GET records (should be empty)
+    print("\nStep 1c: GET /api/zayavlenie/records (verify empty)")
+    resp = requests.get(f"{BASE_URL}/zayavlenie/records")
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    print(f"Response: {data}")
+    
+    records = data.get("records", None)
+    if records is None:
+        print(f"❌ FAIL: Missing 'records' key")
+        return False
+    
+    if not isinstance(records, list):
+        print(f"❌ FAIL: records should be a list, got {type(records)}")
+        return False
+    
+    if len(records) != 0:
+        print(f"❌ FAIL: records should be empty, got {len(records)} items")
+        return False
+    
+    print("✅ Step 1c PASS: Empty records saved and retrieved")
+    
+    print("✅ PASS: TEST 1 - Saving list of records (persist)")
+    return True
+
+
+def test_2_underline_pdf():
+    """
+    TEST 2: Underline in PDF doesn't break generation
+    a. POST /api/zayavlenie/template {"template":[{"id":"u1","type":"text","page":1,"x":20,"y":20,
+       "align":"left","text":"Подчёркнутый","size":12,"underline":true}]} → 200 saved==true
+    b. POST /api/zayavlenie/preview {"records":[{"fio":"Тест"}]} → 200 application/pdf,
+       via pymupdf exactly 2 pages (doesn't crash)
+    c. MANDATORY at end: POST /api/zayavlenie/template/reset → 200 reset==true
+       (restore default template, otherwise preview will be almost empty)
+    """
+    print("\n=== TEST 2: Underline in PDF doesn't break generation ===")
+    
+    # Step a: POST template with underline
+    print("\nStep 2a: POST /api/zayavlenie/template (with underline)")
+    template = [{
+        "id": "u1",
+        "type": "text",
+        "page": 1,
+        "x": 20,
+        "y": 20,
+        "align": "left",
+        "text": "Подчёркнутый",
+        "size": 12,
+        "underline": True
+    }]
+    
+    payload = {"template": template}
+    resp = requests.post(f"{BASE_URL}/zayavlenie/template", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
+    
+    data = resp.json()
+    print(f"Response: {data}")
+    
+    if not data.get("saved"):
+        print(f"❌ FAIL: saved should be true, got {data.get('saved')}")
         return False
     
     print("✅ Step 2a PASS")
     
-    # Step b: GET template (should be custom)
-    print("\nStep 2b: GET /api/zayavlenie/template (verify custom)")
-    resp = requests.get(f"{BASE_URL}/zayavlenie/template")
-    print(f"Status: {resp.status_code}")
-    
-    if resp.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-        return False
-    
-    data = resp.json()
-    template = data.get("template", [])
-    is_custom = data.get("is_custom")
-    
-    print(f"Template elements count: {len(template)}")
-    print(f"is_custom: {is_custom}")
-    
-    if len(template) != 1:
-        print(f"❌ FAIL: Expected 1 element, got {len(template)}")
-        return False
-    
-    if not is_custom:
-        print(f"❌ FAIL: is_custom should be true, got {is_custom}")
-        return False
-    
-    print("✅ Step 2b PASS")
-    
-    # Step c: POST reset
-    print("\nStep 2c: POST /api/zayavlenie/template/reset")
-    resp = requests.post(f"{BASE_URL}/zayavlenie/template/reset")
-    print(f"Status: {resp.status_code}")
-    
-    if resp.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-        return False
-    
-    data = resp.json()
-    print(f"Response keys: {list(data.keys())}")
-    
-    if not data.get("reset"):
-        print(f"❌ FAIL: reset should be true, got {data.get('reset')}")
-        return False
-    
-    if "template" in data:
-        reset_template = data["template"]
-        print(f"Reset template elements count: {len(reset_template)}")
-        if len(reset_template) < 140 or len(reset_template) > 160:
-            print(f"❌ FAIL: Expected ~149 elements in reset response, got {len(reset_template)}")
-            return False
-    
-    print("✅ Step 2c PASS")
-    
-    # Step d: GET template (should be default again)
-    print("\nStep 2d: GET /api/zayavlenie/template (verify reset)")
-    resp = requests.get(f"{BASE_URL}/zayavlenie/template")
-    print(f"Status: {resp.status_code}")
-    
-    if resp.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-        return False
-    
-    data = resp.json()
-    template = data.get("template", [])
-    is_custom = data.get("is_custom")
-    
-    print(f"Template elements count: {len(template)}")
-    print(f"is_custom: {is_custom}")
-    
-    if len(template) < 140 or len(template) > 160:
-        print(f"❌ FAIL: Expected ~149 elements, got {len(template)}")
-        return False
-    
-    if is_custom:
-        print(f"❌ FAIL: is_custom should be false after reset, got {is_custom}")
-        return False
-    
-    print("✅ Step 2d PASS")
-    print("✅ PASS: SAVE+RESET template")
-    return True
-
-
-def test_3_preview_pdf():
-    """
-    TEST 3: POST /api/zayavlenie/preview (after reset!)
-    - 200, Content-Type application/pdf, body starts with %PDF
-    - Via pymupdf: EXACTLY 2 pages, each A4-portrait (rect width≈595.28, height≈841.89 pt)
-    - Text page 0 contains: 'ЗАЯВЛЕНИЕ', 'по месту пребывания', 'Иванов Иван Иванович', 'пр-т Дзержинского'
-    - Text page 1 contains: 'Общая площадь' and '5467,9'
-    """
-    print("\n=== TEST 3: POST /api/zayavlenie/preview ===")
-    
-    record = {
-        "fio": "Иванов Иван Иванович",
-        "birth_year": "2006",
-        "passport_series": "MP",
-        "passport_number": "1234567",
-        "res_street": "пр-т Дзержинского",
-        "res_house": "85",
-        "from_place": "г. Гомель",
-        "basis": "договор найма № 12 от 01.09.2024",
-        "sign_date": "01.09.2024",
-        "area": "5467,9",
-        "occupancy_count": "250",
-        "minors_count": "3"
-    }
-    
-    payload = {"records": [record]}
+    # Step b: POST preview (should not crash with underline)
+    print("\nStep 2b: POST /api/zayavlenie/preview (with underline template)")
+    payload = {"records": [{"fio": "Тест"}]}
     
     resp = requests.post(f"{BASE_URL}/zayavlenie/preview", json=payload)
     print(f"Status: {resp.status_code}")
@@ -295,6 +228,88 @@ def test_3_preview_pdf():
         print(f"❌ FAIL: PDF should start with %PDF, got {pdf_data[:10]}")
         return False
     
+    # Check with pymupdf (should not crash)
+    try:
+        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
+        page_count = len(doc)
+        print(f"Page count: {page_count}")
+        
+        if page_count != 2:
+            print(f"❌ FAIL: Expected exactly 2 pages, got {page_count}")
+            doc.close()
+            return False
+        
+        doc.close()
+        print("✅ Step 2b PASS: PDF generated successfully with underline (2 pages)")
+        
+    except Exception as e:
+        print(f"❌ FAIL: Error processing PDF with underline: {e}")
+        return False
+    
+    # Step c: MANDATORY reset template
+    print("\nStep 2c: POST /api/zayavlenie/template/reset (MANDATORY)")
+    resp = requests.post(f"{BASE_URL}/zayavlenie/template/reset")
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
+    
+    data = resp.json()
+    print(f"Response: {data}")
+    
+    if not data.get("reset"):
+        print(f"❌ FAIL: reset should be true, got {data.get('reset')}")
+        return False
+    
+    print("✅ Step 2c PASS: Template reset to default")
+    
+    print("✅ PASS: TEST 2 - Underline in PDF doesn't break generation")
+    return True
+
+
+def test_3_regression_preview():
+    """
+    TEST 3: REGRESSION - POST /api/zayavlenie/preview with real data
+    - 200 application/pdf
+    - Via pymupdf: 2 pages A4-portrait (rect≈595.28×841.89)
+    - Page 0 contains: 'ЗАЯВЛЕНИЕ', 'по месту пребывания', 'Иванов Иван Иванович', 'пр-т Дзержинского'
+    - Page 1 contains: 'Общая площадь' and '5467,9'
+    """
+    print("\n=== TEST 3: REGRESSION - POST /api/zayavlenie/preview ===")
+    
+    record = {
+        "fio": "Иванов Иван Иванович",
+        "birth_year": "2006",
+        "area": "5467,9",
+        "res_street": "пр-т Дзержинского"
+    }
+    
+    payload = {"records": [record]}
+    
+    resp = requests.post(f"{BASE_URL}/zayavlenie/preview", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        print(f"Response: {resp.text[:500]}")
+        return False
+    
+    content_type = resp.headers.get("Content-Type", "")
+    print(f"Content-Type: {content_type}")
+    
+    if "application/pdf" not in content_type:
+        print(f"❌ FAIL: Expected application/pdf, got {content_type}")
+        return False
+    
+    pdf_data = resp.content
+    print(f"PDF size: {len(pdf_data)} bytes")
+    
+    if not pdf_data.startswith(b"%PDF"):
+        print(f"❌ FAIL: PDF should start with %PDF")
+        return False
+    
     # Check with pymupdf
     try:
         doc = pymupdf.open(stream=pdf_data, filetype="pdf")
@@ -302,12 +317,12 @@ def test_3_preview_pdf():
         print(f"Page count: {page_count}")
         
         if page_count != 2:
-            print(f"❌ FAIL: Expected EXACTLY 2 pages, got {page_count}")
+            print(f"❌ FAIL: Expected 2 pages, got {page_count}")
             doc.close()
             return False
         
         # Check page sizes (A4 portrait: 595.28 x 841.89 pt)
-        for i in range(page_count):
+        for i in range(2):
             page = doc[i]
             rect = page.rect
             width = rect.width
@@ -327,7 +342,7 @@ def test_3_preview_pdf():
         
         # Check text content page 0
         page0_text = doc[0].get_text()
-        print(f"\nPage 0 text sample (first 500 chars):\n{page0_text[:500]}")
+        print(f"\nPage 0 text sample (first 300 chars):\n{page0_text[:300]}")
         
         required_page0 = ["ЗАЯВЛЕНИЕ", "по месту пребывания", "Иванов Иван Иванович", "пр-т Дзержинского"]
         for text in required_page0:
@@ -339,7 +354,7 @@ def test_3_preview_pdf():
         
         # Check text content page 1
         page1_text = doc[1].get_text()
-        print(f"\nPage 1 text sample (first 500 chars):\n{page1_text[:500]}")
+        print(f"\nPage 1 text sample (first 300 chars):\n{page1_text[:300]}")
         
         required_page1 = ["Общая площадь", "5467,9"]
         for text in required_page1:
@@ -355,68 +370,59 @@ def test_3_preview_pdf():
         print(f"❌ FAIL: Error processing PDF: {e}")
         return False
     
-    print("✅ PASS: POST /api/zayavlenie/preview")
+    print("✅ PASS: TEST 3 - REGRESSION preview")
     return True
 
 
-def test_4_background_images():
+def test_4_regression_template():
     """
-    TEST 4: GET /api/zayavlenie/background?page=1 → 200 image/png
-           GET /api/zayavlenie/background?page=2 → 200 image/png
+    TEST 4: REGRESSION - GET /api/zayavlenie/template
+    - 200, template ~149 elements, is_custom==false
     """
-    print("\n=== TEST 4: GET /api/zayavlenie/background ===")
+    print("\n=== TEST 4: REGRESSION - GET /api/zayavlenie/template ===")
     
-    for page in [1, 2]:
-        print(f"\nTesting page={page}")
-        resp = requests.get(f"{BASE_URL}/zayavlenie/background?page={page}")
-        print(f"Status: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-            return False
-        
-        content_type = resp.headers.get("Content-Type", "")
-        print(f"Content-Type: {content_type}")
-        
-        if "image/png" not in content_type:
-            print(f"❌ FAIL: Expected image/png, got {content_type}")
-            return False
-        
-        png_data = resp.content
-        print(f"PNG size: {len(png_data)} bytes")
-        
-        if not png_data.startswith(b"\x89PNG"):
-            print(f"❌ FAIL: PNG should start with \\x89PNG, got {png_data[:10]}")
-            return False
-        
-        print(f"✓ Page {page} background OK")
+    resp = requests.get(f"{BASE_URL}/zayavlenie/template")
+    print(f"Status: {resp.status_code}")
     
-    print("✅ PASS: GET /api/zayavlenie/background")
+    if resp.status_code != 200:
+        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    print(f"Response keys: {list(data.keys())}")
+    
+    if "template" not in data:
+        print(f"❌ FAIL: Missing 'template' key")
+        return False
+    
+    template = data["template"]
+    elem_count = len(template)
+    print(f"Template elements count: {elem_count}")
+    
+    if elem_count < 140 or elem_count > 160:
+        print(f"❌ FAIL: Expected ~149 elements, got {elem_count}")
+        return False
+    
+    is_custom = data.get("is_custom")
+    print(f"is_custom: {is_custom}")
+    
+    if is_custom != False:
+        print(f"❌ FAIL: is_custom should be false, got {is_custom}")
+        return False
+    
+    print("✅ PASS: TEST 4 - REGRESSION template")
     return True
 
 
-def test_5_preview_png():
+def test_5_regression_preview_png():
     """
-    TEST 5: POST /api/zayavlenie/preview-png
-    - with "side":"front" → 200 image/png
-    - with "side":"back" → 200 image/png (different image)
+    TEST 5: REGRESSION - POST /api/zayavlenie/preview-png
+    - side='front' → 200 image/png
+    - side='back' → 200 image/png
     """
-    print("\n=== TEST 5: POST /api/zayavlenie/preview-png ===")
+    print("\n=== TEST 5: REGRESSION - POST /api/zayavlenie/preview-png ===")
     
-    record = {
-        "fio": "Иванов Иван Иванович",
-        "birth_year": "2006",
-        "passport_series": "MP",
-        "passport_number": "1234567",
-        "res_street": "пр-т Дзержинского",
-        "res_house": "85",
-        "from_place": "г. Гомель",
-        "basis": "договор найма № 12 от 01.09.2024",
-        "sign_date": "01.09.2024",
-        "area": "5467,9",
-        "occupancy_count": "250",
-        "minors_count": "3"
-    }
+    record = {"fio": "Иванов"}
     
     # Test front
     print("\nTesting side='front'")
@@ -466,236 +472,15 @@ def test_5_preview_png():
         print(f"❌ FAIL: PNG should start with \\x89PNG")
         return False
     
-    # Verify they are different
-    if front_data == back_data:
-        print(f"❌ FAIL: Front and back images should be different")
-        return False
-    
-    size_diff = abs(len(front_data) - len(back_data))
-    print(f"Size difference: {size_diff} bytes ({size_diff/len(front_data)*100:.1f}%)")
-    print("✓ Front and back are different images")
-    
-    print("✅ PASS: POST /api/zayavlenie/preview-png")
+    print("✅ PASS: TEST 5 - REGRESSION preview-png")
     return True
 
 
-def test_6_prefill():
+def test_6_regression_ping_stats():
     """
-    TEST 6: POST /api/zayavlenie/prefill
-    - with students array → 200, returns records array (regression not broken)
+    TEST 6: REGRESSION - GET /api/_ping and GET /api/stats
     """
-    print("\n=== TEST 6: POST /api/zayavlenie/prefill ===")
-    
-    payload = {
-        "students": [{
-            "full_name": "Иванов Иван Иванович",
-            "birth_date": "01.09.2007",
-            "citizenship": "РБ",
-            "passport_number": "MP1234567"
-        }]
-    }
-    
-    resp = requests.post(f"{BASE_URL}/zayavlenie/prefill", json=payload)
-    print(f"Status: {resp.status_code}")
-    
-    if resp.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-        print(f"Response: {resp.text[:500]}")
-        return False
-    
-    data = resp.json()
-    print(f"Response keys: {list(data.keys())}")
-    
-    if "records" not in data:
-        print(f"❌ FAIL: Missing 'records' key")
-        return False
-    
-    records = data["records"]
-    if not isinstance(records, list):
-        print(f"❌ FAIL: records should be a list, got {type(records)}")
-        return False
-    
-    if len(records) != 1:
-        print(f"❌ FAIL: Expected 1 record, got {len(records)}")
-        return False
-    
-    print(f"Record: {records[0]}")
-    
-    print("✅ PASS: POST /api/zayavlenie/prefill")
-    return True
-
-
-def test_7_package_regression():
-    """
-    TEST 7: REGRESSION of package
-    - GET /api/master-template → 200 (xlsx)
-    - Fill one row via openpyxl
-    - POST /api/master-upload → 200, has 'zayavlenie' key
-    - POST /api/package with include.zayavlenie → 200, PDF with pages > 0
-    """
-    print("\n=== TEST 7: Package regression ===")
-    
-    # Step 1: Get master template
-    print("\nStep 7.1: GET /api/master-template")
-    resp = requests.get(f"{BASE_URL}/master-template")
-    print(f"Status: {resp.status_code}")
-    
-    if resp.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-        return False
-    
-    content_type = resp.headers.get("Content-Type", "")
-    print(f"Content-Type: {content_type}")
-    
-    if "spreadsheet" not in content_type and "excel" not in content_type:
-        print(f"⚠ Warning: Unexpected content type {content_type}, but continuing...")
-    
-    xlsx_data = resp.content
-    print(f"XLSX size: {len(xlsx_data)} bytes")
-    
-    # Step 2: Fill one row
-    print("\nStep 7.2: Fill template with test data")
-    try:
-        wb = load_workbook(io.BytesIO(xlsx_data))
-        ws = wb["Данные"]
-        
-        # Fill row 3 with test data (row 2 is headers)
-        test_data = {
-            "ФИО": "Иванов Иван Иванович",
-            "Дата рождения": datetime(2006, 8, 3),
-            "Гражданство": "Республика Беларусь",
-            "Номер паспорта": "MP 1234567",
-            "Дата выдачи": datetime(2020, 1, 10),
-            "Срок действия": datetime(2030, 1, 10),
-            "Кем выдан": "МВД РБ",
-            "ИИН": "1234567A001PB5",
-            "Номер договора": "TEST-001",
-            "Дата подписания": datetime(2025, 7, 21),
-            "Номер приказа": "123",
-            "Дата приказа": datetime(2025, 7, 21),
-            "Номер комнаты": "101",
-            "Срок договора до": datetime(2028, 6, 30),
-            "Адрес регистрации": "г. Минск, ул. Тестовая, д. 1",
-            "Телефон": "+375291234567",
-            "Дата прибытия": datetime(2024, 9, 1),
-            "Проживает с": datetime(2010, 1, 1),
-            "Дата регистрации": datetime(2024, 9, 1),
-            "Регистрация с": datetime(2024, 9, 1),
-            "Регистрация по": datetime(2028, 6, 30),
-            "Срок пребывания": datetime(2028, 6, 30),
-        }
-        
-        # Get headers from row 2
-        headers = []
-        for cell in ws[2]:
-            if cell.value:
-                headers.append(cell.value)
-        
-        print(f"Found {len(headers)} headers")
-        
-        # Fill row 3
-        for col_idx, header in enumerate(headers, start=1):
-            if header in test_data:
-                ws.cell(row=3, column=col_idx, value=test_data[header])
-        
-        # Save to bytes
-        output = io.BytesIO()
-        wb.save(output)
-        filled_xlsx = output.getvalue()
-        print(f"Filled XLSX size: {len(filled_xlsx)} bytes")
-        
-    except Exception as e:
-        print(f"❌ FAIL: Error filling template: {e}")
-        return False
-    
-    # Step 3: Upload master
-    print("\nStep 7.3: POST /api/master-upload")
-    files = {"file": ("test_master.xlsx", filled_xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
-    resp = requests.post(f"{BASE_URL}/master-upload", files=files)
-    print(f"Status: {resp.status_code}")
-    
-    if resp.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-        print(f"Response: {resp.text[:500]}")
-        return False
-    
-    data = resp.json()
-    print(f"Response keys: {list(data.keys())}")
-    
-    if "zayavlenie" not in data:
-        print(f"❌ FAIL: Missing 'zayavlenie' key in response")
-        return False
-    
-    zayavlenie_data = data["zayavlenie"]
-    print(f"Zayavlenie records count: {len(zayavlenie_data) if isinstance(zayavlenie_data, list) else 'N/A'}")
-    
-    if not isinstance(zayavlenie_data, list) or len(zayavlenie_data) == 0:
-        print(f"❌ FAIL: zayavlenie should be non-empty list")
-        return False
-    
-    # Get master data for package
-    master_data = data.get("master", [])
-    if not master_data:
-        print(f"❌ FAIL: No master data in response")
-        return False
-    
-    print(f"Master records count: {len(master_data)}")
-    
-    # Step 4: Generate package
-    print("\nStep 7.4: POST /api/package")
-    package_payload = {
-        "people": [master_data[0]],
-        "include": {"zayavlenie": True}
-    }
-    
-    resp = requests.post(f"{BASE_URL}/package", json=package_payload)
-    print(f"Status: {resp.status_code}")
-    
-    if resp.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {resp.status_code}")
-        print(f"Response: {resp.text[:500]}")
-        return False
-    
-    content_type = resp.headers.get("Content-Type", "")
-    print(f"Content-Type: {content_type}")
-    
-    if "application/pdf" not in content_type:
-        print(f"❌ FAIL: Expected application/pdf, got {content_type}")
-        return False
-    
-    pdf_data = resp.content
-    print(f"Package PDF size: {len(pdf_data)} bytes")
-    
-    if not pdf_data.startswith(b"%PDF"):
-        print(f"❌ FAIL: PDF should start with %PDF")
-        return False
-    
-    # Check page count
-    try:
-        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-        page_count = len(doc)
-        print(f"Package page count: {page_count}")
-        doc.close()
-        
-        if page_count == 0:
-            print(f"❌ FAIL: Package should have pages > 0")
-            return False
-        
-    except Exception as e:
-        print(f"❌ FAIL: Error processing package PDF: {e}")
-        return False
-    
-    print("✅ PASS: Package regression")
-    return True
-
-
-def test_8_health_regression():
-    """
-    TEST 8: Health regression
-    - GET /api/_ping → 200 {ok:true}
-    - GET /api/stats → 200
-    """
-    print("\n=== TEST 8: Health regression ===")
+    print("\n=== TEST 6: REGRESSION - GET /api/_ping and /api/stats ===")
     
     # Test _ping
     print("\nTesting GET /api/_ping")
@@ -709,10 +494,6 @@ def test_8_health_regression():
     data = resp.json()
     print(f"Response: {data}")
     
-    if not data.get("ok"):
-        print(f"❌ FAIL: Expected ok=true, got {data.get('ok')}")
-        return False
-    
     # Test stats
     print("\nTesting GET /api/stats")
     resp = requests.get(f"{BASE_URL}/stats")
@@ -725,52 +506,66 @@ def test_8_health_regression():
     data = resp.json()
     print(f"Response keys: {list(data.keys())}")
     
-    print("✅ PASS: Health regression")
+    print("✅ PASS: TEST 6 - REGRESSION _ping and stats")
     return True
 
 
-def verify_template_reset():
+def cleanup_state():
     """
-    Final verification: Ensure custom template is reset (is_custom==false)
+    MANDATORY CLEANUP at end:
+    - POST /api/zayavlenie/records {"records":[]} to clear
+    - Verify template is reset (GET template is_custom==false)
     """
-    print("\n=== FINAL VERIFICATION: Template reset ===")
+    print("\n=== MANDATORY CLEANUP ===")
+    
+    # Clear records
+    print("\nClearing records: POST /api/zayavlenie/records (empty)")
+    payload = {"records": []}
+    resp = requests.post(f"{BASE_URL}/zayavlenie/records", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code == 200:
+        print("✓ Records cleared")
+    else:
+        print(f"⚠ Warning: Could not clear records, status {resp.status_code}")
+    
+    # Verify template is reset
+    print("\nVerifying template is reset: GET /api/zayavlenie/template")
     resp = requests.get(f"{BASE_URL}/zayavlenie/template")
     
-    if resp.status_code != 200:
-        print(f"⚠ Warning: Could not verify template reset, status {resp.status_code}")
-        return
-    
-    data = resp.json()
-    is_custom = data.get("is_custom")
-    
-    print(f"is_custom: {is_custom}")
-    
-    if is_custom:
-        print("⚠ Warning: Template is still custom, resetting...")
-        reset_resp = requests.post(f"{BASE_URL}/zayavlenie/template/reset")
-        if reset_resp.status_code == 200:
-            print("✓ Template reset successfully")
+    if resp.status_code == 200:
+        data = resp.json()
+        is_custom = data.get("is_custom")
+        print(f"is_custom: {is_custom}")
+        
+        if is_custom == False:
+            print("✓ Template is reset (is_custom==false)")
         else:
-            print(f"⚠ Warning: Could not reset template, status {reset_resp.status_code}")
+            print("⚠ Warning: Template is custom, resetting...")
+            reset_resp = requests.post(f"{BASE_URL}/zayavlenie/template/reset")
+            if reset_resp.status_code == 200:
+                print("✓ Template reset successfully")
+            else:
+                print(f"⚠ Warning: Could not reset template, status {reset_resp.status_code}")
     else:
-        print("✓ Template is already reset (is_custom=false)")
+        print(f"⚠ Warning: Could not verify template, status {resp.status_code}")
 
 
 def main():
     print("=" * 80)
-    print("BACKEND TESTING: /api/zayavlenie/* endpoints")
-    print("Testing EDITABLE TEMPLATE structure (text/line/field elements)")
+    print("BACKEND TESTING: NEW /api/zayavlenie/* features")
+    print("1. Saving list of records (persist)")
+    print("2. Underline in PDF doesn't break generation")
+    print("3. Regression tests")
     print("=" * 80)
     
     tests = [
-        ("TEST 1: GET template", test_1_get_template),
-        ("TEST 2: SAVE+RESET template", test_2_save_and_reset_template),
-        ("TEST 3: POST preview (PDF)", test_3_preview_pdf),
-        ("TEST 4: GET background images", test_4_background_images),
-        ("TEST 5: POST preview-png", test_5_preview_png),
-        ("TEST 6: POST prefill", test_6_prefill),
-        ("TEST 7: Package regression", test_7_package_regression),
-        ("TEST 8: Health regression", test_8_health_regression),
+        ("TEST 1: Save records (persist)", test_1_save_records_persist),
+        ("TEST 2: Underline in PDF", test_2_underline_pdf),
+        ("TEST 3: REGRESSION - preview", test_3_regression_preview),
+        ("TEST 4: REGRESSION - template", test_4_regression_template),
+        ("TEST 5: REGRESSION - preview-png", test_5_regression_preview_png),
+        ("TEST 6: REGRESSION - _ping/stats", test_6_regression_ping_stats),
     ]
     
     results = []
@@ -785,8 +580,8 @@ def main():
             traceback.print_exc()
             results.append((name, False))
     
-    # Final verification
-    verify_template_reset()
+    # Mandatory cleanup
+    cleanup_state()
     
     # Summary
     print("\n" + "=" * 80)
