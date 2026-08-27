@@ -2964,6 +2964,18 @@ def build_zayavlenie(people, template=None, layout=None, duplex_flip="long", dra
             c.drawRightString(x, yb, txt)
         else:
             c.drawString(x, yb, txt)
+        if el.get("underline"):
+            tw = stringWidth(txt, font, size)
+            if align == "center":
+                ux = x - tw / 2.0
+            elif align == "right":
+                ux = x - tw
+            else:
+                ux = x
+            uy = yb - size * 0.13
+            c.setStrokeColorRGB(*col)
+            c.setLineWidth(max(0.4, size * 0.05))
+            c.line(ux, uy, ux + tw, uy)
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(pw, ph))

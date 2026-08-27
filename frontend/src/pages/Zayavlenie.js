@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   FileSignature, Printer, Download, Upload, Plus, Copy, Trash2, Eraser, Save,
-  Wand2, ChevronDown, PenSquare, Type, Minus, Bold, Italic,
+  Wand2, ChevronDown, PenSquare, Type, Minus, Bold, Italic, Underline,
   AlignLeft, AlignCenter, AlignRight, RotateCcw,
 } from "lucide-react";
 import {
@@ -267,8 +267,8 @@ export default function Zayavlenie() {
             </div>
           </div>
 
-          {/* Template editor toolbar */}
-          {editMode && (
+          {/* (старый левый редактор отключён — используется верхняя лента-тулбар) */}
+          {false && (
             <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 p-4 space-y-3" data-testid="zayav-tpl-editor">
               <div className="text-sm font-semibold flex items-center gap-2 text-amber-300"><PenSquare className="h-4 w-4" /> Редактор шаблона — стр. {page}</div>
               <div className="grid grid-cols-2 gap-2">
@@ -368,6 +368,60 @@ export default function Zayavlenie() {
               </Button>
             </div>
           </div>
+          {editMode && (
+            <div className="rounded-md border border-amber-400/40 bg-[#1c1c24] px-2 py-1.5 mb-2 flex flex-wrap items-center gap-1.5 sticky top-0 z-20" data-testid="zayav-ribbon">
+              <button onClick={addText} title="Добавить текст" className="flex items-center gap-1 h-7 px-2 rounded border border-white/10 text-xs hover:bg-white/10" data-testid="zayav-add-text"><Type className="h-3.5 w-3.5" /> Текст</button>
+              <button onClick={addLine} title="Добавить линию" className="flex items-center gap-1 h-7 px-2 rounded border border-white/10 text-xs hover:bg-white/10" data-testid="zayav-add-line"><Minus className="h-3.5 w-3.5" /> Линия</button>
+              <span className="w-px h-6 bg-white/15 mx-1" />
+              {!selectedEl && <span className="text-[11px] text-muted-foreground">Выберите элемент в бланке…</span>}
+              {isText && (
+                <>
+                  <select value={selectedEl.font || "serif"} onChange={(e) => updateEl(selectedEl.id, { font: e.target.value })} className="h-7 rounded bg-black/30 border border-white/10 text-xs px-1" data-testid="zayav-rb-font" title="Шрифт">
+                    <option value="serif">Times New Roman</option>
+                    <option value="sans">Arial</option>
+                  </select>
+                  <div className="flex items-center h-7 rounded border border-white/10 overflow-hidden">
+                    <button onClick={() => updateEl(selectedEl.id, { size: Math.max(4, +((selectedEl.size || 9) - 0.5).toFixed(1)) })} className="px-1.5 hover:bg-white/10 text-sm">−</button>
+                    <input type="number" step="0.1" value={selectedEl.size ?? ""} onChange={(e) => updateEl(selectedEl.id, { size: parseFloat(e.target.value) })} className="w-12 h-full bg-black/30 text-center text-xs outline-none" data-testid="zayav-rb-size" />
+                    <button onClick={() => updateEl(selectedEl.id, { size: +((selectedEl.size || 9) + 0.5).toFixed(1) })} className="px-1.5 hover:bg-white/10 text-sm">+</button>
+                  </div>
+                  <button onClick={() => updateEl(selectedEl.id, { bold: !selectedEl.bold })} className={`h-7 w-7 grid place-items-center rounded border border-white/10 ${selectedEl.bold ? "bg-white/25" : "hover:bg-white/10"}`} data-testid="zayav-rb-bold"><Bold className="h-3.5 w-3.5" /></button>
+                  <button onClick={() => updateEl(selectedEl.id, { italic: !selectedEl.italic })} className={`h-7 w-7 grid place-items-center rounded border border-white/10 ${selectedEl.italic ? "bg-white/25" : "hover:bg-white/10"}`} data-testid="zayav-rb-italic"><Italic className="h-3.5 w-3.5" /></button>
+                  <button onClick={() => updateEl(selectedEl.id, { underline: !selectedEl.underline })} className={`h-7 w-7 grid place-items-center rounded border border-white/10 ${selectedEl.underline ? "bg-white/25" : "hover:bg-white/10"}`} data-testid="zayav-rb-underline"><Underline className="h-3.5 w-3.5" /></button>
+                  <span className="w-px h-6 bg-white/15 mx-0.5" />
+                  {[["left", AlignLeft], ["center", AlignCenter], ["right", AlignRight]].map(([a, Ic]) => (
+                    <button key={a} onClick={() => updateEl(selectedEl.id, { align: a })} className={`h-7 w-7 grid place-items-center rounded border border-white/10 ${selectedEl.align === a ? "bg-white/25" : "hover:bg-white/10"}`} data-testid={`zayav-rb-align-${a}`}><Ic className="h-3.5 w-3.5" /></button>
+                  ))}
+                  <input type="color" value={selectedEl.color || "#17171f"} onChange={(e) => updateEl(selectedEl.id, { color: e.target.value })} className="h-7 w-8 rounded border border-white/10 bg-transparent p-0.5" title="Цвет" data-testid="zayav-rb-color" />
+                  {selectedEl.type === "field" && (
+                    <select value={selectedEl.field} onChange={(e) => updateEl(selectedEl.id, { field: e.target.value })} className="h-7 rounded bg-black/30 border border-white/10 text-xs px-1 max-w-[160px]" data-testid="zayav-rb-field" title="Поле данных">
+                      {slotsMeta.map((s) => (<option key={s.slot} value={s.slot}>{s.label}</option>))}
+                    </select>
+                  )}
+                </>
+              )}
+              {isLine && (
+                <>
+                  <span className="text-[11px] text-muted-foreground">Линия:</span>
+                  <label className="text-[11px] text-muted-foreground">длина</label>
+                  <input type="number" step="0.5" value={selectedEl.w ?? ""} onChange={(e) => updateEl(selectedEl.id, { w: parseFloat(e.target.value) })} className="w-16 h-7 bg-black/30 border border-white/10 rounded text-center text-xs" />
+                  <label className="text-[11px] text-muted-foreground">толщина</label>
+                  <input type="number" step="0.1" value={selectedEl.thickness ?? ""} onChange={(e) => updateEl(selectedEl.id, { thickness: parseFloat(e.target.value) })} className="w-14 h-7 bg-black/30 border border-white/10 rounded text-center text-xs" />
+                  <input type="color" value={selectedEl.color || "#17171f"} onChange={(e) => updateEl(selectedEl.id, { color: e.target.value })} className="h-7 w-8 rounded border border-white/10 bg-transparent p-0.5" title="Цвет" />
+                </>
+              )}
+              {selectedEl && (
+                <>
+                  <span className="w-px h-6 bg-white/15 mx-1" />
+                  <button onClick={() => dupEl(selectedEl.id)} title="Дублировать" className="h-7 w-7 grid place-items-center rounded border border-white/10 hover:bg-white/10"><Copy className="h-3.5 w-3.5" /></button>
+                  <button onClick={() => deleteEl(selectedEl.id)} title="Удалить" className="h-7 w-7 grid place-items-center rounded border border-white/10 hover:bg-[#E11D48]/30" data-testid="zayav-el-delete"><Trash2 className="h-3.5 w-3.5" /></button>
+                </>
+              )}
+              <span className="flex-1" />
+              <button onClick={doSaveTpl} disabled={savingTpl} className="flex items-center gap-1 h-7 px-2 rounded bg-amber-500 hover:bg-amber-600 text-black text-xs font-semibold" data-testid="zayav-save-tpl"><Save className="h-3.5 w-3.5" /> Сохранить</button>
+              <button onClick={doResetTpl} disabled={savingTpl} className="flex items-center gap-1 h-7 px-2 rounded border border-white/10 text-xs hover:bg-white/10" data-testid="zayav-reset-tpl"><RotateCcw className="h-3.5 w-3.5" /> Сбросить</button>
+            </div>
+          )}
           <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-2xl overflow-auto" style={{ maxHeight: "84vh" }}>
             <div className="mx-auto ring-1 ring-black/10" style={{ maxWidth: 720 }}>
               <ZayavPreview
