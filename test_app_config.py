@@ -6,7 +6,7 @@ import sys
 import requests
 
 # Backend URL
-BASE_URL = "https://cdb3aa12-3471-40c2-bf41-ada0349ed1fe.preview.emergentagent.com/api"
+BASE_URL = "https://form-portal-15.preview.emergentagent.com/api"
 
 # Цвета для вывода
 GREEN = '\033[92m'

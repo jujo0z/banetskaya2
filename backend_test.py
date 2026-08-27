@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Тестирование обновлённого документа «Заявление о регистрации по месту ПРЕБЫВАНИЯ».
-Backend: https://code-review-hub-160.preview.emergentagent.com/api
+Backend: https://form-portal-15.preview.emergentagent.com/api
 """
 import requests
 import io
@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from openpyxl import load_workbook
 
-BASE_URL = "https://code-review-hub-160.preview.emergentagent.com/api"
+BASE_URL = "https://form-portal-15.preview.emergentagent.com/api"
 
 def test_zayavlenie_fields():
     """TEST 1: GET /api/zayavlenie/fields → проверить наличие новых полей"""
