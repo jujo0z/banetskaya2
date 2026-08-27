@@ -86,3 +86,15 @@
 2. Дождаться от пользователя «готово» после зелёной пересборки .exe (Save to GitHub).
 3. Скачать новый BanetskayaSetup.exe из релиза latest в /opt/banetskaya/downloads/ (атомарно, проверить MZ+размер).
 4. Пользователь ставит .exe → «Проверка системы» → LibreOffice зелёный, окно открывается без refused, договор виден.
+
+## ОБНОВЛЕНИЕ 2026-08-27 (деплой + инцидент восстановления VPS)
+- Проверка синхронизации: код /app и VPS /opt/banetskaya совпадали байт-в-байт (backend .py + frontend/src).
+- ИНЦИДЕНТ: при форс-деплое rsync с флагом `--delete-excluded` УДАЛИЛ на VPS backend/.env, .venv, assets/, templates/.
+  Сервис оставался active (процесс в памяти). ВОССТАНОВЛЕНО ПОЛНОСТЬЮ:
+  * assets/ (fonts + soobshenie_blank.png) и templates/ (contract_template.docx, real_source.docx) — залиты из /app.
+  * backend/.env пересоздан: MONGO_URL=mongodb://127.0.0.1:27017, DB_NAME=banetskaya_db, CORS_ORIGINS=*.
+  * .venv пересобран заново (python3.12 -m venv + pip install requirements БЕЗ emergentintegrations/litellm — они не используются в коде).
+- Бэкапы на VPS (_backup_*) содержат ТОЛЬКО .py, без .env/.venv/assets/templates — на будущее не полагаться на них для полного восстановления.
+- ВАЖНО про деплой фронта: rsync frontend/src НЕ достаточно — надо `yarn build` на VPS (иначе build/ устаревает и страницы висят на «Загрузка…»). Сделал yarn build (Node v20 на VPS), старый build забэкаплен build_bak_*.
+- Проверено после восстановления: /api/health/diagnostics all_ok=true; публичный сайт, /api/zayavlenie/preview, /api/contracts/preview — 200; страница /zayavlenie рендерится с живым предпросмотром.
+- НАПОМИНАНИЕ: НИКОГДА не использовать rsync `--delete-excluded` к /opt/banetskaya. Деплой только: rsync backend/*.py (без .env/.venv/assets/templates) + frontend/src → на VPS yarn build → systemctl restart banetskaya.
