@@ -1612,6 +1612,15 @@ class ZayavlenieRequest(BaseModel):
     side: str = "front"
 
 
+class ZayavlenieLayout(BaseModel):
+    layout: Dict[str, Any] = {}
+
+
+async def _zayav_layout_overrides():
+    doc = await db.app_settings.find_one({"key": "zayavlenie_layout"}, {"_id": 0})
+    return (doc or {}).get("value", {}) or {}
+
+
 @api_router.get("/zayavlenie/fields")
 async def zayavlenie_fields():
     return {"groups": docsvc.ZAYAVLENIE_FIELDS, "keys": docsvc.ZAYAVLENIE_FIELD_KEYS}
@@ -1639,14 +1648,43 @@ async def zayavlenie_prefill(payload: Forma19Prefill):
     return {"records": [masterdata.master_to_zayavlenie(m) for m in payload.students]}
 
 
-def _build_zayavlenie_pdf(req: "ZayavlenieRequest") -> bytes:
-    return docsvc.build_zayavlenie(people=req.records, duplex_flip=req.duplex_flip)
+@api_router.get("/zayavlenie/layout")
+async def zayavlenie_get_layout():
+    ov = await _zayav_layout_overrides()
+    return {
+        "layout": docsvc._merge_zayav_layout(ov),
+        "slots": docsvc.ZAYAV_OVERLAY_SLOTS,
+        "page_count": 2,
+    }
+
+
+@api_router.post("/zayavlenie/layout")
+async def zayavlenie_save_layout(payload: ZayavlenieLayout):
+    await db.app_settings.update_one(
+        {"key": "zayavlenie_layout"},
+        {"$set": {"key": "zayavlenie_layout", "value": payload.layout}},
+        upsert=True,
+    )
+    return {"saved": True, "layout": docsvc._merge_zayav_layout(payload.layout)}
+
+
+@api_router.get("/zayavlenie/background")
+async def zayavlenie_background(page: int = 1):
+    png = docsvc.render_zayav_background_png(page)
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=300"})
+
+
+def _build_zayavlenie_pdf(req: "ZayavlenieRequest", layout=None) -> bytes:
+    return docsvc.build_zayavlenie(people=req.records, layout=layout,
+                                   duplex_flip=req.duplex_flip)
 
 
 @api_router.post("/zayavlenie/preview")
 async def zayavlenie_preview(req: ZayavlenieRequest):
     try:
-        data = _build_zayavlenie_pdf(req)
+        ov = await _zayav_layout_overrides()
+        data = _build_zayavlenie_pdf(req, layout=ov)
     except Exception as e:
         logger.exception("zayavlenie generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -1657,7 +1695,8 @@ async def zayavlenie_preview(req: ZayavlenieRequest):
 @api_router.post("/zayavlenie/preview-png")
 async def zayavlenie_preview_png(req: ZayavlenieRequest):
     try:
-        pdf = _build_zayavlenie_pdf(req)
+        ov = await _zayav_layout_overrides()
+        pdf = _build_zayavlenie_pdf(req, layout=ov)
         idx = 1 if str(req.side or "front").lower() == "back" else 0
         png = docsvc.render_pdf_page_png(pdf, idx, scale=2.0)
     except Exception as e:
@@ -1717,6 +1756,7 @@ def _pkg_on(include: Dict[str, bool], key: str) -> bool:
 async def _build_package_pdf(req: "PackageRequest") -> bytes:
     tpl = await _active_tpl()
     inc = req.include or {}
+    _zayav_lay = await _zayav_layout_overrides()
     parts: List[bytes] = []
     for m in (req.people or []):
         if _pkg_on(inc, "contract"):
@@ -1742,7 +1782,8 @@ async def _build_package_pdf(req: "PackageRequest") -> bytes:
                 layout=docsvc.SOOBSHENIE_LAYOUT, page_size="a4", with_form=True))
         if _pkg_on(inc, "zayavlenie"):
             parts.append(docsvc.build_zayavlenie(
-                [masterdata.master_to_zayavlenie(m)], duplex_flip=req.duplex_flip))
+                [masterdata.master_to_zayavlenie(m)], layout=_zayav_lay,
+                duplex_flip=req.duplex_flip))
     if not parts:
         raise HTTPException(status_code=400, detail="Нет документов для пакета")
     return docsvc.merge_pdfs(parts)

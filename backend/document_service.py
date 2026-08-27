@@ -2429,7 +2429,7 @@ def _draw_zayavlenie_page1(c, x0, y_bottom, zw_pt, zh_pt, rec):
     text(7, 163, "Жилое помещение предоставлено на основании (находится в собственности)", 6.1)
     rule(7, RB, 168)
     val(9, 167, basis, 6.0)
-    cap(74.5, 171, "(документы, являющиеся основанием для регистрации гражданина по месту жительства)", 3.3)
+    cap(74.5, 171, "(документы, являющиеся основанием для регистрации гражданина по месту пребывания)", 3.3)
 
     # --- Подпись гражданина + дата ---
     text(7, 177, "Подпись гражданина:", 6.9)
@@ -2520,49 +2520,374 @@ def _draw_zayavlenie_page2(c, x0, y_bottom, zw_pt, zh_pt, rec):
 
 
 
-def build_zayavlenie(people, duplex_flip="long", draw_guides=True):
-    """PDF «Заявлений»: A4-ландшафт, 2 заявления (A5) в ряд; лицо — стр.1 двух
-    человек, оборот — стр.2 тех же (двусторонняя печать, разрез по центру)."""
+# =====================================================================
+#  НОВАЯ АРХИТЕКТУРА ЗАЯВЛЕНИЯ (по требованию пользователя):
+#  фон = чистый бланк-изображение «по месту пребывания» (A4-портрет),
+#  данные накладываются поверх по КООРДИНАТАМ (% страницы) из конфигурации.
+#  Preview (фронт) и PDF (бэк) используют ОДНУ систему координат.
+#  Пустой бланк рисуется теми же статическими элементами, что и раньше,
+#  но масштабируется с зоны A5 (148.5×210) на полный A4 (210×297) —
+#  пропорции A5 и A4 идентичны (1:√2), поэтому % координаты не меняются.
+# =====================================================================
+
+_SQRT2 = 1.41421356237
+
+def _zayav_static_page1(c, x0, y_bottom, zw_pt, zh_pt):
+    """Только статические элементы стр.1 (без данных) — «пустой бланк»."""
+    text, center, right, cap, rule, val, cval = _zayav_helpers(c, x0, y_bottom, zh_pt)
+    XR = 45.0
+    RB = 142.0
+    CXR = (XR + RB) / 2.0
+    ry = 7.0
+    for ln in [
+        "В орган внутренних дел, сельский (поселковый)",
+        "исполнительный комитет (в сельских населённых",
+        "пунктах и посёлках городского типа, в которых не",
+        "имеется органов внутренних дел)",
+    ]:
+        right(RB, ry, ln, 6.0)
+        ry += 3.2
+    rule(XR, RB, 24)
+    rule(XR, RB, 28.5)
+    cap(CXR, 31.6, "(фамилия, собственное имя, отчество (если таковое", 3.7)
+    cap(CXR, 34.0, "имеется), год рождения)", 3.7)
+    text(XR, 40, "паспорт или иной документ, удостоверяющий", 6.4)
+    text(XR, 44.2, "личность", 6.4)
+    rule(60, RB, 44.2)
+    text(XR, 49.2, "серия (при наличии)", 6.4)
+    rule(74, RB, 49.2)
+    text(XR, 54.2, "№", 6.4)
+    rule(51, RB, 54.2)
+    text(XR, 59.2, "выдан", 6.4)
+    rule(58, RB, 59.2)
+    cap(CXR, 62.4, "(наименование (код) органа, выдавшего документ,", 3.5)
+    cap(CXR, 64.8, "удостоверяющий личность)", 3.5)
+    rule(XR, RB, 71)
+    cap(CXR, 74.2, "(дата выдачи)", 3.7)
+    center(74.25, 82, "ЗАЯВЛЕНИЕ", 12, bold=True)
+    center(74.25, 87.5, "о регистрации по месту пребывания", 8.4, bold=True)
+    text(7, 95, "Прошу зарегистрировать меня", 6.9)
+    rule(52, 100, 95)
+    cap(76, 98.3, "(одного, с семьёй)", 3.7)
+    text(101, 95, ", всего", 6.9)
+    rule(115, 130, 95)
+    text(131, 95, "чел.,", 6.9)
+    text(7, 103, "по месту пребывания по адресу:", 6.9)
+    rule(58, RB, 103)
+    text(7, 109, "ул.", 6.9)
+    rule(14, 66, 109)
+    text(67, 109, ", дом", 6.9)
+    rule(80, 95, 109)
+    text(96, 109, ", корп.", 6.9)
+    rule(110, 120, 109)
+    text(121, 109, "кв.", 6.9)
+    rule(127, RB, 109)
+    text(7, 116, "Прибыл(а) на", 6.9)
+    rule(31, 72, 116)
+    text(73, 116, "из", 6.9)
+    rule(80, RB, 116)
+    cap(90, 119.2, "(название государства, наименование области, района, населённого пункта)", 3.3)
+    text(7, 125, "Вместе прибыли:", 6.9)
+    ccap = ("(фамилия, собственное имя, отчество (если таковое имеется), "
+            "год рождения; подпись совершеннолетнего гражданина)")
+    yy = 130.0
+    for _ in range(5):
+        rule(7, RB, yy)
+        cap(74.5, yy + 2.6, ccap, 3.1)
+        yy += 6.0
+    text(7, 163, "Жилое помещение предоставлено на основании (находится в собственности)", 6.1)
+    rule(7, RB, 168)
+    cap(74.5, 171, "(документы, являющиеся основанием для регистрации гражданина по месту пребывания)", 3.3)
+    text(7, 177, "Подпись гражданина:", 6.9)
+    rule(7, 92, 184)
+    cap(45, 187.2, "(подпись, фамилия, инициалы)", 3.7)
+    text(95, 184, "«", 6.6)
+    rule(97, 104, 184)
+    text(104.5, 184, "»", 6.6)
+    rule(107, 126, 184)
+    text(127, 184, "20", 6.6)
+    rule(131, 138, 184)
+    text(139, 184, "г.", 6.6)
+
+
+def _zayav_static_page2(c, x0, y_bottom, zw_pt, zh_pt):
+    """Только статические элементы стр.2 (без данных)."""
+    text, center, right, cap, rule, val, cval = _zayav_helpers(c, x0, y_bottom, zh_pt)
+    RB = 142.0
+    text(7, 12, "Подпись собственника либо нанимателя жилого помещения,", 6.5)
+    text(7, 15.8, "предоставившего гражданину жилое помещение:", 6.5)
+    rule(7, 82, 27)
+    text(90, 26, "«", 6.6)
+    rule(93, 101, 26)
+    text(102, 26, "»", 6.6)
+    rule(104, 124, 26)
+    text(125, 26, "20", 6.6)
+    rule(130, 138, 26)
+    text(139, 26, "г.", 6.6)
+    cap(44, 30.2, "(подпись, фамилия, собственное имя,", 3.6)
+    cap(44, 32.6, "отчество (если таковое имеется))", 3.6)
+    text(7, 39, "Подписи иных граждан, проживающих совместно с собственником либо", 6.3)
+    text(7, 42.8, "нанимателем и (или) имеющих право пользования жилым помещением:", 6.3)
+    ccap = "(подпись, фамилия, собственное имя, отчество (если таковое имеется))"
+    yy = 54.0
+    for _ in range(3):
+        rule(7, 92, yy)
+        text(97, yy, "(", 6.6)
+        rule(101, 132, yy)
+        text(133, yy, ")", 6.6)
+        cap(49.5, yy + 3.0, ccap, 3.5)
+        cap(116, yy + 3.0, "(год рождения)", 3.6)
+        yy += 11.0
+    text(7, 90, "Общая площадь жилого помещения составляет", 6.4)
+    rule(63, 84, 90)
+    text(85, 90, "кв. метров, в нём", 6.4)
+    text(7, 94.5, "проживает", 6.4)
+    rule(25, 40, 94.5)
+    text(41, 94.5, "чел., в том числе несовершеннолетних", 6.4)
+    rule(112, 132, 94.5)
+    text(133, 94.5, "чел.*", 6.4)
+    text(7, 102, "Лицо, ответственное за регистрацию (при его отсутствии – должностное", 6.3)
+    text(7, 105.8, "лицо органа регистрации):", 6.3)
+    rule(7, 52, 118)
+    cap(29.5, 121.2, "(должность)", 3.8)
+    rule(58, 96, 118)
+    cap(77, 121.2, "(подпись)", 3.8)
+    rule(102, RB, 118)
+    cap(122, 121.2, "(фамилия, инициалы)", 3.8)
+    text(72, 123.2, "М.П.", 6.4)
+    text(7, 132, "«", 6.6)
+    rule(10, 22, 132)
+    text(23, 132, "»", 6.6)
+    rule(25, 66, 132)
+    text(67, 132, "20", 6.6)
+    rule(73, 83, 132)
+    text(84, 132, "г.", 6.6)
+    rule(7, 44, 143)
+    text(7, 148, "* Заполняется лицом, ответственным за регистрацию (при его", 5.4)
+    text(7, 151.5, "отсутствии – должностным лицом органа регистрации).", 5.4)
+
+
+# ---- Слоты-наложения (данные) и их метки для редактора координат ----
+ZAYAV_OVERLAY_SLOTS = [
+    {"slot": "applicant", "page": 1, "label": "ФИО заявителя + год рождения"},
+    {"slot": "doc_name", "page": 1, "label": "Документ, удостоверяющий личность"},
+    {"slot": "passport_series", "page": 1, "label": "Серия"},
+    {"slot": "passport_number", "page": 1, "label": "№ (номер)"},
+    {"slot": "passport_issued_by", "page": 1, "label": "Кем выдан"},
+    {"slot": "passport_issue_date", "page": 1, "label": "Дата выдачи"},
+    {"slot": "reg_who", "page": 1, "label": "Зарегистрировать (одного / с семьёй)"},
+    {"slot": "reg_count", "page": 1, "label": "Всего человек"},
+    {"slot": "address_locality", "page": 1, "label": "Адрес (населённый пункт)"},
+    {"slot": "res_street", "page": 1, "label": "Улица"},
+    {"slot": "res_house", "page": 1, "label": "Дом"},
+    {"slot": "res_korpus", "page": 1, "label": "Корпус"},
+    {"slot": "res_apartment", "page": 1, "label": "Квартира"},
+    {"slot": "stay_term", "page": 1, "label": "Прибыл(а) на (срок)"},
+    {"slot": "from_place", "page": 1, "label": "Прибыл(а) из"},
+    {"slot": "basis", "page": 1, "label": "Основание (договор найма …)"},
+    {"slot": "sign_day", "page": 1, "label": "Дата подписи: день"},
+    {"slot": "sign_month", "page": 1, "label": "Дата подписи: месяц"},
+    {"slot": "sign_year", "page": 1, "label": "Дата подписи: год (2 цифры)"},
+    {"slot": "area", "page": 2, "label": "Общая площадь, кв. м"},
+    {"slot": "occupancy_count", "page": 2, "label": "Проживает, чел."},
+    {"slot": "minors_count", "page": 2, "label": "Несовершеннолетних, чел."},
+]
+
+# raw: (slot, page, x_mm, y_mm, w_mm, align, size_a5_pt, bold)
+_ZAYAV_LAYOUT_RAW = [
+    ("applicant", 1, 45, 23, 97, "center", 6.8, False),
+    ("doc_name", 1, 61, 43.3, 81, "left", 5.8, False),
+    ("passport_series", 1, 74, 48.3, 68, "center", 6.4, False),
+    ("passport_number", 1, 52, 53.3, 90, "left", 6.4, False),
+    ("passport_issued_by", 1, 59, 58.3, 83, "left", 5.6, False),
+    ("passport_issue_date", 1, 47, 70.0, 95, "left", 6.2, False),
+    ("reg_who", 1, 54, 94.0, 46, "left", 6.2, False),
+    ("reg_count", 1, 115, 94.0, 15, "center", 6.2, False),
+    ("address_locality", 1, 59, 102.0, 83, "left", 6.0, False),
+    ("res_street", 1, 15, 108.0, 51, "left", 5.8, False),
+    ("res_house", 1, 80, 108.0, 15, "center", 6.0, False),
+    ("res_korpus", 1, 110, 108.0, 10, "center", 6.0, False),
+    ("res_apartment", 1, 127, 108.0, 15, "center", 6.0, False),
+    ("stay_term", 1, 32, 115.0, 40, "left", 5.6, False),
+    ("from_place", 1, 81, 115.0, 61, "left", 5.6, False),
+    ("basis", 1, 9, 167.0, 133, "left", 6.0, False),
+    ("sign_day", 1, 97, 184.0, 7, "center", 6.0, False),
+    ("sign_month", 1, 107, 184.0, 19, "center", 5.4, False),
+    ("sign_year", 1, 131, 184.0, 7, "center", 6.0, False),
+    ("area", 2, 63, 89.0, 21, "center", 6.4, True),
+    ("occupancy_count", 2, 25, 94.5, 15, "center", 6.4, False),
+    ("minors_count", 2, 112, 94.5, 20, "center", 6.4, False),
+]
+
+
+def _mk_zayav_layout():
+    zw, zh = ZAYAV_ZONE_MM  # 148.5, 210
+    out = {"1": {}, "2": {}}
+    for slot, page, x, y, w, align, sz, bold in _ZAYAV_LAYOUT_RAW:
+        out[str(page)][slot] = {
+            "x": round(x / zw * 100, 2),
+            "y": round(y / zh * 100, 2),
+            "w": round(w / zw * 100, 2),
+            "align": align,
+            "size": round(sz * _SQRT2, 2),  # pt на A4
+            "bold": bool(bold),
+        }
+    return out
+
+
+ZAYAV_LAYOUT_DEFAULT = _mk_zayav_layout()
+
+
+def _merge_zayav_layout(overrides):
+    import copy
+    base = copy.deepcopy(ZAYAV_LAYOUT_DEFAULT)
+    if isinstance(overrides, dict):
+        for pg, slots in overrides.items():
+            pg = str(pg)
+            if pg not in base:
+                base[pg] = {}
+            if isinstance(slots, dict):
+                for k, cfg in slots.items():
+                    if isinstance(cfg, dict) and k in base[pg]:
+                        base[pg][k].update(cfg)
+                    else:
+                        base[pg][k] = cfg
+    return base
+
+
+def zayav_overlay_text(rec):
+    """Отображаемые значения слотов-наложения из записи (та же логика в JS фронта)."""
+    rec = rec or {}
+
+    def g(k):
+        v = rec.get(k, "")
+        return "" if v is None else str(v)
+
+    fio = g("fio").strip()
+    by = g("birth_year").strip()
+    applicant = fio + ((", %s г.р." % by) if by else "")
+    sd, smon, sy = _split_ru_date(rec.get("sign_date", ""))
+    sy2 = sy[-2:] if sy else ""
+    return {
+        "applicant": applicant,
+        "doc_name": g("doc_name"),
+        "passport_series": g("passport_series"),
+        "passport_number": g("passport_number"),
+        "passport_issued_by": g("passport_issued_by"),
+        "passport_issue_date": g("passport_issue_date"),
+        "reg_who": g("reg_who") or "одного",
+        "reg_count": g("reg_count") or "1",
+        "address_locality": g("address_locality"),
+        "res_street": g("res_street"),
+        "res_house": g("res_house"),
+        "res_korpus": g("res_korpus"),
+        "res_apartment": g("res_apartment"),
+        "stay_term": g("stay_term"),
+        "from_place": g("from_place"),
+        "basis": g("basis"),
+        "sign_day": sd,
+        "sign_month": smon,
+        "sign_year": sy2,
+        "area": g("area"),
+        "occupancy_count": g("occupancy_count"),
+        "minors_count": g("minors_count"),
+    }
+
+
+def _zayav_draw_static_a4(c):
+    """Обе страницы пустого бланка на A4-портрет (масштаб A5→A4)."""
+    scale = (210.0 * MM) / (ZAYAV_ZONE_MM[0] * MM)  # 210/148.5 = √2
+    zw_pt, zh_pt = ZAYAV_ZONE_MM[0] * MM, ZAYAV_ZONE_MM[1] * MM
+    for fn in (_zayav_static_page1, _zayav_static_page2):
+        c.saveState()
+        c.scale(scale, scale)
+        fn(c, 0, 0, zw_pt, zh_pt)
+        c.restoreState()
+        c.showPage()
+
+
+def build_zayav_static_pdf():
     from reportlab.pdfgen import canvas
+    _ensure_fonts()
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(210 * MM, 297 * MM))
+    _zayav_draw_static_a4(c)
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+_ZAYAV_BG_CACHE = {}
+
+
+def render_zayav_background_png(page=1, scale=2.1):
+    """PNG чистого бланка (стр.1 или стр.2) — фон предпросмотра. Кэшируется."""
+    page = 2 if int(page) == 2 else 1
+    key = (page, round(float(scale), 2))
+    if key in _ZAYAV_BG_CACHE:
+        return _ZAYAV_BG_CACHE[key]
+    pdf = build_zayav_static_pdf()
+    png = render_pdf_page_png(pdf, page - 1, scale=scale)
+    _ZAYAV_BG_CACHE[key] = png
+    return png
+
+
+def build_zayavlenie(people, layout=None, duplex_flip="long", draw_guides=False):
+    """PDF «Заявлений»: A4-портрет, по 2 страницы на человека (стр.1 + стр.2).
+    Фон — чистый бланк (векторно), данные накладываются по конфигурации координат
+    (проценты страницы) — те же координаты используются в предпросмотре на фронте."""
+    from reportlab.pdfgen import canvas
+    from reportlab.pdfbase.pdfmetrics import stringWidth
 
     _ensure_fonts()
-    pw, ph = 297 * MM, 210 * MM  # A4 landscape
-    zw_mm, zh_mm = ZAYAV_ZONE_MM
-    zw_pt, zh_pt = zw_mm * MM, zh_mm * MM
-    side_margin = max(0.0, (pw - 2 * zw_pt) / 2.0)
-    top_margin = max(0.0, (ph - zh_pt) / 2.0)
+    pw, ph = 210 * MM, 297 * MM
+    lay = _merge_zayav_layout(layout)
     people = list(people or []) or [{}]
-    duplex_flip = (duplex_flip or "long").lower()
+    scale = (210.0 * MM) / (ZAYAV_ZONE_MM[0] * MM)
+    zw_pt, zh_pt = ZAYAV_ZONE_MM[0] * MM, ZAYAV_ZONE_MM[1] * MM
 
-    def origin(col):
-        x = side_margin + col * zw_pt
-        y = ph - (top_margin + zh_pt)
-        return x, y
+    def draw_static(fn):
+        c.saveState()
+        c.scale(scale, scale)
+        fn(c, 0, 0, zw_pt, zh_pt)
+        c.restoreState()
 
-    def draw_page(c, chunk, back):
-        # для короткого края меняем колонки местами на обороте
-        order = [1, 0] if (back and duplex_flip == "short") else [0, 1]
-        for col in (0, 1):
-            pidx = order[col]
-            if pidx >= len(chunk):
+    def draw_values(page, rec):
+        vals = zayav_overlay_text(rec)
+        slots = lay.get(str(page), {}) or {}
+        for slot, cfg in slots.items():
+            txt = vals.get(slot, "")
+            if txt is None or str(txt).strip() == "":
                 continue
-            x0, y0 = origin(col)
-            if draw_guides:
-                c.setStrokeColorRGB(0.78, 0.78, 0.84)
-                c.setLineWidth(0.3)
-                c.setDash(2, 2)
-                c.rect(x0, y0, zw_pt, zh_pt, stroke=1, fill=0)
-                c.setDash()
-            (_draw_zayavlenie_page2 if back else _draw_zayavlenie_page1)(
-                c, x0, y0, zw_pt, zh_pt, chunk[pidx])
-        c.showPage()
+            txt = str(txt)
+            font = _serif(bool(cfg.get("bold")))
+            size = float(cfg.get("size", 9) or 9)
+            x = float(cfg.get("x", 0) or 0) / 100.0 * pw
+            y = float(cfg.get("y", 0) or 0) / 100.0 * ph
+            w = float(cfg.get("w", 20) or 20) / 100.0 * pw
+            align = cfg.get("align", "left")
+            tw = stringWidth(txt, font, size)
+            if w > 0 and tw > w:
+                size = max(4.0, size * w / tw)
+            c.setFont(font, size)
+            c.setFillColorRGB(0.03, 0.05, 0.32)
+            yb = ph - y  # baseline от верхнего края
+            if align == "center":
+                c.drawCentredString(x + w / 2.0, yb, txt)
+            elif align == "right":
+                c.drawRightString(x + w, yb, txt)
+            else:
+                c.drawString(x, yb, txt)
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(pw, ph))
-    for s in range(0, len(people), 2):
-        chunk = people[s:s + 2]
-        draw_page(c, chunk, False)
-        draw_page(c, chunk, True)
+    for rec in people:
+        draw_static(_zayav_static_page1)
+        draw_values(1, rec)
+        c.showPage()
+        draw_static(_zayav_static_page2)
+        draw_values(2, rec)
+        c.showPage()
     c.save()
     buf.seek(0)
     return buf.getvalue()

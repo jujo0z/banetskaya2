@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,22 +13,26 @@ import {
   Copy,
   Trash2,
   Eraser,
-  RefreshCw,
-  ChevronDown,
   Save,
   Wand2,
+  ChevronDown,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   zayavlenieFields,
   getZayavlenieDefaults,
   saveZayavlenieDefaults,
   zayavleniePrefill,
-  zayavleniePreviewPngUrl,
   openZayavleniePdf,
   downloadZayavleniePdf,
   masterUpload,
   downloadMasterTemplate,
+  getZayavlenieLayout,
+  saveZayavlenieLayout,
+  zayavlenieBackgroundUrl,
 } from "@/lib/apiClient";
+import ZayavPreview from "@/components/ZayavPreview";
+import { zayavOverlayText } from "@/lib/zayavOverlay";
 
 const recordLabel = (r, i) => (r.fio && String(r.fio).trim()) || `Заявление ${i + 1}`;
 
@@ -40,35 +44,57 @@ const stripEmpty = (obj) => {
   return out;
 };
 
-// «Заявление о регистрации по месту жительства». Векторная печать на A4-ландшафте:
-// 2 заявления (A5) в ряд, лицо — стр.1 двух человек, оборот — стр.2 тех же
-// (двусторонняя печать). Разрезав лист по центру, получаем 2 готовых заявления.
+// «Заявление о регистрации по месту пребывания». Отрисовка: чистый бланк-фон
+// (A4-портрет, 2 страницы) + слой данных по координатам (проценты страницы).
+// Preview и PDF используют одну систему координат. Есть режим «Настройка полей».
 export default function Zayavlenie() {
   const [groups, setGroups] = useState([]);
   const [defaults, setDefaults] = useState({});
   const [records, setRecords] = useState([{}]);
   const [activeIdx, setActiveIdx] = useState(0);
-  const [duplexFlip, setDuplexFlip] = useState("long");
   const [loading, setLoading] = useState(true);
   const [showDefaults, setShowDefaults] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState(null);
-  const [previewBusy, setPreviewBusy] = useState(false);
-  const [previewSide, setPreviewSide] = useState("front");
   const [uploading, setUploading] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
 
+  // раскладка (координаты слотов) + режим настройки
+  const [layout, setLayout] = useState(null);      // {"1":{slot:cfg}, "2":{...}}
+  const [slotsMeta, setSlotsMeta] = useState([]);   // [{slot,page,label}]
+  const [page, setPage] = useState(1);              // 1 | 2
+  const [editMode, setEditMode] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState(null);
+  const [savingLayout, setSavingLayout] = useState(false);
+
   const location = useLocation();
   const fileRef = useRef(null);
-  const prevUrlRef = useRef(null);
 
-  const sheets = Math.max(1, Math.ceil(records.length / 2));
+  const rec = records[activeIdx] || {};
+  const values = useMemo(() => zayavOverlayText(rec), [rec]);
+
+  // слоты текущей страницы + подмешанные подписи (label) для редактора/плейсхолдеров
+  const curSlots = useMemo(() => {
+    const src = (layout && layout[String(page)]) || {};
+    const meta = {};
+    (slotsMeta || []).forEach((s) => (meta[s.slot] = s.label));
+    const out = {};
+    Object.entries(src).forEach(([k, cfg]) => {
+      out[k] = { ...cfg, label: meta[k] || k };
+    });
+    return out;
+  }, [layout, page, slotsMeta]);
 
   useEffect(() => {
     (async () => {
       try {
-        const [f, d] = await Promise.all([zayavlenieFields(), getZayavlenieDefaults()]);
+        const [f, d, lay] = await Promise.all([
+          zayavlenieFields(),
+          getZayavlenieDefaults(),
+          getZayavlenieLayout(),
+        ]);
         setGroups(f.groups || []);
         setDefaults(d || {});
+        setLayout(lay.layout || { 1: {}, 2: {} });
+        setSlotsMeta(lay.slots || []);
         const prefillList = location.state?.prefillList || null;
         if (Array.isArray(prefillList) && prefillList.length) {
           const recs = await zayavleniePrefill(prefillList);
@@ -78,7 +104,7 @@ export default function Zayavlenie() {
           setRecords([{ ...(d || {}) }]);
         }
       } catch (e) {
-        toast.error("Не удалось загрузить поля Заявления");
+        toast.error("Не удалось загрузить данные Заявления");
       } finally {
         setLoading(false);
       }
@@ -157,47 +183,54 @@ export default function Zayavlenie() {
   const clearRecordAt = (idx) =>
     setRecords((rs) => rs.map((r, i) => (i === idx ? { ...defaults } : r)));
 
-  const refreshPreview = useCallback(async () => {
-    if (loading) return;
-    setPreviewBusy(true);
-    try {
-      const url = await zayavleniePreviewPngUrl(records, duplexFlip, previewSide);
-      if (prevUrlRef.current) window.URL.revokeObjectURL(prevUrlRef.current);
-      prevUrlRef.current = url;
-      setPreviewUrl(url);
-    } catch (e) {
-      /* ignore */
-    } finally {
-      setPreviewBusy(false);
-    }
-  }, [records, duplexFlip, previewSide, loading]);
-
-  useEffect(() => {
-    const t = setTimeout(refreshPreview, 500);
-    return () => clearTimeout(t);
-  }, [refreshPreview]);
-  useEffect(
-    () => () => {
-      if (prevUrlRef.current) window.URL.revokeObjectURL(prevUrlRef.current);
-    },
-    []
-  );
-
   const doOpen = async () => {
     try {
-      await openZayavleniePdf(records, duplexFlip);
-      toast("PDF открыт — печатайте «Фактический размер» (100%), двусторонняя печать");
+      await openZayavleniePdf(records);
+      toast("PDF открыт — печатайте «Фактический размер» (100%)");
     } catch (e) {
       toast.error("Ошибка открытия PDF");
     }
   };
   const doDownload = async () => {
     try {
-      await downloadZayavleniePdf(records, duplexFlip);
+      await downloadZayavleniePdf(records);
     } catch (e) {
       toast.error("Ошибка скачивания");
     }
   };
+
+  // ---- Редактор координат ----
+  const patchSlot = (slot, patch) =>
+    setLayout((L) => {
+      const p = String(page);
+      const cur = (L && L[p] && L[p][slot]) || {};
+      return { ...L, [p]: { ...(L[p] || {}), [slot]: { ...cur, ...patch } } };
+    });
+  const doSaveLayout = async () => {
+    setSavingLayout(true);
+    try {
+      await saveZayavlenieLayout(layout);
+      toast.success("Раскладка полей сохранена");
+    } catch (e) {
+      toast.error("Не удалось сохранить раскладку");
+    } finally {
+      setSavingLayout(false);
+    }
+  };
+  const doResetLayout = async () => {
+    setSavingLayout(true);
+    try {
+      const res = await saveZayavlenieLayout({});
+      setLayout(res.layout || { 1: {}, 2: {} });
+      toast.success("Раскладка сброшена к стандартной");
+    } catch (e) {
+      toast.error("Не удалось сбросить");
+    } finally {
+      setSavingLayout(false);
+    }
+  };
+
+  const selCfg = selectedSlot ? curSlots[selectedSlot] : null;
 
   if (loading) {
     return <div className="p-8 text-muted-foreground">Загрузка…</div>;
@@ -210,10 +243,9 @@ export default function Zayavlenie() {
           <FileSignature className="h-8 w-8 text-[#E11D48]" /> Заявление о регистрации
         </h1>
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-          Печать «Заявления о регистрации по месту жительства» на чистой бумаге A4. На каждом
-          листе <b>2 заявления</b> (левое и правое), лицевая сторона — страница 1 двух человек,
-          оборот — страница 2 тех же. Печатайте <b>двусторонне</b> и разрежьте лист по центру —
-          получите 2 готовых заявления. Страница 2 заполняется от руки (площадь подставляется).
+          «Заявление о регистрации по месту пребывания» на чистой бумаге A4 (2 страницы на человека).
+          Данные накладываются поверх официального бланка. Печатайте <b>двусторонне</b> (стр. 1 — лицо,
+          стр. 2 — оборот). Страница 2 частично заполняется от руки (площадь и число проживающих подставляются).
         </p>
       </div>
 
@@ -310,41 +342,6 @@ export default function Zayavlenie() {
             </Button>
           </div>
 
-          {/* Duplex flip */}
-          <div className="rounded-lg border border-white/10 bg-white/5 p-4 space-y-3">
-            <div className="text-sm font-semibold flex items-center gap-2">
-              <Printer className="h-4 w-4 text-[#E11D48]" /> Двусторонняя печать
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setDuplexFlip("long")}
-                className={`rounded-md border px-3 py-2 text-sm text-left transition ${
-                  duplexFlip === "long" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
-                }`}
-                data-testid="zayav-flip-long"
-              >
-                <div className="font-semibold">По длинному краю</div>
-                <div className="text-[11px] text-muted-foreground">обычная (по умолчанию)</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setDuplexFlip("short")}
-                className={`rounded-md border px-3 py-2 text-sm text-left transition ${
-                  duplexFlip === "short" ? "border-[#E11D48] bg-[#E11D48]/10" : "border-white/10 hover:border-white/30"
-                }`}
-                data-testid="zayav-flip-short"
-              >
-                <div className="font-semibold">По короткому краю</div>
-                <div className="text-[11px] text-muted-foreground">если оборот не совпал</div>
-              </button>
-            </div>
-            <div className="text-[12px] text-muted-foreground bg-white/5 rounded-md px-3 py-2">
-              Заявлений: <b className="text-white">{records.length}</b> · листов A4 (лицо+оборот):{" "}
-              <b className="text-white">{sheets}</b>
-            </div>
-          </div>
-
           <div className="grid grid-cols-2 gap-2">
             <Button onClick={doOpen} className="bg-[#E11D48] hover:bg-[#BE123C]" data-testid="zayav-open">
               <Printer className="h-4 w-4 mr-2" /> Открыть/Печать
@@ -414,46 +411,132 @@ export default function Zayavlenie() {
               })}
             </div>
           </div>
+
+          {/* Настройка полей (редактор координат) */}
+          {editMode && (
+            <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 p-4 space-y-3" data-testid="zayav-field-editor">
+              <div className="text-sm font-semibold flex items-center gap-2 text-amber-300">
+                <SlidersHorizontal className="h-4 w-4" /> Настройка полей — стр. {page}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Кликните поле в предпросмотре и перетащите мышью, либо задайте координаты числами.
+                Значения в % от страницы. Работает и для preview, и для PDF.
+              </p>
+              {selCfg ? (
+                <div className="space-y-2">
+                  <div className="text-[12px] font-semibold text-white">{selCfg.label || selectedSlot}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      ["x", "X, %"],
+                      ["y", "Y, %"],
+                      ["w", "Ширина, %"],
+                      ["size", "Кегль (pt A4)"],
+                    ].map(([k, lbl]) => (
+                      <div key={k}>
+                        <Label className="text-[10px] text-muted-foreground">{lbl}</Label>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          value={selCfg[k] ?? ""}
+                          onChange={(e) => patchSlot(selectedSlot, { [k]: parseFloat(e.target.value) })}
+                          className="h-8 text-sm"
+                          data-testid={`zayav-edit-${k}`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <Label className="text-[10px] text-muted-foreground">Выравнивание</Label>
+                      <select
+                        value={selCfg.align || "left"}
+                        onChange={(e) => patchSlot(selectedSlot, { align: e.target.value })}
+                        className="h-8 w-full rounded-md bg-black/30 border border-white/10 text-sm px-2"
+                        data-testid="zayav-edit-align"
+                      >
+                        <option value="left">влево</option>
+                        <option value="center">по центру</option>
+                        <option value="right">вправо</option>
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-1 text-[12px] mt-4">
+                      <input
+                        type="checkbox"
+                        checked={!!selCfg.bold}
+                        onChange={(e) => patchSlot(selectedSlot, { bold: e.target.checked })}
+                        data-testid="zayav-edit-bold"
+                      />
+                      жирный
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[12px] text-muted-foreground">Поле не выбрано — кликните по полю в предпросмотре.</div>
+              )}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <Button onClick={doSaveLayout} disabled={savingLayout} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="zayav-save-layout">
+                  <Save className="h-4 w-4 mr-1" /> {savingLayout ? "…" : "Сохранить раскладку"}
+                </Button>
+                <Button onClick={doResetLayout} disabled={savingLayout} variant="outline" data-testid="zayav-reset-layout">
+                  Сбросить
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ---- Preview ---- */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold text-muted-foreground">
-              Предпросмотр листа ({previewSide === "back" ? "оборот — стр. 2" : "лицо — стр. 1"})
+              Предпросмотр — {page === 2 ? "страница 2 (оборот)" : "страница 1 (лицо)"}
             </div>
             <div className="flex items-center gap-2">
               <div className="flex rounded-md border border-white/10 overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => setPreviewSide("front")}
-                  className={`px-3 py-1.5 text-xs transition ${previewSide === "front" ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`}
-                  data-testid="zayav-side-front"
+                  onClick={() => setPage(1)}
+                  className={`px-3 py-1.5 text-xs transition ${page === 1 ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`}
+                  data-testid="zayav-page-1-btn"
                 >
-                  Лицо (стр. 1)
+                  Стр. 1
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPreviewSide("back")}
-                  className={`px-3 py-1.5 text-xs transition ${previewSide === "back" ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`}
-                  data-testid="zayav-side-back"
+                  onClick={() => setPage(2)}
+                  className={`px-3 py-1.5 text-xs transition ${page === 2 ? "bg-[#E11D48] text-white font-semibold" : "text-muted-foreground hover:text-white"}`}
+                  data-testid="zayav-page-2-btn"
                 >
-                  Оборот (стр. 2)
+                  Стр. 2
                 </button>
               </div>
-              <Button size="sm" variant="ghost" onClick={refreshPreview} disabled={previewBusy} data-testid="zayav-refresh-preview">
-                <RefreshCw className={`h-4 w-4 mr-1 ${previewBusy ? "animate-spin" : ""}`} /> Обновить
+              <Button
+                size="sm"
+                variant={editMode ? "default" : "ghost"}
+                onClick={() => {
+                  setEditMode((v) => !v);
+                  setSelectedSlot(null);
+                }}
+                className={editMode ? "bg-amber-500 hover:bg-amber-600 text-black" : ""}
+                data-testid="zayav-toggle-edit"
+              >
+                <SlidersHorizontal className="h-4 w-4 mr-1" /> {editMode ? "Готово" : "Настройка полей"}
               </Button>
             </div>
           </div>
-          <div className="rounded-lg border border-white/10 bg-white overflow-hidden shadow-2xl flex items-center justify-center" style={{ height: "80vh" }}>
-            {previewUrl ? (
-              <img src={previewUrl} alt="Предпросмотр Заявления" className="max-w-full max-h-full object-contain" data-testid="zayavlenie-preview" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                Формирование предпросмотра…
-              </div>
-            )}
+          <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-2xl overflow-auto" style={{ maxHeight: "84vh" }}>
+            <div className="mx-auto" style={{ maxWidth: 720 }}>
+              <ZayavPreview
+                page={page}
+                backgroundUrl={zayavlenieBackgroundUrl(page)}
+                slots={curSlots}
+                values={values}
+                editMode={editMode}
+                selectedSlot={selectedSlot}
+                onSelectSlot={setSelectedSlot}
+                onChangeSlot={patchSlot}
+              />
+            </div>
           </div>
         </div>
       </div>

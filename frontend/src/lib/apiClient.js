@@ -532,6 +532,17 @@ export async function downloadZayavleniePdf(records, duplexFlip = "long") {
   const res = await api.post("/zayavlenie/preview", { records, duplex_flip: duplexFlip }, { responseType: "blob" });
   downloadBlob(res.data, "zayavlenie.pdf");
 }
+export function zayavlenieBackgroundUrl(page = 1) {
+  return `${API}/zayavlenie/background?page=${page}`;
+}
+export async function getZayavlenieLayout() {
+  const { data } = await api.get("/zayavlenie/layout");
+  return data; // {layout, slots, page_count}
+}
+export async function saveZayavlenieLayout(layout) {
+  const { data } = await api.post("/zayavlenie/layout", { layout });
+  return data;
+}
 
 
 // ---- Полный пакет документов (договор + Ф19 + Ф24 + сообщение) ----

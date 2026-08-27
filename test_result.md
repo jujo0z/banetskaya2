@@ -417,7 +417,13 @@ backend:
     status_history:
         - working: "NA"
           agent: "main"
-          comment: "НОВЫЙ ДОКУМЕНТ «Заявление о регистрации по месту жительства» (векторная отрисовка 1:1, A4-ландшафт: 2 заявления A5 в ряд, лицо=стр.1 двух человек, оборот=стр.2 тех же, дуплекс). Автозаполнение стр.1 из единого шаблона «Данные»; стр.2 пустая для руки, кроме площади (константа 5467,9). Паспорт разбивается на серию/номер. Эндпоинты: GET /api/zayavlenie/fields (сгруппированный список полей), GET/POST /api/zayavlenie/defaults (константы, хранятся в app_settings key=zayavlenie_defaults), POST /api/zayavlenie/prefill {students:[...]} → [zayavlenie records] (разбивка паспорта, area=5467,9, reg_who=одного, reg_count=1), POST /api/zayavlenie/preview {records, duplex_flip} → application/pdf (2 стр для 1-2 человек, 4 стр для 3-4), POST /api/zayavlenie/preview-png {side:'front'|'back'} → image/png. Интеграция с master-upload (ключ 'zayavlenie' в ответе) и package (include.zayavlenie, по умолчанию включён). ПРОВЕРИТЬ: (1) GET /api/zayavlenie/fields → 200, groups+keys (fio, passport_series, passport_number, area, sign_date и др.). (2) GET /api/zayavlenie/defaults → 200 {defaults:{}}. (3) POST /api/zayavlenie/defaults {defaults:{area:'5467,9'}} → 200 saved. (4) POST /api/zayavlenie/preview {records:[{...}]} → 200 PDF, страниц=2 (лицо+оборот) для 1-2 человек, 4 стр для 3. (5) POST /api/zayavlenie/preview-png side=front/back → 200 image/png. (6) POST /api/zayavlenie/prefill {students:[<master-строки>]} → 200 records с полями fio/passport_series/passport_number/area=5467,9/reg_who=одного. (7) GET /api/master-template → заполнить openpyxl-ом (даты как datetime), POST /api/master-upload → в ответе есть ключ 'zayavlenie' (массив), даты в формате ДД.ММ.ГГГГ, passport разбит на серию/номер, basis содержит 'договор найма' с номером, area=5467,9. (8) POST /api/package с include {zayavlenie:true} по master-строкам → 200 PDF, и что при include без zayavlenie он всё равно по умолчанию включён. Регрессия: GET /api/, /api/stats → 200."
+          comment: "ПЕРЕРАБОТКА ОТОБРАЖЕНИЯ (2026-08-27). Форма переведена на «по месту ПРЕБЫВАНИЯ» и НОВУЮ АРХИТЕКТУРУ: чистый бланк рисуется векторно на A4-ПОРТРЕТ (2 страницы на человека; раскладка масштабирована с зоны A5 148.5×210 на A4 210×297 — пропорции 1:√2 идентичны), данные накладываются ПОВЕРХ по конфигурации координат (проценты страницы). ОДНИ и те же координаты в PDF и в HTML-предпросмотре фронта. build_zayavlenie ТЕПЕРЬ A4-портрет per person=стр.1+стр.2 (было A4-ландшафт 2×A5). Новые функции в document_service: _zayav_static_page1/2, ZAYAV_LAYOUT_DEFAULT (22 слота: 19 на стр.1 + 3 на стр.2), zayav_overlay_text, build_zayav_static_pdf, render_zayav_background_png(page), _merge_zayav_layout, ZAYAV_OVERLAY_SLOTS. Исправлена опечатка бланка: подпись основания '...по месту пребывания' (было 'жительства'). Шрифт Liberation Serif (Times), TTF в assets/fonts. НОВЫЕ ЭНДПОИНТЫ (/api): GET /zayavlenie/layout → {layout:{'1':{slot:{x,y,w,align,size,bold}},'2':{...}}, slots:[{slot,page,label}], page_count:2}; POST /zayavlenie/layout {layout} → {saved:true, layout} (persist в app_settings key=zayavlenie_layout, merge с дефолтами); GET /zayavlenie/background?page=1|2 → image/png (чистый бланк). ОБНОВЛЕНЫ preview (A4-портрет, 2 стр/чел, использует сохранённую раскладку), preview-png (front→стр1, back→стр2), package. ПРОВЕРИТЬ: (1) GET /api/zayavlenie/layout → 200, layout['1'] ≥19 слотов (applicant, passport_series, passport_number, res_street, basis, sign_day), layout['2'] содержит area/occupancy_count/minors_count; slots — массив с label. (2) POST /api/zayavlenie/layout {layout:{'1':{applicant:{x:31.0,y:11.0,w:65,align:'center',size:10,bold:false}}}} → 200 saved=true; повторный GET → applicant.x==31.0 И прочие слоты на месте (merge). (3) GET /api/zayavlenie/background?page=1 → 200 image/png (\\x89PNG, >5000 байт); page=2 → 200 image/png (другое). (4) POST /api/zayavlenie/preview {records:[{fio:'Иванов Иван Иванович',birth_year:'2006',passport_series:'MP',passport_number:'1234567',res_street:'пр-т Дзержинского',res_house:'85',from_place:'г. Гомель',basis:'договор найма № 12 от 01.09.2024',sign_date:'01.09.2024',area:'5467,9',occupancy_count:'250',minors_count:'3'}]} → 200 application/pdf, РОВНО 2 страницы A4-ПОРТРЕТ (rect≈595.28×841.89 pt через pymupdf); стр.0 текст содержит 'ЗАЯВЛЕНИЕ','по месту пребывания','Иванов Иван Иванович','пр-т Дзержинского'; стр.1 содержит 'Общая площадь' и '5467,9'. (5) POST /api/zayavlenie/preview-png side='front' → 200 image/png; side='back' → 200 image/png (другое). (6) POST /api/zayavlenie/prefill {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'MP1234567'}]} → 200 records (регрессия). (7) РЕГРЕССИЯ пакета: GET /api/master-template → заполнить openpyxl → POST /api/master-upload → 200 (ключ 'zayavlenie'); POST /api/package {people:[master[0]], include:{zayavlenie:true}} → 200 application/pdf. (8) Регрессия: GET /api/_ping, GET /api/stats → 200. ВАЖНО: старые тесты про 'A4-ландшафт/A5' и заголовок 'по месту жительства' больше НЕ актуальны — теперь A4-портрет и 'по месту пребывания'."
+        - working: true
+          agent: "main"
+          comment: "(предыдущая версия — векторная 1:1, A4-ландшафт 2×A5, 'по месту жительства'. Переработано, см. запись выше.) Оригинальный комментарий сохранён ниже для истории."
+        - working: "NA"
+          agent: "main"
+          comment: "НОВЫЙ ДОКУМЕНТ «Заявление о регистрации по месту жительства» (векторная отрисовка 1:1, A4-ландшафт: 2 заявления A5 в ряд, лицо=стр.1 двух человек, оборот=стр.2 тех же, дуплекс). Автозаполнение стр.1 из единого шаблона «Данные»; стр.2 пустая для руки, кроме площади (константа 5467,9). Паспорт разбивается на серию/номер. Эндпоинты: GET /api/zayavlenie/fields (сгруппированный список полей), GET/POST /api/zayavlenie/defaults (константы, хранятся в app_settings key=zayavlenie_defaults), POST /api/zayavlenie/prefill {students:[...]} → [zayavlenie records] (разбивка паспорта, area=5467,9, reg_who=одного, reg_count=1), POST /api/zayavlenie/preview {records, duplex_flip} → application/pdf (2 стр для 1-2 человек, 4 стр для 3-4), POST /api/zayavlenie/preview-png {side:'front'|'back'} → image/png. Интеграция с master-upload (ключ 'zayavlenie' в ответе) и package (include.zayavlenie, по умолчанию включён)."
         - working: true
           agent: "testing"
           comment: "✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (15/15, 100% success rate). НОВЫЙ ДОКУМЕНТ «ЗАЯВЛЕНИЕ О РЕГИСТРАЦИИ ПО МЕСТУ ЖИТЕЛЬСТВА» ПОЛНОСТЬЮ РАБОТАЕТ. ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
@@ -594,6 +600,142 @@ backend:
           • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО (forma19, forma24, soobshenie, contracts работают корректно)
           
           Обновлённый документ готов к использованию."
+        - working: true
+          agent: "testing"
+          comment: "✅ ПЕРЕРАБОТКА ЗАЯВЛЕНИЯ НА A4-ПОРТРЕТ ПОЛНОСТЬЮ РАБОТАЕТ (8/8 тестов, 100% success rate). КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ АРХИТЕКТУРЫ ПОДТВЕРЖДЕНЫ:
+          
+          === НОВАЯ АРХИТЕКТУРА (A4-ПОРТРЕТ, 2 СТРАНИЦЫ НА ЧЕЛОВЕКА) ===
+          
+          ✅ TEST 1: GET /api/zayavlenie/layout
+             → 200, возвращает {layout:{'1':{...},'2':{...}}, slots:[...], page_count:2}
+             → page_count = 2 (РОВНО 2 страницы на человека, НЕ A4-ландшафт) ✓
+             → layout['1'] содержит 19 слотов (≥19 требование выполнено) ✓
+             → ВСЕ ТРЕБУЕМЫЕ СЛОТЫ СТРАНИЦЫ 1 ПРИСУТСТВУЮТ: applicant, passport_series, passport_number, res_street, basis, sign_day ✓
+             → layout['2'] содержит 3 слота ✓
+             → ВСЕ ТРЕБУЕМЫЕ СЛОТЫ СТРАНИЦЫ 2 ПРИСУТСТВУЮТ: area, occupancy_count, minors_count ✓
+             → slots — массив из 22 элементов, каждый содержит slot/page/label ✓
+             → Структура layout корректна: координаты в процентах страницы (x, y, w), align, size, bold ✓
+          
+          ✅ TEST 2: POST /api/zayavlenie/layout (save & merge)
+             → POST {layout:{'1':{applicant:{x:31.0,y:11.0,w:65,align:'center',size:10,bold:false}}}}
+             → 200, saved=true ✓
+             → Повторный GET /api/zayavlenie/layout → applicant.x == 31.0 (персистентность в MongoDB app_settings подтверждена) ✓
+             → КРИТИЧЕСКАЯ ПРОВЕРКА MERGE: passport_series и basis ВСЁ ЕЩЁ ПРИСУТСТВУЮТ в layout['1'] (merge с дефолтами, НЕ перезапись) ✓
+             → Всего слотов в page 1 после частичного обновления: 19 (не затёрлись) ✓
+             → ВОССТАНОВЛЕНИЕ: POST {layout:{}} → 200 (раскладка сброшена к дефолтам) ✓
+          
+          ✅ TEST 3: GET /api/zayavlenie/background (PNG фоны)
+             → GET /api/zayavlenie/background?page=1
+                • 200, Content-Type: image/png ✓
+                • Тело начинается с PNG-сигнатуры \\x89PNG ✓
+                • Размер: 108897 байт (> 5000 байт требование выполнено) ✓
+             → GET /api/zayavlenie/background?page=2
+                • 200, Content-Type: image/png ✓
+                • Тело начинается с PNG-сигнатуры \\x89PNG ✓
+                • Размер: 83088 байт (> 5000 байт требование выполнено) ✓
+             → КРИТИЧЕСКАЯ ПРОВЕРКА РАЗЛИЧИЯ: MD5 хэши page=1 и page=2 РАЗНЫЕ (hash1=77747cf8, hash2=852b4581) ✓
+             → page=1 и page=2 — это РАЗНЫЕ изображения (лицо и оборот) ✓
+          
+          ✅ TEST 4: POST /api/zayavlenie/preview (PDF с данными)
+             → POST {records:[{fio:'Иванов Иван Иванович',birth_year:'2006',passport_series:'MP',passport_number:'1234567',res_street:'пр-т Дзержинского',res_house:'85',from_place:'г. Гомель',basis:'договор найма № 12 от 01.09.2024',sign_date:'01.09.2024',area:'5467,9',occupancy_count:'250',minors_count:'3'}]}
+             → 200, Content-Type: application/pdf ✓
+             → Тело начинается с %PDF ✓
+             → Размер: 102626 байт ✓
+             → ПРОВЕРКА ЧЕРЕЗ PYMUPDF:
+                • Число страниц: РОВНО 2 (len(doc)==2) ✓
+                • Страница 0 размер: 595.28 × 841.89 pt (A4-ПОРТРЕТ, допуск ±2pt выполнен) ✓
+                • Страница 1 размер: 595.28 × 841.89 pt (A4-ПОРТРЕТ, допуск ±2pt выполнен) ✓
+             → ИЗВЛЕЧЕНИЕ ТЕКСТА СТРАНИЦЫ 0 (через pymupdf.get_text()):
+                • Найдено 'ЗАЯВЛЕНИЕ' ✓
+                • Найдено 'по месту пребывания' (НЕ 'жительства' — КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ) ✓
+                • Найдено 'Иванов Иван Иванович' ✓
+                • Найдено 'пр-т Дзержинского' ✓
+             → ИЗВЛЕЧЕНИЕ ТЕКСТА СТРАНИЦЫ 1 (через pymupdf.get_text()):
+                • Найдено 'Общая площадь' ✓
+                • Найдено '5467,9' ✓
+             → ПОДТВЕРЖДЕНИЕ: PDF содержит РОВНО 2 страницы A4-ПОРТРЕТ (НЕ A4-ландшафт 2×A5), заголовок 'по месту ПРЕБЫВАНИЯ' (НЕ 'жительства') ✓
+          
+          ✅ TEST 5: POST /api/zayavlenie/preview-png (PNG предпросмотр)
+             → POST {records:[{...}], side:'front'}
+                • 200, Content-Type: image/png ✓
+                • Тело начинается с \\x89PNG ✓
+                • Размер: 115834 байт ✓
+             → POST {records:[{...}], side:'back'}
+                • 200, Content-Type: image/png ✓
+                • Тело начинается с \\x89PNG ✓
+                • Размер: 80566 байт ✓
+             → КРИТИЧЕСКАЯ ПРОВЕРКА РАЗЛИЧИЯ: front и back — РАЗНЫЕ изображения (размеры различаются на 35268 байт) ✓
+             → side='front' рендерит страницу 0 (лицо), side='back' рендерит страницу 1 (оборот) ✓
+          
+          ✅ TEST 6: POST /api/zayavlenie/prefill (регрессия)
+             → POST {students:[{full_name:'Иванов Иван Иванович',birth_date:'01.09.2007',citizenship:'РБ',passport_number:'MP1234567'}]}
+             → 200, возвращает {records:[...]} ✓
+             → records — массив, длина > 0 ✓
+             → Первая запись содержит корректные поля (fio, birth_year, passport_series, area='5467,9') ✓
+             → Регрессия prefill/master_to_zayavlenie НЕ СЛОМАНА ✓
+          
+          ✅ TEST 7: РЕГРЕССИЯ ПАКЕТА (master-template → master-upload → package)
+             → GET /api/master-template
+                • 200, Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet ✓
+                • Размер: 9251 байт ✓
+             → Заполнен Excel через openpyxl с datetime-объектами:
+                • ФИО: 'Иванов Иван Иванович'
+                • Дата рождения: datetime(2006, 8, 3)
+                • Паспорт: 'MP1234567'
+                • Дата подписания: datetime(2024, 9, 1)
+             → POST /api/master-upload с заполненным .xlsx
+                • 200, Content-Type: application/json ✓
+                • Response keys: ['count', 'master', 'contracts', 'forma19', 'forma24', 'soobshenie', 'zayavlenie'] ✓
+                • КРИТИЧЕСКАЯ ПРОВЕРКА: ключ 'zayavlenie' ПРИСУТСТВУЕТ в ответе ✓
+                • zayavlenie — массив, длина > 0 ✓
+             → POST /api/package {people:[master[0]], include:{zayavlenie:true}}
+                • 200, Content-Type: application/pdf ✓
+                • Тело начинается с %PDF ✓
+                • Размер: 280427 байт ✓
+                • Проверено через pymupdf: 9 страниц (договор 4 + Ф19+Ф24 2 + сообщение 1 + заявление 2) ✓
+             → Регрессия пакета НЕ СЛОМАНА ✓
+          
+          ✅ TEST 8: РЕГРЕССИЯ ЗДОРОВЬЯ
+             → GET /api/_ping
+                • 200, {ok:true} ✓
+             → GET /api/stats
+                • 200, JSON с ключами total, drafts, this_month, datasets, recent ✓
+             → Регрессия здоровья НЕ СЛОМАНА ✓
+          
+          === ИТОГОВОЕ ЗАКЛЮЧЕНИЕ ===
+          
+          🎉 ПЕРЕРАБОТКА ЗАЯВЛЕНИЯ НА A4-ПОРТРЕТ ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНА:
+          
+          КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ АРХИТЕКТУРЫ:
+          • ФОРМАТ: A4-ПОРТРЕТ (595.28×841.89 pt), НЕ A4-ландшафт 2×A5 ✓
+          • СТРАНИЦ НА ЧЕЛОВЕКА: РОВНО 2 (стр.1 лицо + стр.2 оборот), НЕ 2 заявления A5 в ряд ✓
+          • ЗАГОЛОВОК: 'ЗАЯВЛЕНИЕ о регистрации по месту ПРЕБЫВАНИЯ', НЕ 'по месту жительства' ✓
+          • КООРДИНАТЫ: проценты страницы (x, y, w), одинаковые в PDF и HTML-предпросмотре ✓
+          • РАСКЛАДКА: 22 слота (19 на стр.1 + 3 на стр.2), конфигурация в app_settings key=zayavlenie_layout ✓
+          
+          НОВЫЕ ЭНДПОИНТЫ:
+          • GET /api/zayavlenie/layout → {layout:{'1':{...},'2':{...}}, slots:[...], page_count:2} ✓
+          • POST /api/zayavlenie/layout → {saved:true, layout} (merge с дефолтами, НЕ перезапись) ✓
+          • GET /api/zayavlenie/background?page=1|2 → image/png (чистый бланк лица/оборота) ✓
+          
+          ОБНОВЛЁННЫЕ ЭНДПОИНТЫ:
+          • POST /api/zayavlenie/preview → PDF A4-ПОРТРЕТ, 2 страницы на человека ✓
+          • POST /api/zayavlenie/preview-png → PNG side='front'|'back' (разные изображения) ✓
+          • POST /api/zayavlenie/prefill → регрессия НЕ СЛОМАНА ✓
+          • POST /api/master-upload → ключ 'zayavlenie' присутствует ✓
+          • POST /api/package → интеграция с заявлением работает ✓
+          
+          РЕГРЕССИЙ НЕ ОБНАРУЖЕНО:
+          • master-template, master-upload, package работают корректно ✓
+          • _ping, stats работают корректно ✓
+          
+          СТАРЫЕ ОЖИДАНИЯ БОЛЬШЕ НЕ АКТУАЛЬНЫ:
+          • ❌ A4-ландшафт (теперь A4-портрет)
+          • ❌ 2×A5 в ряд (теперь 2 страницы на человека)
+          • ❌ Заголовок 'по месту жительства' (теперь 'по месту пребывания')
+          
+          Переработанное заявление готово к использованию."
+
 
   - task: "Единый Excel-шаблон и полный пакет документов: GET /api/master-template, POST /api/master-upload, POST /api/package"
     implemented: true
@@ -781,12 +923,24 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Заявление о регистрации по месту жительства: векторная отрисовка + эндпоинты /api/zayavlenie/*"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "main"
+      message: >
+        (2026-08-27) ПЕРЕРАБОТКА ОТОБРАЖЕНИЯ «Заявления». Прошу протестировать ТОЛЬКО
+        backend-эндпоинты /api/zayavlenie/* (см. задачу с needs_retesting:true, приоритет high,
+        она первая в backend-секции). Ключевое: build_zayavlenie теперь A4-ПОРТРЕТ, 2 страницы
+        на человека (лицо+оборот), заголовок «о регистрации по месту ПРЕБЫВАНИЯ»; данные
+        накладываются по конфигурации координат. Новые эндпоинты: GET/POST /api/zayavlenie/layout,
+        GET /api/zayavlenie/background?page=1|2. Полный чек-лист (8 пунктов) — в комментарии задачи.
+        СТАРЫЕ ожидания «A4-ландшафт / 2×A5 / жительства» больше НЕ актуальны. Числа страниц и
+        размеры (595.28×841.89) проверять через pymupdf. Фронтенд НЕ тестировать без разрешения.
+
     - agent: "main"
       message: >
         ОБНОВЛЕНО «Заявление» под вариант ПО МЕСТУ ПРЕБЫВАНИЯ (по фото blanki.by),
