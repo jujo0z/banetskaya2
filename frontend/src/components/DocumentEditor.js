@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,6 +46,28 @@ import {
 } from "lucide-react";
 
 const GROUP_ICONS = { FileSignature, User, Home, BookUser, PlusCircle };
+
+// Совершеннолетие: возраст < 18 на сегодняшнюю дату по «Дате рождения».
+function computeMinor(birth) {
+  const s = String(birth || "").trim();
+  if (!s) return false;
+  let d, mo, y;
+  let m = s.match(/^\s*(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})\s*$/);
+  if (m) { d = +m[1]; mo = +m[2]; y = +m[3]; }
+  else {
+    m = s.match(/^\s*(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\s*$/);
+    if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+    else return false;
+  }
+  if (y < 100) y += y < 30 ? 2000 : 1900;
+  const bd = new Date(y, mo - 1, d);
+  if (isNaN(bd.getTime())) return false;
+  const t = new Date();
+  let age = t.getFullYear() - bd.getFullYear();
+  const md = t.getMonth() - bd.getMonth() || t.getDate() - bd.getDate();
+  if (md < 0) age -= 1;
+  return age < 18;
+}
 
 export default function DocumentEditor({
   open,
@@ -80,7 +103,12 @@ export default function DocumentEditor({
 
   const update = (key, value) => {
     editedRef.current = true;
-    setFields((prev) => ({ ...prev, [key]: value }));
+    setFields((prev) => {
+      const next = { ...prev, [key]: value };
+      // При правке даты рождения возвращаемся к авторасчёту согласия.
+      if (key === "birth_date") next.show_minor_consent = computeMinor(value) ? "1" : "0";
+      return next;
+    });
   };
 
   const revokeUrl = () => {
@@ -335,6 +363,39 @@ export default function DocumentEditor({
                   </AccordionItem>
                 );
               })}
+
+              {/* Согласие за несовершеннолетнего */}
+              {(() => {
+                const raw = fields.show_minor_consent;
+                const isSet = !(raw === undefined || raw === null || raw === "");
+                const explicit = raw === true || raw === "1" || raw === "да" || raw === "true";
+                const checked = isSet ? explicit : computeMinor(fields.birth_date);
+                const auto = computeMinor(fields.birth_date);
+                return (
+                  <div className="border border-white/10 rounded-md bg-[#0A0A0C]/60 px-4 py-3.5">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) => update("show_minor_consent", v ? "1" : "0")}
+                        className="mt-0.5 border-white/20 data-[state=checked]:bg-[#E11D48] data-[state=checked]:border-[#E11D48]"
+                        data-testid="minor-consent-checkbox"
+                      />
+                      <span className="space-y-1">
+                        <span className="flex items-center gap-2 text-base font-heading">
+                          <FileSignature className="h-4 w-4 text-[#E11D48]" />
+                          Согласие за несовершеннолетнего
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          Строка о согласии добавляется в договор под подписью начальника ОКЮР.
+                          Определяется автоматически по дате рождения (до 18 лет)
+                          {auto ? " — сейчас: несовершеннолетний." : "."}
+                          {" "}Отметьте вручную, если дата рождения указана неверно.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                );
+              })()}
 
               {/* Moderation / clause editor */}
               <AccordionItem value="sections" className="border border-white/10 rounded-md bg-[#0A0A0C]/60 px-4">

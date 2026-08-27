@@ -12,7 +12,7 @@ import io
 import re
 import datetime as _dt
 
-from document_service import _split_ru_date, _split_passport
+from document_service import _split_ru_date, _split_passport, is_minor as _is_minor
 
 # ---------------------------------------------------------------------------
 # Схема единого шаблона. Каждая колонка: key / header / sample / section.
@@ -155,6 +155,7 @@ def master_to_contract(m: dict) -> dict:
         "passport_issued_by": m.get("passport_issued_by", ""),
         "id_number": m.get("id_number", ""),
         "phone": m.get("phone", ""),
+        "show_minor_consent": "1" if _is_minor(m.get("birth_date", "")) else "0",
     }
 
 

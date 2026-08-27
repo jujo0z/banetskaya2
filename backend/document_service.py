@@ -227,12 +227,59 @@ def auto_map_columns(headers):
     return mapping
 
 
+def _to_bool(v):
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "да", "yes", "on")
+
+
+def is_minor(birth_date_str, ref_date=None) -> bool:
+    """True если человек НЕ достиг 18 лет на дату ref_date (по умолчанию — сегодня)."""
+    import datetime as _dt
+    d, mo, y = _parse_dmy(birth_date_str)
+    if not (d and mo and y):
+        return False
+    try:
+        y = int(y)
+        if y < 100:
+            y += 2000 if y < 30 else 1900
+        bd = _dt.date(y, int(mo), int(d))
+    except Exception:
+        return False
+    ref = ref_date or _dt.date.today()
+    age = ref.year - bd.year - ((ref.month, ref.day) < (bd.month, bd.day))
+    return age < 18
+
+
+def _parse_dmy(s):
+    """'01.09.2006' | '2006-09-01' -> ('01','09','2006'); иначе ('','','')."""
+    import re
+    s = str(s or "").strip()
+    if not s:
+        return "", "", ""
+    m = re.match(r"^\s*(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})\s*$", s)
+    if m:
+        return m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+    m = re.match(r"^\s*(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\s*$", s)
+    if m:
+        return m.group(3).zfill(2), m.group(2).zfill(2), m.group(1)
+    return "", "", ""
+
+
 def render_docx(fields: dict, template_path=None) -> bytes:
     import jinja2
+    fields = fields or {}
     tpl = DocxTemplate(str(template_path or TEMPLATE_PATH))
     context = {k: (fields.get(k) or "") for k in ALL_TEMPLATE_KEYS}
-    for k, v in (fields or {}).items():
+    for k, v in fields.items():
         context.setdefault(k, v or "")
+    # Согласие за несовершеннолетнего: явное значение галочки имеет приоритет,
+    # иначе — автоопределение по дате рождения (совершеннолетие на сегодня).
+    raw = fields.get("show_minor_consent", None)
+    if raw in (None, ""):
+        context["show_minor_consent"] = is_minor(fields.get("birth_date"))
+    else:
+        context["show_minor_consent"] = _to_bool(raw)
     # ChainableUndefined -> unknown placeholders in custom templates render empty
     jenv = jinja2.Environment(undefined=jinja2.ChainableUndefined)
     tpl.render(context, jinja_env=jenv)
