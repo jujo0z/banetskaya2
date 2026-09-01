@@ -97,6 +97,36 @@ def block_capacity(rooms_present) -> int:
     return sum(cap for _, cap in block_layout(rooms_present))
 
 
+def guess_gender(full_name: str):
+    """Грубое определение пола по ФИО: отчество на '-ич' -> муж, на '-на' -> жен."""
+    parts = (full_name or "").strip().split()
+    if len(parts) >= 3:
+        patr = parts[2].lower()
+        if patr.endswith("на"):
+            return "f"
+        if patr.endswith("ич"):
+            return "m"
+    if len(parts) >= 2:
+        name = parts[1].lower()
+        if name.endswith(("а", "я")):
+            return "f"
+        return "m"
+    return None
+
+
+def block_gender(names):
+    """Пол блока по большинству: 'male' / 'female' / 'mixed' / None."""
+    m = sum(1 for n in names if guess_gender(n) == "m")
+    f = sum(1 for n in names if guess_gender(n) == "f")
+    if m == 0 and f == 0:
+        return None
+    if m > f:
+        return "male"
+    if f > m:
+        return "female"
+    return "mixed"
+
+
 def normalize_name(fio: str) -> str:
     """Нормализация ФИО для сопоставления с договором."""
     s = (fio or "").lower().strip()

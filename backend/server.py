@@ -2201,8 +2201,10 @@ async def residents_floor(floor: int):
         rooms = sorted({p.get("room", "") for p in ppl if p.get("room")})
         capacity = ressvc.block_capacity(rooms)
         free = max(0, capacity - len(ppl))
+        gender = ressvc.block_gender([p.get("full_name", "") for p in ppl])
         blocks.append({"block": block, "index": i, "people": len(ppl),
-                       "rooms": rooms, "capacity": capacity, "free": free})
+                       "rooms": rooms, "capacity": capacity, "free": free,
+                       "gender": gender})
     return {"floor": floor, "blocks": blocks, "total": len(docs)}
 
 

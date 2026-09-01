@@ -441,7 +441,9 @@ export default function Residents() {
                 onClick={() => openBlock(b.block)}
                 data-testid={`block-card-${b.block}`}
                 className={`group relative rounded-2xl border p-5 text-left transition-all glass cursor-pointer ${
-                  b.free > 0
+                  b.gender === "male"
+                    ? "bg-sky-50/70 border-sky-200 hover:border-sky-400 hover:shadow-xl"
+                    : b.free > 0
                     ? "border-emerald-200 hover:border-emerald-400 hover:shadow-xl"
                     : "border-pink-100 hover:border-[#EC4899]/50 hover:shadow-xl"
                 }`}
@@ -452,7 +454,11 @@ export default function Residents() {
                   </span>
                   <DoorClosed
                     className={`h-5 w-5 ${
-                      b.people > 0 ? "text-[#EC4899]" : "text-slate-300"
+                      b.gender === "male"
+                        ? "text-sky-500"
+                        : b.people > 0
+                        ? "text-[#EC4899]"
+                        : "text-slate-300"
                     }`}
                   />
                 </div>
