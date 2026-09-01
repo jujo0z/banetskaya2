@@ -50,6 +50,8 @@ import {
   Search,
   MapPin,
   BedDouble,
+  FileX,
+  FileCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -66,6 +68,7 @@ const EMPTY = {
   move_in_date: "",
   term: "",
   note: "",
+  no_contract_needed: false,
 };
 
 export default function Residents() {
@@ -278,6 +281,18 @@ export default function Residents() {
     }
   };
 
+  const toggleNoContract = async (p) => {
+    try {
+      await residentUpdate(p.id, { no_contract_needed: !p.no_contract_needed });
+      toast.success(
+        !p.no_contract_needed ? "Отмечено: договор не нужен" : "Отметка снята"
+      );
+      await refreshAll();
+    } catch (err) {
+      toast.error("Не удалось обновить");
+    }
+  };
+
   return (
     <div className="space-y-8" data-testid="residents-page">
       {/* Header */}
@@ -366,6 +381,7 @@ export default function Residents() {
               onEdit={setEditing}
               onDelete={removeResident}
               onOpenBlock={openBlock}
+              onToggleNoContract={toggleNoContract}
             />
           ) : reportMode === "nocontract" ? (
             <ReportView
@@ -376,6 +392,7 @@ export default function Residents() {
               onEdit={setEditing}
               onDelete={removeResident}
               onOpenBlock={openBlock}
+              onToggleNoContract={toggleNoContract}
             />
           ) : (
           <>
@@ -549,6 +566,7 @@ export default function Residents() {
                           p={p}
                           onEdit={() => setEditing(p)}
                           onDelete={() => removeResident(p.id)}
+                          onToggleNoContract={() => toggleNoContract(p)}
                         />
                       ))
                     )}
@@ -738,7 +756,7 @@ function ReportButton({ active, count, onClick, label, testid, tone }) {
   );
 }
 
-function ReportView({ items, total, headerText, emptyText, onEdit, onDelete, onOpenBlock }) {
+function ReportView({ items, total, headerText, emptyText, onEdit, onDelete, onOpenBlock, onToggleNoContract }) {
   if (!items) {
     return <div className="py-10 text-center text-muted-foreground">Загрузка...</div>;
   }
@@ -765,6 +783,7 @@ function ReportView({ items, total, headerText, emptyText, onEdit, onDelete, onO
           onEdit={() => onEdit(p)}
           onDelete={() => onDelete(p.id)}
           onOpenBlock={() => onOpenBlock(p.block)}
+          onToggleNoContract={() => onToggleNoContract(p)}
         />
       ))}
     </div>
@@ -801,7 +820,7 @@ function FilteredResults({ data, loading, onEdit, onDelete, onOpenBlock }) {
   );
 }
 
-function PersonCard({ p, onEdit, onDelete, onOpenBlock, showFloor }) {
+function PersonCard({ p, onEdit, onDelete, onOpenBlock, onToggleNoContract, showFloor }) {
   const c = p.checks || {};
   const hasIssue = (c.mismatches || []).length > 0;
   return (
@@ -850,6 +869,11 @@ function PersonCard({ p, onEdit, onDelete, onOpenBlock, showFloor }) {
                 № {p.contract_number}
               </span>
             )}
+            {p.no_contract_needed && (
+              <span className="px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-100">
+                Договор не требуется
+              </span>
+            )}
           </div>
           {p.note && (
             <div className="mt-1.5 text-xs text-slate-400 italic">{p.note}</div>
@@ -881,6 +905,18 @@ function PersonCard({ p, onEdit, onDelete, onOpenBlock, showFloor }) {
               data-testid={`goto-block-${p.id}`}
             >
               <MapPin className="h-4 w-4" />
+            </Button>
+          )}
+          {onToggleNoContract && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className={`h-8 w-8 ${p.no_contract_needed ? "text-sky-600" : "text-slate-400 hover:text-sky-600"}`}
+              onClick={onToggleNoContract}
+              title={p.no_contract_needed ? "Договор не нужен (снять отметку)" : "Отметить: договор не нужен"}
+              data-testid={`toggle-nocontract-${p.id}`}
+            >
+              {p.no_contract_needed ? <FileCheck className="h-4 w-4" /> : <FileX className="h-4 w-4" />}
             </Button>
           )}
           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onEdit}
@@ -950,6 +986,27 @@ function EditResidentDialog({ resident, onClose, onSave }) {
               className="mt-1"
               rows={2}
             />
+          </div>
+          <div className="col-span-2">
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, no_contract_needed: !f.no_contract_needed }))}
+              data-testid="field-no-contract-needed"
+              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-medium transition-all ${
+                form.no_contract_needed
+                  ? "bg-sky-50 border-sky-200 text-sky-700"
+                  : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50"
+              }`}
+            >
+              <span
+                className={`h-5 w-5 rounded-md border flex items-center justify-center ${
+                  form.no_contract_needed ? "bg-sky-500 border-sky-500" : "border-slate-300"
+                }`}
+              >
+                {form.no_contract_needed && <span className="text-white text-xs">✓</span>}
+              </span>
+              Договор не нужен (не показывать в отчёте «Без договора»)
+            </button>
           </div>
         </div>
         <DialogFooter>

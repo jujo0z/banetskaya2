@@ -152,6 +152,7 @@ class Resident(BaseModel):
     move_in_date: str = ""
     term: str = ""             # срок действия
     note: str = ""
+    no_contract_needed: bool = False   # договор не требуется
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -169,6 +170,7 @@ class ResidentRequest(BaseModel):
     move_in_date: Optional[str] = None
     term: Optional[str] = None
     note: Optional[str] = None
+    no_contract_needed: Optional[bool] = None
 
 
 # ---------- Helpers ----------
@@ -2046,10 +2048,16 @@ async def _resident_checks(res: dict) -> dict:
     """Сверка жильца с базой договоров. Договоры не меняем — только подсвечиваем."""
     room = f"{res.get('block','')}/{res.get('room','')}" if res.get("room") else res.get("block", "")
     checks = {"has_contract": False, "room_mismatch": False,
-              "no_contract": True, "contract_room": "", "contract_number": "",
+              "no_contract": True, "contract_not_needed": False,
+              "contract_room": "", "contract_number": "",
               "mismatches": []}
     c = await _contract_for_name(res.get("full_name", ""))
     if not c:
+        if res.get("no_contract_needed"):
+            # договор не требуется — не считаем это проблемой
+            checks["no_contract"] = False
+            checks["contract_not_needed"] = True
+            return checks
         checks["mismatches"].append({
             "field": "contract", "label": "Договор",
             "accommodation": "есть в заселении", "contract": "договор не найден"})
@@ -2302,6 +2310,8 @@ async def residents_no_contract():
     for r in residents:
         if ressvc.normalize_name(r.get("full_name", "")) in index:
             continue
+        if r.get("no_contract_needed"):
+            continue  # отмечен «договор не нужен» — пропускаем
         room = f"{r.get('block','')}/{r.get('room','')}" if r.get("room") else r.get("block", "")
         item = dict(r)
         item["checks"] = {
