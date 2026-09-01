@@ -5,6 +5,8 @@ import {
   residentsBlock,
   residentsImport,
   residentsImportGroups,
+  residentsOptions,
+  residentsFilter,
   residentUpdate,
   residentCreate,
   residentDelete,
@@ -22,6 +24,13 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Building2,
   Upload,
   Users,
@@ -34,8 +43,12 @@ import {
   BadgeCheck,
   ListChecks,
   GraduationCap,
+  Filter,
+  Award,
 } from "lucide-react";
 import { toast } from "sonner";
+
+const ALL = "__all__";
 
 const EMPTY = {
   full_name: "",
@@ -62,8 +75,15 @@ export default function Residents() {
   const [importingGroups, setImportingGroups] = useState(false);
   const [groupReport, setGroupReport] = useState(null);
   const [editing, setEditing] = useState(null); // resident being edited (or new)
+  const [options, setOptions] = useState({ groups: [], benefits: [] });
+  const [filterGroup, setFilterGroup] = useState(ALL);
+  const [filterBenefit, setFilterBenefit] = useState(ALL);
+  const [filterResults, setFilterResults] = useState(null);
+  const [filtering, setFiltering] = useState(false);
   const fileRef = useRef(null);
   const groupFileRef = useRef(null);
+
+  const isFiltered = filterGroup !== ALL || filterBenefit !== ALL;
 
   const loadFloors = useCallback(async () => {
     try {
@@ -109,12 +129,57 @@ export default function Residents() {
     }
   };
 
+  const loadOptions = useCallback(async () => {
+    try {
+      const data = await residentsOptions();
+      setOptions({ groups: data.groups || [], benefits: data.benefits || [] });
+    } catch (e) {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadOptions();
+  }, [loadOptions]);
+
+  const runFilter = useCallback(async (group, benefit) => {
+    if (group === ALL && benefit === ALL) {
+      setFilterResults(null);
+      return;
+    }
+    setFiltering(true);
+    try {
+      const data = await residentsFilter({
+        group: group === ALL ? undefined : group,
+        benefit: benefit === ALL ? undefined : benefit,
+      });
+      setFilterResults(data);
+    } catch (e) {
+      toast.error("Не удалось применить фильтр");
+    } finally {
+      setFiltering(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    runFilter(filterGroup, filterBenefit);
+  }, [filterGroup, filterBenefit, runFilter]);
+
+  const clearFilters = () => {
+    setFilterGroup(ALL);
+    setFilterBenefit(ALL);
+  };
+
   const refreshAll = async () => {
     await loadFloors();
+    await loadOptions();
     if (activeFloor !== null) await loadFloor(activeFloor);
     if (blockData) {
       const data = await residentsBlock(blockData.block);
       setBlockData(data);
+    }
+    if (filterGroup !== ALL || filterBenefit !== ALL) {
+      await runFilter(filterGroup, filterBenefit);
     }
   };
 
@@ -238,6 +303,19 @@ export default function Residents() {
         <EmptyState onImport={() => fileRef.current?.click()} />
       ) : (
         <>
+          <FilterBar
+            options={options}
+            filterGroup={filterGroup}
+            filterBenefit={filterBenefit}
+            onGroup={setFilterGroup}
+            onBenefit={setFilterBenefit}
+            onClear={clearFilters}
+            isFiltered={isFiltered}
+            resultCount={filterResults?.total}
+          />
+
+          {!isFiltered ? (
+          <>
           {/* Floor selector */}
           <div className="flex flex-wrap gap-2" data-testid="floor-selector">
             {floors.map((f) => (
@@ -303,6 +381,15 @@ export default function Residents() {
               </button>
             ))}
           </div>
+          </>
+          ) : (
+            <FilteredResults
+              data={filterResults}
+              loading={filtering}
+              onEdit={setEditing}
+              onDelete={removeResident}
+            />
+          )}
         </>
       )}
 
@@ -452,7 +539,91 @@ function Stat({ label, value, tone }) {
   );
 }
 
-function PersonCard({ p, onEdit, onDelete }) {
+function FilterBar({ options, filterGroup, filterBenefit, onGroup, onBenefit, onClear, isFiltered, resultCount }) {
+  return (
+    <div className="glass rounded-2xl border border-pink-100 p-4 flex flex-wrap items-center gap-3" data-testid="filter-bar">
+      <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
+        <Filter className="h-4 w-4 text-[#EC4899]" /> Фильтры
+      </div>
+      <div className="flex items-center gap-2">
+        <GraduationCap className="h-4 w-4 text-indigo-500" />
+        <Select value={filterGroup} onValueChange={onGroup}>
+          <SelectTrigger className="w-[190px] h-9" data-testid="filter-group">
+            <SelectValue placeholder="Группа" />
+          </SelectTrigger>
+          <SelectContent className="max-h-72">
+            <SelectItem value={ALL}>Все группы</SelectItem>
+            {options.groups.map((g) => (
+              <SelectItem key={g} value={g}>
+                {g}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex items-center gap-2">
+        <Award className="h-4 w-4 text-emerald-500" />
+        <Select value={filterBenefit} onValueChange={onBenefit}>
+          <SelectTrigger className="w-[190px] h-9" data-testid="filter-benefit">
+            <SelectValue placeholder="Льгота" />
+          </SelectTrigger>
+          <SelectContent className="max-h-72">
+            <SelectItem value={ALL}>Все льготы</SelectItem>
+            {options.benefits.length === 0 && (
+              <div className="px-2 py-1.5 text-xs text-slate-400">Льготы пока не заданы</div>
+            )}
+            {options.benefits.map((b) => (
+              <SelectItem key={b} value={b}>
+                {b}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {isFiltered && (
+        <div className="flex items-center gap-2 ml-auto">
+          <Badge variant="secondary" className="text-sm">
+            Найдено: {resultCount ?? "…"}
+          </Badge>
+          <Button variant="ghost" size="sm" onClick={onClear} data-testid="filter-clear">
+            <X className="h-4 w-4 mr-1" /> Сбросить
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilteredResults({ data, loading, onEdit, onDelete }) {
+  if (loading) {
+    return <div className="py-10 text-center text-muted-foreground">Загрузка...</div>;
+  }
+  if (!data || data.total === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-pink-200 bg-white/50 py-12 text-center text-muted-foreground">
+        Никого не найдено по выбранному фильтру
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2" data-testid="filter-results">
+      <div className="text-xs font-mono uppercase tracking-[0.2em] text-slate-400">
+        Результаты фильтра · {data.total} чел.
+      </div>
+      {data.residents.map((p) => (
+        <PersonCard
+          key={p.id}
+          p={p}
+          showFloor
+          onEdit={() => onEdit(p)}
+          onDelete={() => onDelete(p.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PersonCard({ p, onEdit, onDelete, showFloor }) {
   const c = p.checks || {};
   const hasIssue = (c.mismatches || []).length > 0;
   return (
@@ -473,6 +644,11 @@ function PersonCard({ p, onEdit, onDelete }) {
             )}
           </div>
           <div className="mt-1.5 flex flex-wrap gap-1.5 text-xs">
+            {showFloor && (
+              <span className="px-2 py-0.5 rounded bg-[#FCE7F3] text-[#DB2777] font-semibold">
+                {p.floor} этаж
+              </span>
+            )}
             <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono">
               {p.block}/{p.room || "—"}
             </span>

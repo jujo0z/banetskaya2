@@ -602,6 +602,18 @@ export async function residentsBlock(block) {
   const { data } = await api.get(`/residents/block/${block}`);
   return data; // { block, floor, rooms:[{room, people:[{...,checks}]}], total }
 }
+export async function residentsOptions() {
+  const { data } = await api.get("/residents/options");
+  return data; // { groups:[], benefits:[] }
+}
+export async function residentsFilter({ group, benefit, q } = {}) {
+  const params = {};
+  if (group) params.group = group;
+  if (benefit) params.benefit = benefit;
+  if (q) params.q = q;
+  const { data } = await api.get("/residents/filter", { params });
+  return data; // { residents:[{...,checks}], total }
+}
 export async function residentCreate(payload) {
   const { data } = await api.post("/residents", payload);
   return data;

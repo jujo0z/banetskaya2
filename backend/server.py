@@ -2208,6 +2208,35 @@ async def residents_block(block: str):
     return {"block": block, "floor": floor, "rooms": out, "total": len(docs)}
 
 
+@api_router.get("/residents/options")
+async def residents_options():
+    """Списки значений для фильтров: группы и льготы (непустые, отсортированы)."""
+    groups = await db.residents.distinct("study_group")
+    benefits = await db.residents.distinct("benefit")
+    groups = sorted([g for g in groups if g and str(g).strip()])
+    benefits = sorted([b for b in benefits if b and str(b).strip()])
+    return {"groups": groups, "benefits": benefits}
+
+
+@api_router.get("/residents/filter")
+async def residents_filter(group: Optional[str] = None, benefit: Optional[str] = None,
+                           q: Optional[str] = None):
+    """Фильтр жильцов по группе и/или льготе (и опц. поиск по ФИО) — по всем этажам."""
+    query = {}
+    if group:
+        query["study_group"] = group
+    if benefit:
+        query["benefit"] = benefit
+    if q and q.strip():
+        query["full_name"] = {"$regex": re.escape(q.strip()), "$options": "i"}
+    docs = await db.residents.find(query, {"_id": 0}).to_list(5000)
+    docs.sort(key=lambda d: (d.get("floor", 0), d.get("block", ""),
+                             d.get("room", ""), d.get("full_name", "")))
+    for d in docs:
+        d["checks"] = await _resident_checks(d)
+    return {"residents": docs, "total": len(docs)}
+
+
 @api_router.get("/residents/{res_id}")
 async def residents_get(res_id: str):
     doc = await db.residents.find_one({"id": res_id}, {"_id": 0})
