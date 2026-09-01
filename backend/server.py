@@ -2191,7 +2191,10 @@ async def residents_floor(floor: int):
         block = f"{floor}{i:02d}"
         ppl = by_block.get(block, [])
         rooms = sorted({p.get("room", "") for p in ppl if p.get("room")})
-        blocks.append({"block": block, "index": i, "people": len(ppl), "rooms": rooms})
+        capacity = ressvc.block_capacity(rooms)
+        free = max(0, capacity - len(ppl))
+        blocks.append({"block": block, "index": i, "people": len(ppl),
+                       "rooms": rooms, "capacity": capacity, "free": free})
     return {"floor": floor, "blocks": blocks, "total": len(docs)}
 
 
@@ -2204,8 +2207,22 @@ async def residents_block(block: str):
     for d in docs:
         d["checks"] = await _resident_checks(d)
         rooms.setdefault(d.get("room", ""), []).append(d)
-    out = [{"room": r, "people": rooms[r]} for r in sorted(rooms.keys())]
-    return {"block": block, "floor": floor, "rooms": out, "total": len(docs)}
+    # раскладка блока: показываем и стандартные пустые комнаты со свободными местами
+    rooms_present = sorted({r for r in rooms.keys() if r})
+    layout = ressvc.block_layout(rooms_present)
+    out = []
+    for room, cap in layout:
+        people = rooms.get(room, [])
+        out.append({"room": room, "capacity": cap, "occupied": len(people),
+                    "free": max(0, cap - len(people)), "people": people})
+    # комнаты без номера (если вдруг есть) — в конец
+    if "" in rooms:
+        out.append({"room": "", "capacity": 0, "occupied": len(rooms[""]),
+                    "free": 0, "people": rooms[""]})
+    total_cap = sum(x["capacity"] for x in out)
+    return {"block": block, "floor": floor, "rooms": out, "total": len(docs),
+            "capacity": total_cap, "occupied": len(docs),
+            "free": max(0, total_cap - len(docs))}
 
 
 @api_router.get("/residents/options")
@@ -2235,6 +2252,39 @@ async def residents_filter(group: Optional[str] = None, benefit: Optional[str] =
     for d in docs:
         d["checks"] = await _resident_checks(d)
     return {"residents": docs, "total": len(docs)}
+
+
+@api_router.get("/residents/mismatches")
+async def residents_mismatches():
+    """Все жильцы, у кого комната в заселении не совпадает с комнатой в договоре."""
+    contracts = await db.contracts.find({}, {"_id": 0}).to_list(100000)
+    index = {}
+    for c in contracts:
+        for nm in [c.get("full_name", ""), (c.get("master") or {}).get("fio", "")]:
+            n = ressvc.normalize_name(nm)
+            if n and n not in index:
+                index[n] = c
+    residents = await db.residents.find({}, {"_id": 0}).to_list(100000)
+    out = []
+    for r in residents:
+        c = index.get(ressvc.normalize_name(r.get("full_name", "")))
+        if not c:
+            continue
+        croom = _contract_room(c)
+        room = f"{r.get('block','')}/{r.get('room','')}" if r.get("room") else r.get("block", "")
+        if croom and _norm_room(room) != croom:
+            cnum = _contract_num(c)
+            item = dict(r)
+            item["checks"] = {
+                "has_contract": True, "room_mismatch": True, "no_contract": False,
+                "contract_room": croom, "contract_number": cnum,
+                "mismatches": [{"field": "room", "label": "Комната",
+                                "accommodation": room, "contract": croom}],
+            }
+            out.append(item)
+    out.sort(key=lambda d: (d.get("floor", 0), d.get("block", ""),
+                            d.get("room", ""), d.get("full_name", "")))
+    return {"mismatches": out, "total": len(out)}
 
 
 @api_router.get("/residents/{res_id}")

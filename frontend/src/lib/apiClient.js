@@ -614,6 +614,10 @@ export async function residentsFilter({ group, benefit, q } = {}) {
   const { data } = await api.get("/residents/filter", { params });
   return data; // { residents:[{...,checks}], total }
 }
+export async function residentsMismatches() {
+  const { data } = await api.get("/residents/mismatches");
+  return data; // { mismatches:[{...,checks}], total }
+}
 export async function residentCreate(payload) {
   const { data } = await api.post("/residents", payload);
   return data;

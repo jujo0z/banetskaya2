@@ -7,6 +7,7 @@ import {
   residentsImportGroups,
   residentsOptions,
   residentsFilter,
+  residentsMismatches,
   residentUpdate,
   residentCreate,
   residentDelete,
@@ -47,6 +48,7 @@ import {
   Award,
   Search,
   MapPin,
+  BedDouble,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -83,6 +85,9 @@ export default function Residents() {
   const [search, setSearch] = useState("");
   const [filterResults, setFilterResults] = useState(null);
   const [filtering, setFiltering] = useState(false);
+  const [reportData, setReportData] = useState(null);
+  const [showReport, setShowReport] = useState(false);
+  const [loadingReport, setLoadingReport] = useState(false);
   const fileRef = useRef(null);
   const groupFileRef = useRef(null);
 
@@ -146,6 +151,19 @@ export default function Residents() {
     loadOptions();
   }, [loadOptions]);
 
+  const loadReport = useCallback(async () => {
+    try {
+      const data = await residentsMismatches();
+      setReportData(data);
+    } catch (e) {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadReport();
+  }, [loadReport]);
+
   const runFilter = useCallback(async (group, benefit, q) => {
     const query = (q || "").trim();
     if (group === ALL && benefit === ALL && !query) {
@@ -183,6 +201,7 @@ export default function Residents() {
   const refreshAll = async () => {
     await loadFloors();
     await loadOptions();
+    await loadReport();
     if (activeFloor !== null) await loadFloor(activeFloor);
     if (blockData) {
       const data = await residentsBlock(blockData.block);
@@ -313,6 +332,37 @@ export default function Residents() {
         <EmptyState onImport={() => fileRef.current?.click()} />
       ) : (
         <>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <button
+              onClick={() => setShowReport((v) => !v)}
+              data-testid="report-toggle"
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border transition-all ${
+                showReport
+                  ? "bg-amber-500 text-white border-transparent shadow-lg"
+                  : (reportData?.total || 0) > 0
+                  ? "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+              }`}
+            >
+              <AlertTriangle className="h-4 w-4" />
+              {showReport ? "Скрыть отчёт" : "Несовпадения с договором"}
+              <span className={`ml-1 px-2 py-0.5 rounded-full text-xs ${
+                showReport ? "bg-white/25" : "bg-white/70"
+              }`}>
+                {reportData?.total ?? "…"}
+              </span>
+            </button>
+          </div>
+
+          {showReport ? (
+            <MismatchReport
+              data={reportData}
+              onEdit={setEditing}
+              onDelete={removeResident}
+              onOpenBlock={openBlock}
+            />
+          ) : (
+          <>
           <FilterBar
             options={options}
             filterGroup={filterGroup}
@@ -355,13 +405,12 @@ export default function Residents() {
             {floorData?.blocks?.map((b) => (
               <button
                 key={b.block}
-                onClick={() => b.people > 0 && openBlock(b.block)}
-                disabled={b.people === 0}
+                onClick={() => openBlock(b.block)}
                 data-testid={`block-card-${b.block}`}
-                className={`group relative rounded-2xl border p-5 text-left transition-all ${
-                  b.people > 0
-                    ? "glass border-pink-100 hover:border-[#EC4899]/50 hover:shadow-xl cursor-pointer"
-                    : "bg-slate-50 border-slate-100 opacity-60 cursor-default"
+                className={`group relative rounded-2xl border p-5 text-left transition-all glass cursor-pointer ${
+                  b.free > 0
+                    ? "border-emerald-200 hover:border-emerald-400 hover:shadow-xl"
+                    : "border-pink-100 hover:border-[#EC4899]/50 hover:shadow-xl"
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -374,9 +423,19 @@ export default function Residents() {
                     }`}
                   />
                 </div>
-                <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-                  <Users className="h-4 w-4" />
-                  {b.people > 0 ? `${b.people} чел.` : "пусто"}
+                <div className="mt-3 flex items-center justify-between gap-2 text-sm">
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <Users className="h-4 w-4" />
+                    {b.people}/{b.capacity}
+                  </span>
+                  <span
+                    className={`flex items-center gap-1 font-semibold ${
+                      b.free > 0 ? "text-emerald-600" : "text-slate-400"
+                    }`}
+                  >
+                    <BedDouble className="h-4 w-4" />
+                    {b.free > 0 ? `свободно ${b.free}` : "мест нет"}
+                  </span>
                 </div>
                 {b.rooms?.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
@@ -403,6 +462,8 @@ export default function Residents() {
               onOpenBlock={openBlock}
             />
           )}
+          </>
+          )}
         </>
       )}
 
@@ -414,8 +475,15 @@ export default function Residents() {
               <Building2 className="h-5 w-5 text-[#EC4899]" />
               Блок {blockData?.block}
               <span className="text-sm font-normal text-muted-foreground">
-                · {blockData?.total || 0} чел.
+                · {blockData?.occupied ?? blockData?.total ?? 0}/{blockData?.capacity ?? 0} чел.
               </span>
+              {(blockData?.free ?? 0) > 0 ? (
+                <span className="text-sm font-semibold text-emerald-600 flex items-center gap-1">
+                  <BedDouble className="h-4 w-4" /> свободно {blockData.free}
+                </span>
+              ) : (
+                <span className="text-sm font-medium text-slate-400">мест нет</span>
+              )}
             </DialogTitle>
           </DialogHeader>
 
@@ -426,13 +494,21 @@ export default function Residents() {
               {blockData?.rooms?.map((r) => (
                 <div key={r.room || "no-room"}>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-mono uppercase tracking-[0.2em] text-slate-400">
                         Комната
                       </span>
                       <Badge className="bg-pink-100 text-[#DB2777] hover:bg-pink-100">
                         {blockData.block}/{r.room || "—"}
                       </Badge>
+                      <span className="text-xs text-slate-500">
+                        занято {r.occupied ?? (r.people?.length || 0)}/{r.capacity ?? "?"}
+                      </span>
+                      {(r.free ?? 0) > 0 && (
+                        <span className="text-xs font-semibold text-emerald-600">
+                          · свободно {r.free}
+                        </span>
+                      )}
                     </div>
                     <Button
                       size="sm"
@@ -446,14 +522,20 @@ export default function Residents() {
                     </Button>
                   </div>
                   <div className="space-y-2">
-                    {r.people.map((p) => (
-                      <PersonCard
-                        key={p.id}
-                        p={p}
-                        onEdit={() => setEditing(p)}
-                        onDelete={() => removeResident(p.id)}
-                      />
-                    ))}
+                    {r.people.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 py-3 text-center text-xs text-emerald-700">
+                        Комната свободна — {r.free ?? r.capacity} мест
+                      </div>
+                    ) : (
+                      r.people.map((p) => (
+                        <PersonCard
+                          key={p.id}
+                          p={p}
+                          onEdit={() => setEditing(p)}
+                          onDelete={() => removeResident(p.id)}
+                        />
+                      ))
+                    )}
                   </div>
                 </div>
               ))}
@@ -611,6 +693,42 @@ function FilterBar({ options, filterGroup, filterBenefit, search, onSearch, onGr
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+function MismatchReport({ data, onEdit, onDelete, onOpenBlock }) {
+  if (!data) {
+    return <div className="py-10 text-center text-muted-foreground">Загрузка...</div>;
+  }
+  if (data.total === 0) {
+    return (
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 py-12 text-center">
+        <BadgeCheck className="h-10 w-10 text-emerald-500 mx-auto" />
+        <h3 className="mt-3 font-heading text-lg font-bold text-emerald-800">Несовпадений нет</h3>
+        <p className="text-sm text-emerald-700/80 mt-1">
+          У всех жильцов, у кого есть договор, комната совпадает.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2" data-testid="mismatch-report">
+      <div className="flex items-center gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+        <AlertTriangle className="h-4 w-4 shrink-0" />
+        Найдено {data.total}: комната в заселении не совпадает с договором. Нажмите карандаш —
+        исправить, метку — открыть блок.
+      </div>
+      {data.mismatches.map((p) => (
+        <PersonCard
+          key={p.id}
+          p={p}
+          showFloor
+          onEdit={() => onEdit(p)}
+          onDelete={() => onDelete(p.id)}
+          onOpenBlock={() => onOpenBlock(p.block)}
+        />
+      ))}
     </div>
   );
 }

@@ -77,6 +77,26 @@ def block_index(block: str) -> int:
         return 0
 
 
+def block_layout(rooms_present):
+    """Стандартная планировка блока: малая комната /2 (2 места) + большая /4 (4 места).
+    Если в данных встречается комната /3 — большая на 3 места. Возвращает [(room, capacity)]."""
+    present = set(rooms_present or [])
+    big = "3" if "3" in present else "4"
+    layout = [("2", 2), (big, int(big))]
+    # на случай нестандартных комнат — добавим их как есть
+    for r in sorted(present):
+        if r not in ("2", big):
+            try:
+                layout.append((r, int(r)))
+            except ValueError:
+                pass
+    return layout
+
+
+def block_capacity(rooms_present) -> int:
+    return sum(cap for _, cap in block_layout(rooms_present))
+
+
 def normalize_name(fio: str) -> str:
     """Нормализация ФИО для сопоставления с договором."""
     s = (fio or "").lower().strip()

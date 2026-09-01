@@ -368,6 +368,112 @@ backend:
           • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
           
           Новые эндпоинты фильтрации готовы к использованию. Раздел «Заселение» полностью функционален (12/12 эндпоинтов работают).
+        -working: true
+        -agent: "testing"
+        -comment: >
+          ✅ НОВЫЕ ЭНДПОИНТЫ CAPACITY/FREE И MISMATCHES ПОЛНОСТЬЮ РАБОТАЮТ (5/5 тестов, 100% success rate).
+          
+          ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+          
+          ✅ ТЕСТ 1: GET /api/residents/mismatches
+             → 200, возвращает {mismatches:[...], total:1} ✓
+             → total=1 (>= 1, как ожидалось) ✓
+             → Структура элемента mismatch: full_name, block, room, floor, checks ✓
+             → checks содержит: has_contract, room_mismatch, no_contract, contract_room, contract_number, mismatches ✓
+             
+             КРИТИЧЕСКАЯ ПРОВЕРКА — «Чумаков Иван Сергеевич»:
+             • Найден в списке несовпадений ✓
+             • full_name: 'Чумаков Иван Сергеевич' ✓
+             • block: '902', room: '2' (accommodation: '902/2') ✓
+             • checks.room_mismatch = true ✓
+             • checks.contract_room = '905/4' ✓
+             • mismatches array содержит room mismatch:
+               - field: 'room', label: 'Комната' ✓
+               - accommodation: '902/2' ✓
+               - contract: '905/4' ✓
+             
+             ВАЖНО: Жильцы БЕЗ договора НЕ попадают в список mismatches ✓
+             (Проверено: ни один элемент не имеет no_contract=true — только реальные несовпадения комнат у тех, у кого договор есть)
+          
+          ✅ ТЕСТ 2: GET /api/residents/floor/9 — capacity и free поля
+             → 200, возвращает {floor:9, blocks:[...], total:...} ✓
+             → Все 15 блоков содержат новые поля: capacity, free ✓
+             → Структура блока: block, index, people, rooms, capacity, free ✓
+             
+             ПРОВЕРКА ЛОГИКИ capacity/free:
+             • capacity обычно 6 (комнаты /2 и /4) ✓
+             • free = max(0, capacity - people) для ВСЕХ блоков ✓
+             
+             БЛОКИ СО СВОБОДНЫМ МЕСТОМ (people < capacity):
+             • Найдено 2 блока со свободным местом ✓
+             • Блок 905: people=5, capacity=6, free=1 ✓ (РОВНО как ожидалось в review request)
+             • Блок 907: people=5, capacity=6, free=1 ✓
+             • Все блоки с people < capacity имеют free > 0 ✓
+             
+             ПОЛНОСТЬЮ ЗАНЯТЫЕ БЛОКИ:
+             • Найдено 13 полностью занятых блоков ✓
+             • Все имеют free=0 (корректно) ✓
+             • Примеры: 901 (people=6, capacity=6, free=0), 902 (people=6, capacity=6, free=0), 903 (people=6, capacity=6, free=0) ✓
+          
+          ✅ ТЕСТ 3: GET /api/residents/block/902 — структура capacity на уровне блока и комнат
+             → 200, возвращает {block:'902', floor:9, rooms:[...], total:6, capacity:6, occupied:6, free:0} ✓
+             → Структура блока содержит ВСЕ новые поля: capacity, occupied, free ✓
+             
+             БЛОК-УРОВЕНЬ:
+             • capacity=6 ✓
+             • occupied=6 (= total) ✓
+             • free=0 (= capacity - occupied) ✓
+             
+             КОМНАТЫ (2 комнаты в блоке 902):
+             • Структура комнаты: room, capacity, occupied, free, people ✓
+             
+             КОМНАТА "2":
+             • capacity=2 ✓ (РОВНО как ожидалось)
+             • occupied=2 (= len(people)) ✓
+             • free=0 (= capacity - occupied) ✓
+             • people: 2 жильца (Мороз Иван Дмитриевич, Чумаков Иван Сергеевич) ✓
+             
+             КОМНАТА "4":
+             • capacity=4 ✓ (РОВНО как ожидалось)
+             • occupied=4 (= len(people)) ✓
+             • free=0 (= capacity - occupied) ✓
+             • people: 4 жильца ✓
+             
+             ВСЕ КОМНАТЫ: free = capacity - occupied (проверено для всех комнат) ✓
+          
+          ✅ ТЕСТ 4: GET /api/residents/block/905 — проверка свободного места
+             → 200, возвращает структуру с capacity/occupied/free ✓
+             
+             БЛОК-УРОВЕНЬ:
+             • free=1 (> 0, как ожидалось) ✓
+             
+             КОМНАТЫ СО СВОБОДНЫМ МЕСТОМ:
+             • Найдена 1 комната со свободным местом ✓
+             • Комната "4": capacity=4, occupied=3, free=1 ✓
+             • Блок имеет free > 0 И хотя бы одна комната имеет free > 0 ✓
+          
+          ✅ ТЕСТ 5: РЕГРЕССИЯ — GET /api/residents/mismatches НЕ перехватывается роутом /api/residents/{res_id}
+             → 200, возвращает структуру {mismatches:[...], total:...} ✓
+             → НЕ возвращает 404 «Жилец не найден» ✓
+             → Маршрут /api/residents/mismatches работает корректно (не перехватывается параметрическим роутом) ✓
+          
+          ЗАКЛЮЧЕНИЕ:
+          
+          🎉 НОВЫЕ ЭНДПОИНТЫ CAPACITY/FREE И MISMATCHES ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНЫ:
+          • GET /api/residents/mismatches возвращает список несовпадений комнат (total=1)
+          • «Чумаков Иван Сергеевич» присутствует с accommodation '902/2' и contract '905/4'
+          • Жильцы БЕЗ договора НЕ попадают в список (только реальные несовпадения комнат)
+          • GET /api/residents/floor/9 теперь содержит capacity и free для каждого блока
+          • Логика capacity/free корректна: free = max(0, capacity - people)
+          • Блок 905: people=5, capacity=6, free=1 (РОВНО как ожидалось)
+          • GET /api/residents/block/902 содержит capacity/occupied/free на уровне блока и комнат
+          • Комната "2": capacity=2, комната "4": capacity=4 (РОВНО как ожидалось)
+          • GET /api/residents/block/905 имеет free > 0 на уровне блока и хотя бы одной комнаты
+          • Маршрут /api/residents/mismatches НЕ перехватывается роутом /{res_id}
+          • Все backend API полностью функциональны
+          • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+          
+          Новые эндпоинты capacity/free и mismatches готовы к использованию. Раздел «Заселение» полностью функционален (все эндпоинты работают).
 
   - task: "Форма 19 (Адресный листок прибытия): векторная отрисовка + эндпоинты /api/forma19/*"
     implemented: true
@@ -2800,5 +2906,148 @@ agent_communication:
         • Негативный тест: Excel-файл корректно отклоняется с 400 (не падение)
         
         РЕГРЕССИЙ НЕ ОБНАРУЖЕНО.
+        
+        РЕКОМЕНДАЦИЯ: Попросить main agent подвести итоги и завершить задачу (finish).
+    - agent: "main"
+      message: >
+        Протестируй новые/изменённые backend-эндпоинты раздела «Заселение» приложения Banetskaya.by (FastAPI). 
+        Base URL — из frontend/.env REACT_APP_BACKEND_URL, все роуты с префиксом /api. База residents наполнена 
+        (674 жильца). В коллекции contracts есть демо-договоры для проверки: «Мороз Иван Дмитриевич» комн 902/2 
+        (совпадает), «Чумаков Иван Сергеевич» комн в договоре 905/4, а в заселении он 902/2 (НЕ совпадает).
+
+        1) GET /api/residents/mismatches → {mismatches:[...], total}. Ожидается total>=1. Каждый элемент содержит 
+        поля жильца (full_name, block, room, floor) и объект checks с room_mismatch=true, contract_room, и 
+        mismatches:[{field:"room", label:"Комната", accommodation, contract}]. Проверь, что «Чумаков Иван Сергеевич» 
+        присутствует с accommodation "902/2" и contract "905/4". Убедись, что жильцы БЕЗ договора (например «Мороз 
+        Иван Дмитриевич», у которого в demo договор совпадает — он НЕ должен быть в списке; а те, у кого договора 
+        нет вообще) в список НЕ попадают (в отчёте только реальные несовпадения комнаты у тех, у кого договор есть).
+
+        2) GET /api/residents/floor/9 → у каждого блока в массиве blocks теперь есть поля capacity и free (в 
+        дополнение к people, rooms, index, block). Проверь логику: capacity обычно 6 (комнаты /2 и /4), free = 
+        max(0, capacity - people). Найди блок с people<capacity и убедись free>0 (например 905: people=5, 
+        capacity=6, free=1). Для полностью занятых free=0.
+
+        3) GET /api/residents/block/902 → структура теперь {block, floor, rooms:[...], total, capacity, occupied, 
+        free}. Каждый room содержит {room, capacity, occupied, free, people}. Проверь: комната "2" capacity=2, 
+        комната "4" capacity=4; occupied = число людей; free = capacity-occupied. Блок-уровень capacity=6, 
+        occupied=число жильцов, free корректный.
+
+        4) GET /api/residents/block/905 (или любой блок со свободным местом) → free>0 хотя бы у одной комнаты, 
+        и на уровне блока free>0.
+
+        5) Регрессия: GET /api/residents/mismatches НЕ должен перехватываться роутом /api/residents/{res_id} 
+        (не должен вернуть 404 «Жилец не найден»).
+
+        Сообщи pass/fail по каждому пункту с фактическими числами. Фронтенд не трогай.
+    - agent: "testing"
+      message: >
+        ✅ BACKEND ТЕСТИРОВАНИЕ ЗАВЕРШЕНО УСПЕШНО. Все 5 тестов прошли (100% success rate).
+        
+        === НОВЫЕ ЭНДПОИНТЫ CAPACITY/FREE И MISMATCHES (5/5 PASS) ===
+        
+        ✅ ТЕСТ 1: GET /api/residents/mismatches
+           → 200, {mismatches:[...], total:1}
+           → total=1 (>= 1 требование выполнено) ✅
+           → Структура элемента: full_name, block, room, floor, checks ✅
+           → checks содержит: has_contract, room_mismatch, no_contract, contract_room, contract_number, mismatches ✅
+           
+           КРИТИЧЕСКАЯ ПРОВЕРКА — «Чумаков Иван Сергеевич»:
+           • Найден в списке несовпадений ✅
+           • full_name: 'Чумаков Иван Сергеевич' ✅
+           • accommodation: '902/2' (block='902', room='2') ✅
+           • contract: '905/4' (checks.contract_room='905/4') ✅
+           • checks.room_mismatch = true ✅
+           • mismatches array содержит room mismatch:
+             - field='room', label='Комната' ✅
+             - accommodation='902/2' ✅
+             - contract='905/4' ✅
+           
+           ВАЖНО: Жильцы БЕЗ договора НЕ попадают в список ✅
+           (Проверено: ни один элемент не имеет no_contract=true — только реальные несовпадения комнат)
+        
+        ✅ ТЕСТ 2: GET /api/residents/floor/9 — capacity и free поля
+           → 200, {floor:9, blocks:[...], total:...}
+           → Все 15 блоков содержат новые поля: capacity, free ✅
+           
+           ПРОВЕРКА ЛОГИКИ:
+           • capacity обычно 6 (комнаты /2 и /4) ✅
+           • free = max(0, capacity - people) для ВСЕХ блоков ✅
+           
+           БЛОКИ СО СВОБОДНЫМ МЕСТОМ:
+           • Найдено 2 блока со свободным местом ✅
+           • Блок 905: people=5, capacity=6, free=1 ✅ (РОВНО как ожидалось)
+           • Блок 907: people=5, capacity=6, free=1 ✅
+           • Все блоки с people < capacity имеют free > 0 ✅
+           
+           ПОЛНОСТЬЮ ЗАНЯТЫЕ БЛОКИ:
+           • Найдено 13 полностью занятых блоков ✅
+           • Все имеют free=0 ✅
+        
+        ✅ ТЕСТ 3: GET /api/residents/block/902 — структура capacity
+           → 200, {block:'902', floor:9, rooms:[...], total:6, capacity:6, occupied:6, free:0}
+           
+           БЛОК-УРОВЕНЬ:
+           • capacity=6 ✅
+           • occupied=6 (= total) ✅
+           • free=0 (= capacity - occupied) ✅
+           
+           КОМНАТА "2":
+           • capacity=2 ✅ (РОВНО как ожидалось)
+           • occupied=2 (= len(people)) ✅
+           • free=0 (= capacity - occupied) ✅
+           
+           КОМНАТА "4":
+           • capacity=4 ✅ (РОВНО как ожидалось)
+           • occupied=4 (= len(people)) ✅
+           • free=0 (= capacity - occupied) ✅
+           
+           ВСЕ КОМНАТЫ: free = capacity - occupied ✅
+        
+        ✅ ТЕСТ 4: GET /api/residents/block/905 — свободное место
+           → 200, структура с capacity/occupied/free
+           
+           БЛОК-УРОВЕНЬ:
+           • free=1 (> 0 как ожидалось) ✅
+           
+           КОМНАТЫ СО СВОБОДНЫМ МЕСТОМ:
+           • Найдена 1 комната со свободным местом ✅
+           • Комната "4": capacity=4, occupied=3, free=1 ✅
+        
+        ✅ ТЕСТ 5: РЕГРЕССИЯ — /api/residents/mismatches НЕ перехватывается /{res_id}
+           → 200, возвращает {mismatches:[...], total:...} ✅
+           → НЕ возвращает 404 «Жилец не найден» ✅
+        
+        === ФАКТИЧЕСКИЕ ЧИСЛА ===
+        
+        ТЕСТ 1 (mismatches):
+        • total: 1
+        • Чумаков: accommodation='902/2', contract='905/4'
+        
+        ТЕСТ 2 (floor/9):
+        • Блоков всего: 15
+        • Блоков со свободным местом: 2
+        • Блок 905: people=5, capacity=6, free=1
+        • Блок 907: people=5, capacity=6, free=1
+        • Полностью занятых блоков: 13
+        
+        ТЕСТ 3 (block/902):
+        • Блок: capacity=6, occupied=6, free=0
+        • Комната "2": capacity=2, occupied=2, free=0
+        • Комната "4": capacity=4, occupied=4, free=0
+        
+        ТЕСТ 4 (block/905):
+        • Блок: free=1
+        • Комната "4": capacity=4, occupied=3, free=1
+        
+        === ЗАКЛЮЧЕНИЕ ===
+        
+        🎉 ВСЕ НОВЫЕ ЭНДПОИНТЫ ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНЫ:
+        • GET /api/residents/mismatches работает корректно (total=1, Чумаков найден)
+        • GET /api/residents/floor/9 содержит capacity и free для всех блоков
+        • GET /api/residents/block/902 содержит capacity/occupied/free на уровне блока и комнат
+        • GET /api/residents/block/905 имеет free > 0
+        • Регрессия: /api/residents/mismatches НЕ перехватывается /{res_id}
+        • Все backend API полностью функциональны
+        • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
         
         РЕКОМЕНДАЦИЯ: Попросить main agent подвести итоги и завершить задачу (finish).
