@@ -8,6 +8,7 @@ import {
   residentsOptions,
   residentsFilter,
   residentsMismatches,
+  residentsNoContract,
   residentUpdate,
   residentCreate,
   residentDelete,
@@ -86,7 +87,8 @@ export default function Residents() {
   const [filterResults, setFilterResults] = useState(null);
   const [filtering, setFiltering] = useState(false);
   const [reportData, setReportData] = useState(null);
-  const [showReport, setShowReport] = useState(false);
+  const [noContractData, setNoContractData] = useState(null);
+  const [reportMode, setReportMode] = useState(null); // null | 'mismatch' | 'nocontract'
   const [loadingReport, setLoadingReport] = useState(false);
   const fileRef = useRef(null);
   const groupFileRef = useRef(null);
@@ -153,8 +155,12 @@ export default function Residents() {
 
   const loadReport = useCallback(async () => {
     try {
-      const data = await residentsMismatches();
-      setReportData(data);
+      const [mm, nc] = await Promise.all([
+        residentsMismatches(),
+        residentsNoContract(),
+      ]);
+      setReportData(mm);
+      setNoContractData(nc);
     } catch (e) {
       /* ignore */
     }
@@ -332,31 +338,41 @@ export default function Residents() {
         <EmptyState onImport={() => fileRef.current?.click()} />
       ) : (
         <>
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <button
-              onClick={() => setShowReport((v) => !v)}
-              data-testid="report-toggle"
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border transition-all ${
-                showReport
-                  ? "bg-amber-500 text-white border-transparent shadow-lg"
-                  : (reportData?.total || 0) > 0
-                  ? "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-                  : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-              }`}
-            >
-              <AlertTriangle className="h-4 w-4" />
-              {showReport ? "Скрыть отчёт" : "Несовпадения с договором"}
-              <span className={`ml-1 px-2 py-0.5 rounded-full text-xs ${
-                showReport ? "bg-white/25" : "bg-white/70"
-              }`}>
-                {reportData?.total ?? "…"}
-              </span>
-            </button>
+          <div className="flex items-center gap-3 flex-wrap">
+            <ReportButton
+              active={reportMode === "mismatch"}
+              count={reportData?.total}
+              onClick={() => setReportMode((m) => (m === "mismatch" ? null : "mismatch"))}
+              label="Несовпадения с договором"
+              testid="report-toggle"
+              tone="amber"
+            />
+            <ReportButton
+              active={reportMode === "nocontract"}
+              count={noContractData?.total}
+              onClick={() => setReportMode((m) => (m === "nocontract" ? null : "nocontract"))}
+              label="Без договора"
+              testid="nocontract-toggle"
+              tone="rose"
+            />
           </div>
 
-          {showReport ? (
-            <MismatchReport
-              data={reportData}
+          {reportMode === "mismatch" ? (
+            <ReportView
+              items={reportData?.mismatches}
+              total={reportData?.total}
+              headerText="комната в заселении не совпадает с договором"
+              emptyText="У всех жильцов, у кого есть договор, комната совпадает."
+              onEdit={setEditing}
+              onDelete={removeResident}
+              onOpenBlock={openBlock}
+            />
+          ) : reportMode === "nocontract" ? (
+            <ReportView
+              items={noContractData?.residents}
+              total={noContractData?.total}
+              headerText="для этих жильцов не найден договор в базе"
+              emptyText="У всех жильцов найден договор."
               onEdit={setEditing}
               onDelete={removeResident}
               onOpenBlock={openBlock}
@@ -697,29 +713,51 @@ function FilterBar({ options, filterGroup, filterBenefit, search, onSearch, onGr
   );
 }
 
-function MismatchReport({ data, onEdit, onDelete, onOpenBlock }) {
-  if (!data) {
+function ReportButton({ active, count, onClick, label, testid, tone }) {
+  const has = (count || 0) > 0;
+  const activeCls = tone === "rose" ? "bg-rose-500" : "bg-amber-500";
+  const idleCls = has
+    ? tone === "rose"
+      ? "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100"
+      : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+    : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100";
+  return (
+    <button
+      onClick={onClick}
+      data-testid={testid}
+      className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border transition-all ${
+        active ? `${activeCls} text-white border-transparent shadow-lg` : idleCls
+      }`}
+    >
+      <AlertTriangle className="h-4 w-4" />
+      {active ? "Скрыть" : label}
+      <span className={`ml-1 px-2 py-0.5 rounded-full text-xs ${active ? "bg-white/25" : "bg-white/70"}`}>
+        {count ?? "…"}
+      </span>
+    </button>
+  );
+}
+
+function ReportView({ items, total, headerText, emptyText, onEdit, onDelete, onOpenBlock }) {
+  if (!items) {
     return <div className="py-10 text-center text-muted-foreground">Загрузка...</div>;
   }
-  if (data.total === 0) {
+  if (total === 0) {
     return (
       <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 py-12 text-center">
         <BadgeCheck className="h-10 w-10 text-emerald-500 mx-auto" />
-        <h3 className="mt-3 font-heading text-lg font-bold text-emerald-800">Несовпадений нет</h3>
-        <p className="text-sm text-emerald-700/80 mt-1">
-          У всех жильцов, у кого есть договор, комната совпадает.
-        </p>
+        <h3 className="mt-3 font-heading text-lg font-bold text-emerald-800">Всё в порядке</h3>
+        <p className="text-sm text-emerald-700/80 mt-1">{emptyText}</p>
       </div>
     );
   }
   return (
-    <div className="space-y-2" data-testid="mismatch-report">
+    <div className="space-y-2" data-testid="report-view">
       <div className="flex items-center gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
         <AlertTriangle className="h-4 w-4 shrink-0" />
-        Найдено {data.total}: комната в заселении не совпадает с договором. Нажмите карандаш —
-        исправить, метку — открыть блок.
+        Найдено {total}: {headerText}. Нажмите карандаш — исправить, метку — открыть блок.
       </div>
-      {data.mismatches.map((p) => (
+      {items.map((p) => (
         <PersonCard
           key={p.id}
           p={p}

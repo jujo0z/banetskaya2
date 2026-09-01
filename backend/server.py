@@ -2287,6 +2287,35 @@ async def residents_mismatches():
     return {"mismatches": out, "total": len(out)}
 
 
+@api_router.get("/residents/no-contract")
+async def residents_no_contract():
+    """Все жильцы, для которых не найден договор (по ФИО) в базе договоров."""
+    contracts = await db.contracts.find({}, {"_id": 0}).to_list(100000)
+    index = set()
+    for c in contracts:
+        for nm in [c.get("full_name", ""), (c.get("master") or {}).get("fio", "")]:
+            n = ressvc.normalize_name(nm)
+            if n:
+                index.add(n)
+    residents = await db.residents.find({}, {"_id": 0}).to_list(100000)
+    out = []
+    for r in residents:
+        if ressvc.normalize_name(r.get("full_name", "")) in index:
+            continue
+        room = f"{r.get('block','')}/{r.get('room','')}" if r.get("room") else r.get("block", "")
+        item = dict(r)
+        item["checks"] = {
+            "has_contract": False, "room_mismatch": False, "no_contract": True,
+            "contract_room": "", "contract_number": "",
+            "mismatches": [{"field": "contract", "label": "Договор",
+                            "accommodation": "есть в заселении", "contract": "договор не найден"}],
+        }
+        out.append(item)
+    out.sort(key=lambda d: (d.get("floor", 0), d.get("block", ""),
+                            d.get("room", ""), d.get("full_name", "")))
+    return {"residents": out, "total": len(out)}
+
+
 @api_router.get("/residents/{res_id}")
 async def residents_get(res_id: str):
     doc = await db.residents.find_one({"id": res_id}, {"_id": 0})
