@@ -45,6 +45,8 @@ import {
   GraduationCap,
   Filter,
   Award,
+  Search,
+  MapPin,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -78,12 +80,14 @@ export default function Residents() {
   const [options, setOptions] = useState({ groups: [], benefits: [] });
   const [filterGroup, setFilterGroup] = useState(ALL);
   const [filterBenefit, setFilterBenefit] = useState(ALL);
+  const [search, setSearch] = useState("");
   const [filterResults, setFilterResults] = useState(null);
   const [filtering, setFiltering] = useState(false);
   const fileRef = useRef(null);
   const groupFileRef = useRef(null);
 
-  const isFiltered = filterGroup !== ALL || filterBenefit !== ALL;
+  const isFiltered =
+    filterGroup !== ALL || filterBenefit !== ALL || search.trim() !== "";
 
   const loadFloors = useCallback(async () => {
     try {
@@ -142,8 +146,9 @@ export default function Residents() {
     loadOptions();
   }, [loadOptions]);
 
-  const runFilter = useCallback(async (group, benefit) => {
-    if (group === ALL && benefit === ALL) {
+  const runFilter = useCallback(async (group, benefit, q) => {
+    const query = (q || "").trim();
+    if (group === ALL && benefit === ALL && !query) {
       setFilterResults(null);
       return;
     }
@@ -152,6 +157,7 @@ export default function Residents() {
       const data = await residentsFilter({
         group: group === ALL ? undefined : group,
         benefit: benefit === ALL ? undefined : benefit,
+        q: query || undefined,
       });
       setFilterResults(data);
     } catch (e) {
@@ -162,12 +168,16 @@ export default function Residents() {
   }, []);
 
   useEffect(() => {
-    runFilter(filterGroup, filterBenefit);
-  }, [filterGroup, filterBenefit, runFilter]);
+    const t = setTimeout(() => {
+      runFilter(filterGroup, filterBenefit, search);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [filterGroup, filterBenefit, search, runFilter]);
 
   const clearFilters = () => {
     setFilterGroup(ALL);
     setFilterBenefit(ALL);
+    setSearch("");
   };
 
   const refreshAll = async () => {
@@ -178,8 +188,8 @@ export default function Residents() {
       const data = await residentsBlock(blockData.block);
       setBlockData(data);
     }
-    if (filterGroup !== ALL || filterBenefit !== ALL) {
-      await runFilter(filterGroup, filterBenefit);
+    if (isFiltered) {
+      await runFilter(filterGroup, filterBenefit, search);
     }
   };
 
@@ -307,6 +317,8 @@ export default function Residents() {
             options={options}
             filterGroup={filterGroup}
             filterBenefit={filterBenefit}
+            search={search}
+            onSearch={setSearch}
             onGroup={setFilterGroup}
             onBenefit={setFilterBenefit}
             onClear={clearFilters}
@@ -388,6 +400,7 @@ export default function Residents() {
               loading={filtering}
               onEdit={setEditing}
               onDelete={removeResident}
+              onOpenBlock={openBlock}
             />
           )}
         </>
@@ -539,13 +552,21 @@ function Stat({ label, value, tone }) {
   );
 }
 
-function FilterBar({ options, filterGroup, filterBenefit, onGroup, onBenefit, onClear, isFiltered, resultCount }) {
+function FilterBar({ options, filterGroup, filterBenefit, search, onSearch, onGroup, onBenefit, onClear, isFiltered, resultCount }) {
   return (
     <div className="glass rounded-2xl border border-pink-100 p-4 flex flex-wrap items-center gap-3" data-testid="filter-bar">
-      <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
-        <Filter className="h-4 w-4 text-[#EC4899]" /> Фильтры
+      <div className="relative flex-1 min-w-[220px]">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Input
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+          placeholder="Поиск по ФИО (по всем этажам)…"
+          className="pl-9 h-9"
+          data-testid="search-input"
+        />
       </div>
       <div className="flex items-center gap-2">
+        <Filter className="h-4 w-4 text-[#EC4899]" />
         <GraduationCap className="h-4 w-4 text-indigo-500" />
         <Select value={filterGroup} onValueChange={onGroup}>
           <SelectTrigger className="w-[190px] h-9" data-testid="filter-group">
@@ -594,7 +615,7 @@ function FilterBar({ options, filterGroup, filterBenefit, onGroup, onBenefit, on
   );
 }
 
-function FilteredResults({ data, loading, onEdit, onDelete }) {
+function FilteredResults({ data, loading, onEdit, onDelete, onOpenBlock }) {
   if (loading) {
     return <div className="py-10 text-center text-muted-foreground">Загрузка...</div>;
   }
@@ -608,7 +629,7 @@ function FilteredResults({ data, loading, onEdit, onDelete }) {
   return (
     <div className="space-y-2" data-testid="filter-results">
       <div className="text-xs font-mono uppercase tracking-[0.2em] text-slate-400">
-        Результаты фильтра · {data.total} чел.
+        Результаты · {data.total} чел.
       </div>
       {data.residents.map((p) => (
         <PersonCard
@@ -617,13 +638,14 @@ function FilteredResults({ data, loading, onEdit, onDelete }) {
           showFloor
           onEdit={() => onEdit(p)}
           onDelete={() => onDelete(p.id)}
+          onOpenBlock={() => onOpenBlock(p.block)}
         />
       ))}
     </div>
   );
 }
 
-function PersonCard({ p, onEdit, onDelete, showFloor }) {
+function PersonCard({ p, onEdit, onDelete, onOpenBlock, showFloor }) {
   const c = p.checks || {};
   const hasIssue = (c.mismatches || []).length > 0;
   return (
@@ -693,6 +715,18 @@ function PersonCard({ p, onEdit, onDelete, showFloor }) {
           )}
         </div>
         <div className="flex flex-col gap-1.5 shrink-0">
+          {onOpenBlock && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 text-[#DB2777] hover:text-[#DB2777]"
+              onClick={onOpenBlock}
+              title={`Открыть блок ${p.block}`}
+              data-testid={`goto-block-${p.id}`}
+            >
+              <MapPin className="h-4 w-4" />
+            </Button>
+          )}
           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onEdit}
             data-testid={`edit-${p.id}`}>
             <Pencil className="h-4 w-4" />
