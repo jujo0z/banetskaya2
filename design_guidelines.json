@@ -1,0 +1,121 @@
+{
+  "theme": "dark",
+  "brand_name": "Banetskaya.by",
+  "typography": {
+    "headings": {
+      "font": "Cormorant Garamond",
+      "weights": ["400", "600", "700"],
+      "usage": "H1, H2, modal titles, and the main brand logo. Gives a highly official, documentary, 'Old Money Tech' authority."
+    },
+    "body": {
+      "font": "Manrope",
+      "weights": ["400", "500", "600"],
+      "usage": "Data tables, forms, settings, standard UI text. Extremely clean, legible at small sizes, balances the serif headings."
+    },
+    "mono": {
+      "font": "JetBrains Mono",
+      "weights": ["400", "500"],
+      "usage": "Document codes, status labels, file names (e.g., .docx, .pdf)."
+    }
+  },
+  "colors": {
+    "background": {
+      "default": "#050505",
+      "paper": "#0A0A0C",
+      "surface": "#121214"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "muted": "#52525B"
+    },
+    "primary": {
+      "default": "#E11D48", 
+      "hover": "#BE123C",
+      "foreground": "#FFFFFF",
+      "description": "Vivid Crimson for primary actions. Instills a sense of urgent, premium authority. (NO Teal/Blue). Breaks the standard SaaS look completely."
+    },
+    "border": {
+      "default": "rgba(255, 255, 255, 0.08)",
+      "hover": "rgba(255, 255, 255, 0.2)",
+      "focus": "rgba(225, 29, 72, 0.8)"
+    },
+    "status": {
+      "success": "#16A34A",
+      "warning": "#D97706",
+      "error": "#DC2626"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "Used on the sticky sidebar and header. backdrop-blur-xl bg-[#050505]/70 with a 1px inner border of white/10. NEVER use completely transparent backgrounds.",
+    "borders": "Ultra-thin 1px borders (border-white/10). No thick or muddy borders.",
+    "shadows": "Minimal outer shadows (they look muddy in dark mode). Use inner shadows/glows for active states (e.g., box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.1)).",
+    "radii": "Sharp and structured. Use rounded-sm (4px) for inputs/buttons, rounded-none for major layout panels to emphasize a brutalist, editorial structure."
+  },
+  "grids": {
+    "dashboard": "Bento Grid (Mode B). Dense but breathable. Statistics cards span 1 column, recent history spans 3 columns. Generous padding inside cards (p-6 or p-8).",
+    "forms": "Strict 2-column or 1-column responsive grids. Labels must sit cleanly above inputs with tight spacing (gap-1.5)."
+  },
+  "layouts": {
+    "sidebar": "Fixed left navigation. Clean, icon-led with text, heavily muted until active. Active state uses Crimson text or left border.",
+    "generation_zone": "Massive drag-and-drop zone using a 'Tracing Beam' or dashed subtle border effect. Staggered entrance for the loaded Excel data grid.",
+    "modals": "Full-screen or massive drawer-style modals for document preview/edit. They should feel like shifting into a dedicated workspace, not a small popup box.",
+    "tables": "Edge-to-edge within their containers. No outer card wrapping unless it's flush. Action menus pinned to the right."
+  },
+  "motion": {
+    "micro_interactions": "Hover states must have a 200ms ease transition on color and border. Primary buttons scale down slightly on click (active:scale-95).",
+    "page_transitions": "Fade and slight slide-up (10px) on route change.",
+    "excel_drop": "The drag-and-drop zone should pulse with a subtle Crimson glow when a file is dragged over it."
+  },
+  "components": {
+    "button": "Solid background for primary, 1px white/10 border for secondary. text-sm font-semibold tracking-wide. NO pill shapes, use sharp (rounded-sm) edges to maintain authority.",
+    "table": "Dense. border-collapse. Row hover is a subtle bg-white/5. text-sm. Actions aligned to the right.",
+    "inputs": "bg-[#0A0A0C] border-white/10 focus:border-[#E11D48] focus:ring-1 focus:ring-[#E11D48]. rounded-sm.",
+    "tabs": "Underline style or clean pills. Not standard Vercel boxes. Very wide padding for touch targets and visual breathing room."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text meets APCA guidelines. Muted text must still be readable against #050505.",
+    "focus": "All interactive elements must have a visible focus ring (focus:ring-2 focus:ring-[#E11D48] focus:ring-offset-2 focus:ring-offset-[#050505]).",
+    "testing": "All buttons, inputs, tabs, and major UI regions MUST include data-testid attributes (e.g., data-testid='upload-excel-zone')."
+  },
+  "media": {
+    "images": "Use premium brutalist architectural imagery for the login screen or empty states. Image URL: https://images.unsplash.com/photo-1565626424178-c699f6601afd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwyfHxhcmNoaXRlY3R1cmFsJTIwaW50ZXJpb3IlMjBicnV0YWxpc20lMjBkYXJrfGVufDB8fHx8MTc4NjM3MDk2MXww&ixlib=rb-4.1.0&q=85",
+    "empty_states": "Muted, desaturated imagery or clean typography with no illustration to maintain the luxury feel."
+  },
+  "3d_libraries": "Framer Motion for page transitions and micro-interactions. No heavy 3D WebGL needed for this internal admin tool, focus on immediate DOM performance for large document tables.",
+  "image_urls": {
+    "login_background": {
+      "url": "https://images.unsplash.com/photo-1565626424178-c699f6601afd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwyfHxhcmNoaXRlY3R1cmFsJTIwaW50ZXJpb3IlMjBicnV0YWxpc20lMjBkYXJrfGVufDB8fHx8MTc4NjM3MDk2MXww&ixlib=rb-4.1.0&q=85",
+      "description": "Grayscale concrete brutalist architecture for an imposing, premium login or empty state background."
+    }
+  },
+  "component_path": "/app/frontend/src/components/ui",
+  "instructions_to_main_agent": [
+    "Build the dashboard using React + Tailwind + Shadcn.",
+    "Ensure the layout has a fixed left sidebar and a scrollable main area. Ensure the header uses a blurred background, NEVER fully transparent.",
+    "Override default Shadcn styles to be completely sharp (rounded-none or rounded-sm max) and use the dark theme colors specified.",
+    "The document generation flow must allow Excel upload -> Parsing -> Table view -> Modals for row editing.",
+    "Ensure 'Cormorant Garamond' is imported from Google Fonts for headings, and 'Manrope' for body.",
+    "Use lucide-react for all icons. Keep them small (w-4 h-4 or w-5 h-5) and elegant.",
+    "DO NOT apply 'transition: all' anywhere. Use specific transitions.",
+    "Implement Sonner for toast notifications in a dark, minimalist style.",
+    "Create .js components, NOT .tsx (since the environment uses .js files)."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: transition: all. This results in breaking transforms. Always add transitions for specific interactive elements like button, input excluding transforms.",
+    "You MUST NOT center align the app container, ie do not add .App { text-align: center; } in the css file. This disrupts the human natural reading flow of text.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "All interactive and key informational elements MUST include a data-testid attribute to facilitate robust automated testing.",
+    "DO NOT use complete transparent background in header, overlays, any surface that has content under it.",
+    "Use sonner for toasts, located in /app/src/components/ui/sonner.js or similar standard shadcn path."
+  ]
+}

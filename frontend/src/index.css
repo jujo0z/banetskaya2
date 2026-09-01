@@ -1,0 +1,195 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'Manrope', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, .font-heading {
+    font-family: 'Cormorant Garamond', serif;
+}
+
+.font-mono, code {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* ===== Светлая тёплая цветочная тема (розовый/фуксия акцент) ===== */
+@layer base {
+    :root {
+        --background: 335 55% 98%;
+        --foreground: 240 24% 20%;
+        --card: 0 0% 100%;
+        --card-foreground: 240 24% 20%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 240 24% 20%;
+        --primary: 330 81% 60%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 330 50% 96%;
+        --secondary-foreground: 240 24% 22%;
+        --muted: 330 40% 96%;
+        --muted-foreground: 240 6% 46%;
+        --accent: 322 62% 95%;
+        --accent-foreground: 240 24% 22%;
+        --destructive: 0 72% 51%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 330 42% 90%;
+        --input: 330 42% 88%;
+        --ring: 330 81% 60%;
+        --radius: 0.85rem;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+/* Soft floral texture for large surfaces */
+.bg-grid {
+    background-color: #fdf4f9;
+    background-image:
+        radial-gradient(900px circle at 12% -8%, rgba(236, 72, 153, 0.10), transparent 45%),
+        radial-gradient(820px circle at 100% 0%, rgba(168, 85, 247, 0.10), transparent 42%),
+        radial-gradient(680px circle at 50% 120%, rgba(251, 191, 36, 0.08), transparent 45%),
+        radial-gradient(rgba(190, 24, 93, 0.045) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 100% 100%, 26px 26px;
+    background-attachment: fixed, fixed, fixed, scroll;
+}
+
+.data-row:hover {
+    background-color: rgba(236, 72, 153, 0.06);
+}
+
+/* Gradient text accent */
+.text-gradient {
+    background: linear-gradient(90deg, #be185d 0%, #ec4899 55%, #fb7185 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Pink glow helper */
+.glow-crimson {
+    box-shadow: 0 0 24px rgba(236, 72, 153, 0.35);
+}
+
+/* ===== Premium design system (light) ===== */
+.glass {
+    background: linear-gradient(160deg, rgba(255,255,255,0.88), rgba(255,255,255,0.66));
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(236,72,153,0.16);
+}
+.card-premium {
+    position: relative;
+    background: linear-gradient(160deg, #ffffff, #fff4fa);
+    border: 1px solid rgba(236,72,153,0.14);
+    border-radius: 1rem;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.85) inset, 0 24px 48px -30px rgba(190,24,93,0.28);
+}
+.hover-lift {
+    transition: transform .28s cubic-bezier(.2,.7,.3,1), border-color .28s ease, box-shadow .28s ease;
+}
+.hover-lift:hover {
+    transform: translateY(-3px);
+    border-color: rgba(236,72,153,0.5);
+    box-shadow: 0 30px 55px -28px rgba(236,72,153,0.35), 0 1px 0 rgba(255,255,255,0.8) inset;
+}
+.ring-accent { box-shadow: 0 0 0 1px rgba(236,72,153,0.4), 0 0 34px -8px rgba(236,72,153,0.5); }
+.eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: hsl(330 42% 55%);
+}
+.divider-soft { height: 1px; background: linear-gradient(90deg, transparent, rgba(190,24,93,0.15), transparent); }
+/* Icon chip */
+.chip {
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 0.7rem;
+    background: linear-gradient(160deg, rgba(236,72,153,0.16), rgba(236,72,153,0.05));
+    border: 1px solid rgba(236,72,153,0.25);
+}
+.chip-muted {
+    background: linear-gradient(160deg, rgba(236,72,153,0.07), rgba(255,255,255,0.5));
+    border: 1px solid rgba(236,72,153,0.14);
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #f3c4dc;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #ec9dc0;
+    background-clip: padding-box;
+}
+::selection {
+    background: #EC4899;
+    color: #fff;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+}
+.page-enter {
+    animation: fadeIn 0.3s ease both;
+}
+
+@media print {
+    body * { visibility: hidden; }
+    #print-area, #print-area * { visibility: visible; }
+    #print-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 0; }
+    .no-print { display: none !important; }
+}
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+    [data-debug-wrapper="true"] > * {
+        margin-left: inherit;
+        margin-right: inherit;
+        margin-top: inherit;
+        margin-bottom: inherit;
+        padding-left: inherit;
+        padding-right: inherit;
+        padding-top: inherit;
+        padding-bottom: inherit;
+        column-gap: inherit;
+        row-gap: inherit;
+        gap: inherit;
+        border-left-width: inherit;
+        border-right-width: inherit;
+        border-top-width: inherit;
+        border-bottom-width: inherit;
+        border-left-style: inherit;
+        border-right-style: inherit;
+        border-top-style: inherit;
+        border-bottom-style: inherit;
+        border-left-color: inherit;
+        border-right-color: inherit;
+        border-top-color: inherit;
+        border-bottom-color: inherit;
+    }
+}

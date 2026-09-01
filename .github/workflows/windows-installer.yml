@@ -1,0 +1,196 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Smoke test (document generation)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r windows-package/requirements-windows.txt
+      - name: Run smoke test
+        run: python windows-package/smoke_test.py
+
+  build:
+    needs: smoke
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate build metadata (_buildinfo.py)
+        shell: pwsh
+        run: |
+          $sha = "${{ github.sha }}".Substring(0,7)
+          $bt  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $ver = (Get-Date).ToUniversalTime().ToString("yyyy.MM.dd.HHmm")
+          $repo = "${{ github.repository }}"
+          $lines = @(
+            "VERSION = `"$ver`"",
+            "BUILD_TIME = `"$bt`"",
+            "GIT_SHA = `"$sha`"",
+            "REPO = `"$repo`""
+          )
+          Set-Content -Path backend/_buildinfo.py -Value $lines -Encoding UTF8
+          Write-Host "Wrote backend/_buildinfo.py:"; Get-Content backend/_buildinfo.py
+
+      - name: Build frontend (static)
+        working-directory: frontend
+        env:
+          REACT_APP_BACKEND_URL: http://127.0.0.1:8001
+          REACT_APP_IS_DESKTOP: '1'
+          CI: 'false'
+        run: |
+          corepack enable
+          yarn install --frozen-lockfile
+          yarn build
+
+      - name: Install Python deps + PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r windows-package/requirements-windows.txt
+          pip install pyinstaller
+
+      - name: Download portable MongoDB (mongod.exe)
+        shell: pwsh
+        run: |
+          $url = "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-7.0.14.zip"
+          Invoke-WebRequest -Uri $url -OutFile mongo.zip
+          Expand-Archive -Path mongo.zip -DestinationPath mongo_extract -Force
+          New-Item -ItemType Directory -Force -Path resources/mongodb | Out-Null
+          $mongod = Get-ChildItem -Recurse mongo_extract -Filter mongod.exe | Select-Object -First 1
+          Copy-Item $mongod.FullName resources/mongodb/mongod.exe -Force
+
+      - name: Build backend bundle (PyInstaller)
+        run: pyinstaller windows-package/installer/banetskaya.spec --noconfirm
+
+      - name: Bundle LibreOffice (portable, into the app folder)
+        shell: pwsh
+        run: |
+          # Download the official LibreOffice MSI and do an ADMIN extract (no install),
+          # then copy the LibreOffice tree next to the app so soffice.exe ships inside.
+          $ErrorActionPreference = "Stop"
+          $ver = "25.8.7"        # 3-part номер (зеркало stable)
+          $verArch = "25.8.7.2"  # 4-part номер (постоянный архив, резерв)
+          $urls = @(
+            "https://download.documentfoundation.org/libreoffice/stable/$ver/win/x86_64/LibreOffice_${ver}_Win_x86-64.msi",
+            "https://downloadarchive.documentfoundation.org/libreoffice/old/$verArch/win/x86_64/LibreOffice_${verArch}_Win_x86-64.msi"
+          )
+          $ok = $false
+          foreach ($u in $urls) {
+            for ($i = 1; $i -le 3; $i++) {
+              try {
+                Write-Host "Downloading LibreOffice from $u (attempt $i) ..."
+                Invoke-WebRequest -Uri $u -OutFile lo.msi -UseBasicParsing
+                if ((Test-Path lo.msi) -and ((Get-Item lo.msi).Length -gt 100MB)) { $ok = $true; break }
+              } catch { Write-Host "Failed: $($_.Exception.Message)" }
+              Start-Sleep -Seconds 5
+            }
+            if ($ok) { break }
+          }
+          if (-not $ok) { throw "Could not download LibreOffice MSI from any mirror" }
+          # Full SILENT INSTALL (not an admin /a extract): lays down a COMPLETE tree
+          # incl. soffice.bin and the required runtime DLLs, so the portable copy works
+          # on a clean laptop. Admin extract (/a) often produced an incomplete tree
+          # which caused a "soffice.bin" launch error.
+          $msi = (Resolve-Path lo.msi).Path
+          Write-Host "Silent installing LibreOffice ..."
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait
+          $soffice = Get-ChildItem -Recurse "C:\Program Files\LibreOffice","C:\Program Files (x86)\LibreOffice" -Filter soffice.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $soffice) { throw "soffice.exe not found after install" }
+          # LibreOffice root = parent of the 'program' folder
+          $loRoot = $soffice.Directory.Parent.FullName
+          if (-not (Test-Path (Join-Path $soffice.Directory.FullName 'soffice.bin'))) { throw "soffice.bin missing after install ($($soffice.Directory.FullName))" }
+          $dest = "dist/Banetskaya/libreoffice"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Write-Host "Copying LibreOffice tree from $loRoot -> $dest"
+          Copy-Item -Path (Join-Path $loRoot '*') -Destination $dest -Recurse -Force
+          if (-not (Test-Path "$dest/program/soffice.exe")) { throw "Bundled soffice.exe missing at $dest/program" }
+          if (-not (Test-Path "$dest/program/soffice.bin")) { throw "Bundled soffice.bin missing at $dest/program" }
+          Write-Host "LibreOffice bundled OK (soffice.exe + soffice.bin present)."
+
+      - name: Bundle SumatraPDF (silent printing)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64.exe"
+          $dest = "dist/Banetskaya/sumatra"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Write-Host "Downloading SumatraPDF (attempt $i) ..."
+              Invoke-WebRequest -Uri $url -OutFile "$dest/SumatraPDF.exe" -UseBasicParsing
+              if ((Test-Path "$dest/SumatraPDF.exe") -and ((Get-Item "$dest/SumatraPDF.exe").Length -gt 1MB)) { $ok = $true; break }
+            } catch { Write-Host "Failed: $($_.Exception.Message)" }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $ok) { throw "Could not download SumatraPDF" }
+          Write-Host "SumatraPDF bundled OK."
+
+      - name: Bundle WebView2 Evergreen bootstrapper (native window runtime)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"  # official Evergreen bootstrapper
+          $dest = "dist/Banetskaya"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $ok = $false
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Write-Host "Downloading WebView2 bootstrapper (attempt $i) ..."
+              Invoke-WebRequest -Uri $url -OutFile "$dest/MicrosoftEdgeWebview2Setup.exe" -UseBasicParsing
+              if ((Test-Path "$dest/MicrosoftEdgeWebview2Setup.exe") -and ((Get-Item "$dest/MicrosoftEdgeWebview2Setup.exe").Length -gt 100KB)) { $ok = $true; break }
+            } catch { Write-Host "Failed: $($_.Exception.Message)" }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $ok) { throw "Could not download WebView2 bootstrapper" }
+          Write-Host "WebView2 bootstrapper bundled OK."
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer (.exe)
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows-package/installer/installer.iss
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BanetskayaSetup
+          path: installer_output/BanetskayaSetup.exe
+          if-no-files-found: error
+
+      - name: Publish to GitHub Release (stable direct link)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Banetskaya.by — последняя сборка
+          files: installer_output/BanetskayaSetup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
