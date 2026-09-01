@@ -582,6 +582,14 @@ export async function residentsImport(file) {
   });
   return data; // { imported }
 }
+export async function residentsImportGroups(files) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const { data } = await api.post("/residents/import-groups", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data; // { files, total_names, matched, changed, unchanged, not_found_count, not_found, groups }
+}
 export async function residentsFloors() {
   const { data } = await api.get("/residents/floors");
   return data; // { floors:[{floor,people,blocks_present}], total }

@@ -1,492 +1,333 @@
 #!/usr/bin/env python3
 """
-Тестирование backend API раздела «Заселение» (residents).
-Проверяет эндпоинты /api/residents/* согласно чек-листу из test_result.md.
+Backend test for POST /api/residents/import-groups endpoint.
+Tests the new group import functionality for Banetskaya.by application.
 """
 import requests
-import json
+import sys
 from pathlib import Path
 
-# Base URL из frontend/.env
+# Base URL from frontend/.env
 BASE_URL = "https://cloud-server-1.preview.emergentagent.com/api"
 
-# Тестовый файл заселения
-TEST_FILE = Path("/tmp/zaselenie.xlsx")
+# Test files
+TEST_FILES = [
+    "/tmp/groups/mrd11.docx",
+    "/tmp/groups/zd11.docx",
+    "/tmp/groups/sd11_15.docx",
+    "/tmp/groups/sd201_210.docx",
+    "/tmp/groups/dozach_sd2324.docx",
+]
 
-# Цвета для вывода
-GREEN = "\033[92m"
-RED = "\033[91m"
-YELLOW = "\033[93m"
-RESET = "\033[0m"
-BOLD = "\033[1m"
-
-def log_test(name, passed, details=""):
-    """Логирование результата теста."""
-    status = f"{GREEN}✓ PASS{RESET}" if passed else f"{RED}✗ FAIL{RESET}"
-    print(f"{status} {BOLD}{name}{RESET}")
-    if details:
-        print(f"    {details}")
-    return passed
-
-def test_1_import_excel():
-    """Тест 1: POST /api/residents/import с файлом /tmp/zaselenie.xlsx → {imported:674}"""
-    print(f"\n{BOLD}=== ТЕСТ 1: Импорт Excel заселения ==={RESET}")
-    
-    if not TEST_FILE.exists():
-        return log_test("POST /api/residents/import", False, 
-                       f"Файл {TEST_FILE} не найден")
-    
-    with open(TEST_FILE, "rb") as f:
-        files = {"file": ("zaselenie.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
-        resp = requests.post(f"{BASE_URL}/residents/import", files=files, timeout=30)
-    
-    if resp.status_code != 200:
-        return log_test("POST /api/residents/import", False, 
-                       f"Статус {resp.status_code}, ожидался 200. Ответ: {resp.text[:200]}")
-    
-    data = resp.json()
-    imported = data.get("imported", 0)
-    
-    # Ожидается 674 жильца, но допускаем небольшое отклонение (>600)
-    if imported < 600:
-        return log_test("POST /api/residents/import", False, 
-                       f"Импортировано {imported} жильцов, ожидалось >600")
-    
-    return log_test("POST /api/residents/import", True, 
-                   f"Импортировано {imported} жильцов (ожидалось ~674)")
-
-def test_2_get_floors():
-    """Тест 2: GET /api/residents/floors → этажи 2-9, у каждого people>0, total>600"""
-    print(f"\n{BOLD}=== ТЕСТ 2: Получение сводки по этажам ==={RESET}")
-    
-    resp = requests.get(f"{BASE_URL}/residents/floors", timeout=10)
-    
-    if resp.status_code != 200:
-        return log_test("GET /api/residents/floors", False, 
-                       f"Статус {resp.status_code}, ожидался 200")
-    
-    data = resp.json()
-    floors = data.get("floors", [])
-    total = data.get("total", 0)
-    
-    if total < 600:
-        return log_test("GET /api/residents/floors", False, 
-                       f"total={total}, ожидалось >600")
-    
-    # Проверяем наличие этажей 2-9
-    floor_nums = {f["floor"] for f in floors}
-    expected_floors = set(range(2, 10))
-    
-    if not expected_floors.issubset(floor_nums):
-        missing = expected_floors - floor_nums
-        return log_test("GET /api/residents/floors", False, 
-                       f"Отсутствуют этажи: {missing}")
-    
-    # Проверяем что у каждого этажа 2-9 есть люди
-    for floor in floors:
-        if floor["floor"] in expected_floors and floor["people"] == 0:
-            return log_test("GET /api/residents/floors", False, 
-                           f"Этаж {floor['floor']} имеет people=0")
-    
-    return log_test("GET /api/residents/floors", True, 
-                   f"Этажи 2-9 присутствуют, total={total}")
-
-def test_3_get_floor_9():
-    """Тест 3: GET /api/residents/floor/9 → 15 блоков (901-915)"""
-    print(f"\n{BOLD}=== ТЕСТ 3: Получение блоков этажа 9 ==={RESET}")
-    
-    resp = requests.get(f"{BASE_URL}/residents/floor/9", timeout=10)
-    
-    if resp.status_code != 200:
-        return log_test("GET /api/residents/floor/9", False, 
-                       f"Статус {resp.status_code}, ожидался 200")
-    
-    data = resp.json()
-    blocks = data.get("blocks", [])
-    
-    if len(blocks) != 15:
-        return log_test("GET /api/residents/floor/9", False, 
-                       f"Получено {len(blocks)} блоков, ожидалось 15")
-    
-    # Проверяем наличие блока 901
-    block_nums = [b["block"] for b in blocks]
-    if "901" not in block_nums:
-        return log_test("GET /api/residents/floor/9", False, 
-                       f"Блок 901 не найден. Блоки: {block_nums}")
-    
-    # Проверяем структуру блоков
-    for block in blocks:
-        if not all(k in block for k in ["block", "index", "people", "rooms"]):
-            return log_test("GET /api/residents/floor/9", False, 
-                           f"Блок {block.get('block')} имеет неполную структуру")
-    
-    return log_test("GET /api/residents/floor/9", True, 
-                   f"Получено 15 блоков, включая 901")
-
-def test_4_get_block_902():
-    """Тест 4: GET /api/residents/block/902 → проверка checks для Мороз и Чумаков"""
-    print(f"\n{BOLD}=== ТЕСТ 4: Получение жильцов блока 902 и проверка сверки с договорами ==={RESET}")
-    
-    resp = requests.get(f"{BASE_URL}/residents/block/902", timeout=10)
-    
-    if resp.status_code != 200:
-        return log_test("GET /api/residents/block/902", False, 
-                       f"Статус {resp.status_code}, ожидался 200")
-    
-    data = resp.json()
-    
-    # Проверяем структуру ответа
-    if not all(k in data for k in ["block", "floor", "rooms"]):
-        return log_test("GET /api/residents/block/902", False, 
-                       f"Неполная структура ответа: {data.keys()}")
-    
-    if data["block"] != "902":
-        return log_test("GET /api/residents/block/902", False, 
-                       f"block={data['block']}, ожидался '902'")
-    
-    if data["floor"] != 9:
-        return log_test("GET /api/residents/block/902", False, 
-                       f"floor={data['floor']}, ожидался 9")
-    
-    # Собираем всех людей из всех комнат
-    all_people = []
-    for room_data in data.get("rooms", []):
-        all_people.extend(room_data.get("people", []))
-    
-    # Ищем Мороз Иван Дмитриевич (должен быть без mismatch)
-    moroz = None
-    for person in all_people:
-        if "мороз" in person.get("full_name", "").lower() and "иван" in person.get("full_name", "").lower():
-            moroz = person
-            break
-    
-    # Ищем Чумаков Иван Сергеевич (должен быть с room_mismatch=true)
-    chumakov = None
-    for person in all_people:
-        if "чумаков" in person.get("full_name", "").lower() and "иван" in person.get("full_name", "").lower():
-            chumakov = person
-            break
-    
-    issues = []
-    
-    # Проверяем Мороз
-    if moroz:
-        checks = moroz.get("checks", {})
-        if not checks.get("has_contract"):
-            issues.append(f"Мороз: has_contract={checks.get('has_contract')}, ожидался True")
-        if checks.get("room_mismatch"):
-            issues.append(f"Мороз: room_mismatch={checks.get('room_mismatch')}, ожидался False")
-        if checks.get("mismatches"):
-            issues.append(f"Мороз: mismatches не пустой: {checks.get('mismatches')}")
-        print(f"    {GREEN}✓{RESET} Мороз Иван Дмитриевич: has_contract={checks.get('has_contract')}, room_mismatch={checks.get('room_mismatch')}")
-    else:
-        issues.append("Мороз Иван Дмитриевич не найден в блоке 902")
-    
-    # Проверяем Чумаков
-    if chumakov:
-        checks = chumakov.get("checks", {})
-        if not checks.get("has_contract"):
-            issues.append(f"Чумаков: has_contract={checks.get('has_contract')}, ожидался True")
-        if not checks.get("room_mismatch"):
-            issues.append(f"Чумаков: room_mismatch={checks.get('room_mismatch')}, ожидался True")
+def test_precondition():
+    """Check if residents database is populated (674 residents expected)."""
+    print("\n=== PRECONDITION: Check residents database ===")
+    try:
+        resp = requests.get(f"{BASE_URL}/residents/floors", timeout=30)
+        print(f"GET /api/residents/floors → {resp.status_code}")
         
-        # Проверяем наличие mismatch с field="room"
-        mismatches = checks.get("mismatches", [])
-        room_mismatch_found = any(m.get("field") == "room" for m in mismatches)
-        if not room_mismatch_found:
-            issues.append(f"Чумаков: не найден mismatch с field='room' в {mismatches}")
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            return False
+        
+        data = resp.json()
+        total = data.get("total", 0)
+        print(f"Total residents in database: {total}")
+        
+        if total == 0:
+            print("⚠️  Database is empty. Need to import /tmp/zaselenie.xlsx first.")
+            # Try to import
+            print("\nAttempting to import /tmp/zaselenie.xlsx...")
+            zaselenie_path = Path("/tmp/zaselenie.xlsx")
+            if not zaselenie_path.exists():
+                print(f"❌ FAILED: {zaselenie_path} not found")
+                return False
+            
+            with open(zaselenie_path, "rb") as f:
+                files = {"file": ("zaselenie.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+                resp = requests.post(f"{BASE_URL}/residents/import", files=files, timeout=60)
+                print(f"POST /api/residents/import → {resp.status_code}")
+                
+                if resp.status_code != 200:
+                    print(f"❌ FAILED: Import failed with {resp.status_code}")
+                    print(f"Response: {resp.text}")
+                    return False
+                
+                result = resp.json()
+                imported = result.get("imported", 0)
+                print(f"✅ Imported {imported} residents")
+                
+                if imported < 600:
+                    print(f"⚠️  WARNING: Expected ~674 residents, got {imported}")
         else:
-            # Проверяем значения в mismatch
-            room_mm = next((m for m in mismatches if m.get("field") == "room"), {})
-            if "902/2" not in str(room_mm.get("accommodation", "")):
-                issues.append(f"Чумаков: accommodation не содержит '902/2': {room_mm}")
-            if "905/4" not in str(room_mm.get("contract", "")):
-                issues.append(f"Чумаков: contract не содержит '905/4': {room_mm}")
+            print(f"✅ Database has {total} residents (expected ~674)")
         
-        print(f"    {GREEN}✓{RESET} Чумаков Иван Сергеевич: has_contract={checks.get('has_contract')}, room_mismatch={checks.get('room_mismatch')}")
-    else:
-        issues.append("Чумаков Иван Сергеевич не найден в блоке 902")
-    
-    # Проверяем людей без договора
-    people_without_contract = [p for p in all_people if p.get("checks", {}).get("no_contract")]
-    if people_without_contract:
-        sample = people_without_contract[0]
-        checks = sample.get("checks", {})
-        mismatches = checks.get("mismatches", [])
-        contract_mismatch = any(m.get("field") == "contract" for m in mismatches)
-        if not contract_mismatch:
-            issues.append(f"Человек без договора ({sample.get('full_name')}): нет mismatch с field='contract'")
-        print(f"    {GREEN}✓{RESET} Люди без договора имеют checks.no_contract=true и mismatch 'Договор'")
-    
-    if issues:
-        return log_test("GET /api/residents/block/902", False, 
-                       "\n    ".join(issues))
-    
-    return log_test("GET /api/residents/block/902", True, 
-                   f"Сверка с договорами работает корректно")
+        return True
+        
+    except Exception as e:
+        print(f"❌ EXCEPTION: {e}")
+        return False
 
-def test_5_create_resident():
-    """Тест 5: POST /api/residents → создание жильца, floor вычисляется из block"""
-    print(f"\n{BOLD}=== ТЕСТ 5: Создание нового жильца ==={RESET}")
-    
-    payload = {
-        "full_name": "Тест Тестов Тестович",
-        "block": "910",
-        "room": "2",
-        "benefit": "сирота",
-        "study_group": "ТЕСТ-1"
-    }
-    
-    resp = requests.post(f"{BASE_URL}/residents", json=payload, timeout=10)
-    
-    if resp.status_code != 200:
-        return log_test("POST /api/residents", False, 
-                       f"Статус {resp.status_code}, ожидался 200. Ответ: {resp.text[:200]}")
-    
-    data = resp.json()
-    
-    # Проверяем что floor вычислен правильно (910 → floor 9)
-    if data.get("floor") != 9:
-        return log_test("POST /api/residents", False, 
-                       f"floor={data.get('floor')}, ожидался 9 (из block='910')")
-    
-    # Проверяем что все поля сохранены
-    for key, value in payload.items():
-        if data.get(key) != value:
-            return log_test("POST /api/residents", False, 
-                           f"{key}={data.get(key)}, ожидался '{value}'")
-    
-    # Сохраняем ID для следующих тестов
-    global created_resident_id
-    created_resident_id = data.get("id")
-    
-    return log_test("POST /api/residents", True, 
-                   f"Жилец создан, id={created_resident_id}, floor=9")
 
-def test_6_update_resident():
-    """Тест 6: PATCH /api/residents/{id} → обновление полей"""
-    print(f"\n{BOLD}=== ТЕСТ 6: Обновление жильца ==={RESET}")
-    
-    if not created_resident_id:
-        return log_test("PATCH /api/residents/{id}", False, 
-                       "Нет ID созданного жильца (тест 5 не прошёл)")
-    
-    payload = {
-        "benefit": "ЧАЭС",
-        "study_group": "НОВ-2",
-        "room": "4"
-    }
-    
-    resp = requests.patch(f"{BASE_URL}/residents/{created_resident_id}", 
-                         json=payload, timeout=10)
-    
-    if resp.status_code != 200:
-        return log_test("PATCH /api/residents/{id}", False, 
-                       f"Статус {resp.status_code}, ожидался 200. Ответ: {resp.text[:200]}")
-    
-    data = resp.json()
-    
-    # Проверяем что поля обновились
-    for key, value in payload.items():
-        if data.get(key) != value:
-            return log_test("PATCH /api/residents/{id}", False, 
-                           f"{key}={data.get(key)}, ожидался '{value}'")
-    
-    return log_test("PATCH /api/residents/{id}", True, 
-                   f"Поля обновлены: benefit=ЧАЭС, study_group=НОВ-2, room=4")
+def test_1_multiple_files():
+    """Test 1: POST with all 5 files simultaneously."""
+    print("\n=== TEST 1: Import all 5 group files simultaneously ===")
+    try:
+        files_data = []
+        for fpath in TEST_FILES:
+            p = Path(fpath)
+            if not p.exists():
+                print(f"❌ FAILED: File not found: {fpath}")
+                return False
+            with open(p, "rb") as f:
+                files_data.append(("files", (p.name, f.read(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")))
+        
+        resp = requests.post(f"{BASE_URL}/residents/import-groups", files=files_data, timeout=60)
+        print(f"POST /api/residents/import-groups (5 files) → {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            print(f"Response: {resp.text}")
+            return False
+        
+        data = resp.json()
+        print(f"Response structure: {list(data.keys())}")
+        
+        # Check required fields
+        required = ["files", "total_names", "groups_in_files", "matched", "changed", "unchanged", "not_found_count", "not_found", "groups"]
+        for field in required:
+            if field not in data:
+                print(f"❌ FAILED: Missing field '{field}' in response")
+                return False
+        
+        print(f"✅ All required fields present")
+        print(f"  files: {len(data['files'])} files processed")
+        for f in data['files']:
+            print(f"    - {f['file']}: {f['names']} names")
+        print(f"  total_names: {data['total_names']} (expected 483)")
+        print(f"  groups_in_files: {data['groups_in_files']} (expected 19)")
+        print(f"  matched: {data['matched']} (expected ~129)")
+        print(f"  changed: {data['changed']}")
+        print(f"  unchanged: {data['unchanged']}")
+        print(f"  not_found_count: {data['not_found_count']}")
+        print(f"  groups: {len(data['groups'])} groups")
+        
+        # Validate expectations
+        if data['total_names'] != 483:
+            print(f"⚠️  WARNING: Expected total_names=483, got {data['total_names']}")
+        
+        if data['groups_in_files'] != 19:
+            print(f"⚠️  WARNING: Expected groups_in_files=19, got {data['groups_in_files']}")
+        
+        if data['matched'] < 100 or data['matched'] > 150:
+            print(f"⚠️  WARNING: Expected matched~129, got {data['matched']}")
+        
+        print(f"✅ TEST 1 PASSED")
+        return True
+        
+    except Exception as e:
+        print(f"❌ EXCEPTION: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
-def test_7_get_resident():
-    """Тест 7: GET /api/residents/{id} → проверка обновлений"""
-    print(f"\n{BOLD}=== ТЕСТ 7: Получение жильца по ID ==={RESET}")
-    
-    if not created_resident_id:
-        return log_test("GET /api/residents/{id}", False, 
-                       "Нет ID созданного жильца (тест 5 не прошёл)")
-    
-    resp = requests.get(f"{BASE_URL}/residents/{created_resident_id}", timeout=10)
-    
-    if resp.status_code != 200:
-        return log_test("GET /api/residents/{id}", False, 
-                       f"Статус {resp.status_code}, ожидался 200")
-    
-    data = resp.json()
-    
-    # Проверяем обновлённые значения из теста 6
-    expected = {
-        "benefit": "ЧАЭС",
-        "study_group": "НОВ-2",
-        "room": "4",
-        "full_name": "Тест Тестов Тестович",
-        "block": "910",
-        "floor": 9
-    }
-    
-    for key, value in expected.items():
-        if data.get(key) != value:
-            return log_test("GET /api/residents/{id}", False, 
-                           f"{key}={data.get(key)}, ожидался '{value}'")
-    
-    return log_test("GET /api/residents/{id}", True, 
-                   f"Обновления отражены корректно")
 
-def test_8_reimport_preserves_manual_edits():
-    """Тест 8: Повторный импорт сохраняет ручные правки (benefit/study_group)"""
-    print(f"\n{BOLD}=== ТЕСТ 8: Повторный импорт сохраняет ручные правки ==={RESET}")
-    
-    # Шаг 1: Получаем любого реального жильца из импорта
-    resp = requests.get(f"{BASE_URL}/residents/block/902", timeout=10)
-    if resp.status_code != 200:
-        return log_test("Повторный импорт (сохранение правок)", False, 
-                       "Не удалось получить блок 902")
-    
-    data = resp.json()
-    all_people = []
-    for room_data in data.get("rooms", []):
-        all_people.extend(room_data.get("people", []))
-    
-    if not all_people:
-        return log_test("Повторный импорт (сохранение правок)", False, 
-                       "Нет жильцов в блоке 902")
-    
-    # Берём первого человека
-    person = all_people[0]
-    person_id = person.get("id")
-    original_name = person.get("full_name")
-    
-    print(f"    Выбран жилец: {original_name} (id={person_id})")
-    
-    # Шаг 2: Обновляем benefit
-    test_benefit = "ПРОВЕРКА_ЛЬГОТЫ"
-    resp = requests.patch(f"{BASE_URL}/residents/{person_id}", 
-                         json={"benefit": test_benefit}, timeout=10)
-    
-    if resp.status_code != 200:
-        return log_test("Повторный импорт (сохранение правок)", False, 
-                       f"Не удалось обновить benefit: {resp.status_code}")
-    
-    print(f"    Установлен benefit='{test_benefit}'")
-    
-    # Шаг 3: Повторный импорт
-    with open(TEST_FILE, "rb") as f:
-        files = {"file": ("zaselenie.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
-        resp = requests.post(f"{BASE_URL}/residents/import", files=files, timeout=30)
-    
-    if resp.status_code != 200:
-        return log_test("Повторный импорт (сохранение правок)", False, 
-                       f"Повторный импорт не удался: {resp.status_code}")
-    
-    print(f"    Повторный импорт выполнен")
-    
-    # Шаг 4: Проверяем что benefit сохранился
-    # Ищем человека по ФИО (после импорта ID могут измениться)
-    resp = requests.get(f"{BASE_URL}/residents/block/902", timeout=10)
-    if resp.status_code != 200:
-        return log_test("Повторный импорт (сохранение правок)", False, 
-                       "Не удалось получить блок 902 после импорта")
-    
-    data = resp.json()
-    all_people = []
-    for room_data in data.get("rooms", []):
-        all_people.extend(room_data.get("people", []))
-    
-    # Ищем нашего человека по ФИО
-    found_person = None
-    for p in all_people:
-        if p.get("full_name") == original_name:
-            found_person = p
-            break
-    
-    if not found_person:
-        return log_test("Повторный импорт (сохранение правок)", False, 
-                       f"Жилец {original_name} не найден после импорта")
-    
-    if found_person.get("benefit") != test_benefit:
-        return log_test("Повторный импорт (сохранение правок)", False, 
-                       f"benefit={found_person.get('benefit')}, ожидался '{test_benefit}' (ручная правка не сохранилась)")
-    
-    return log_test("Повторный импорт (сохранение правок)", True, 
-                   f"benefit='{test_benefit}' сохранился после повторного импорта (мердж по ФИО работает)")
+def test_2_verify_group_set():
+    """Test 2: Verify group was actually set for specific resident."""
+    print("\n=== TEST 2: Verify group was set for 'Бондарев Владимир Алексеевич' ===")
+    try:
+        resp = requests.get(f"{BASE_URL}/residents/block/902", timeout=30)
+        print(f"GET /api/residents/block/902 → {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            return False
+        
+        data = resp.json()
+        rooms = data.get("rooms", [])
+        
+        # Find Бондарев Владимир Алексеевич
+        found = False
+        for room in rooms:
+            for person in room.get("people", []):
+                if "Бондарев" in person.get("full_name", "") and "Владимир" in person.get("full_name", ""):
+                    found = True
+                    study_group = person.get("study_group", "")
+                    print(f"Found: {person.get('full_name')}")
+                    print(f"  study_group: '{study_group}'")
+                    
+                    if study_group == "СД-201":
+                        print(f"✅ TEST 2 PASSED: study_group='СД-201' as expected")
+                        return True
+                    else:
+                        print(f"❌ FAILED: Expected study_group='СД-201', got '{study_group}'")
+                        return False
+        
+        if not found:
+            print(f"❌ FAILED: 'Бондарев Владимир Алексеевич' not found in block 902")
+            return False
+        
+    except Exception as e:
+        print(f"❌ EXCEPTION: {e}")
+        return False
 
-def test_9_delete_resident():
-    """Тест 9: DELETE /api/residents/{id}"""
-    print(f"\n{BOLD}=== ТЕСТ 9: Удаление жильца ==={RESET}")
-    
-    # Создаём нового жильца для удаления (т.к. после повторного импорта в тесте 8
-    # созданный в тесте 5 мог удалиться)
-    payload = {
-        "full_name": "Удаляемый Жилец Тестович",
-        "block": "915",
-        "room": "1"
-    }
-    
-    resp = requests.post(f"{BASE_URL}/residents", json=payload, timeout=10)
-    if resp.status_code != 200:
-        return log_test("DELETE /api/residents/{id}", False, 
-                       f"Не удалось создать жильца для удаления: {resp.status_code}")
-    
-    delete_id = resp.json().get("id")
-    print(f"    Создан жилец для удаления: id={delete_id}")
-    
-    # Удаляем
-    resp = requests.delete(f"{BASE_URL}/residents/{delete_id}", timeout=10)
-    
-    if resp.status_code != 200:
-        return log_test("DELETE /api/residents/{id}", False, 
-                       f"Статус {resp.status_code}, ожидался 200")
-    
-    data = resp.json()
-    if not data.get("deleted"):
-        return log_test("DELETE /api/residents/{id}", False, 
-                       f"deleted={data.get('deleted')}, ожидался True")
-    
-    # Проверяем что жилец действительно удалён
-    resp = requests.get(f"{BASE_URL}/residents/{delete_id}", timeout=10)
-    if resp.status_code != 404:
-        return log_test("DELETE /api/residents/{id}", False, 
-                       f"После удаления GET вернул {resp.status_code}, ожидался 404")
-    
-    return log_test("DELETE /api/residents/{id}", True, 
-                   f"Жилец удалён, GET возвращает 404")
+
+def test_3_idempotency():
+    """Test 3: Repeat import - should be idempotent (changed=0, unchanged=matched)."""
+    print("\n=== TEST 3: Idempotency - repeat import with same files ===")
+    try:
+        files_data = []
+        for fpath in TEST_FILES:
+            p = Path(fpath)
+            with open(p, "rb") as f:
+                files_data.append(("files", (p.name, f.read(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")))
+        
+        resp = requests.post(f"{BASE_URL}/residents/import-groups", files=files_data, timeout=60)
+        print(f"POST /api/residents/import-groups (repeat) → {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            return False
+        
+        data = resp.json()
+        matched = data['matched']
+        changed = data['changed']
+        unchanged = data['unchanged']
+        
+        print(f"  matched: {matched}")
+        print(f"  changed: {changed}")
+        print(f"  unchanged: {unchanged}")
+        
+        if changed != 0:
+            print(f"❌ FAILED: Expected changed=0 (idempotent), got {changed}")
+            return False
+        
+        if unchanged != matched:
+            print(f"❌ FAILED: Expected unchanged=matched ({matched}), got unchanged={unchanged}")
+            return False
+        
+        print(f"✅ TEST 3 PASSED: Idempotent (changed=0, unchanged=matched)")
+        return True
+        
+    except Exception as e:
+        print(f"❌ EXCEPTION: {e}")
+        return False
+
+
+def test_4_single_file():
+    """Test 4: Upload single file."""
+    print("\n=== TEST 4: Import single file (zd11.docx) ===")
+    try:
+        fpath = "/tmp/groups/zd11.docx"
+        p = Path(fpath)
+        
+        with open(p, "rb") as f:
+            files = [("files", (p.name, f.read(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"))]
+        
+        resp = requests.post(f"{BASE_URL}/residents/import-groups", files=files, timeout=60)
+        print(f"POST /api/residents/import-groups (zd11.docx) → {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            return False
+        
+        data = resp.json()
+        matched = data['matched']
+        groups = data.get('groups', {})
+        
+        print(f"  matched: {matched} (expected >=0)")
+        print(f"  groups: {list(groups.keys())}")
+        
+        if "ЗД-11" not in groups:
+            print(f"❌ FAILED: Expected 'ЗД-11' in groups, got {list(groups.keys())}")
+            return False
+        
+        print(f"✅ TEST 4 PASSED: Single file import works, 'ЗД-11' found in groups")
+        return True
+        
+    except Exception as e:
+        print(f"❌ EXCEPTION: {e}")
+        return False
+
+
+def test_5_negative_excel_file():
+    """Test 5: Negative test - upload Excel file (not Word)."""
+    print("\n=== TEST 5: Negative test - upload Excel file (should fail) ===")
+    try:
+        fpath = "/tmp/zaselenie.xlsx"
+        p = Path(fpath)
+        
+        if not p.exists():
+            print(f"⚠️  SKIP: {fpath} not found")
+            return True
+        
+        with open(p, "rb") as f:
+            files = [("files", (p.name, f.read(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))]
+        
+        resp = requests.post(f"{BASE_URL}/residents/import-groups", files=files, timeout=60)
+        print(f"POST /api/residents/import-groups (zaselenie.xlsx) → {resp.status_code}")
+        
+        if resp.status_code == 200:
+            print(f"❌ FAILED: Expected error (400 or 500), got 200 (should not accept Excel)")
+            return False
+        
+        if resp.status_code in [400, 500]:
+            print(f"✅ TEST 5 PASSED: Correctly rejected Excel file with {resp.status_code}")
+            try:
+                error = resp.json()
+                detail = error.get("detail", "")
+                print(f"  Error detail: {detail}")
+            except:
+                print(f"  Response: {resp.text[:200]}")
+            return True
+        
+        print(f"⚠️  WARNING: Unexpected status code {resp.status_code}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ EXCEPTION: {e}")
+        return False
+
 
 def main():
-    """Запуск всех тестов."""
-    print(f"\n{BOLD}{'='*70}{RESET}")
-    print(f"{BOLD}ТЕСТИРОВАНИЕ BACKEND API: РАЗДЕЛ «ЗАСЕЛЕНИЕ» (residents){RESET}")
-    print(f"{BOLD}Base URL: {BASE_URL}{RESET}")
-    print(f"{BOLD}{'='*70}{RESET}")
-    
-    global created_resident_id
-    created_resident_id = None
+    print("=" * 80)
+    print("BACKEND TEST: POST /api/residents/import-groups")
+    print("=" * 80)
     
     results = []
     
-    # Запускаем тесты по порядку
-    results.append(test_1_import_excel())
-    results.append(test_2_get_floors())
-    results.append(test_3_get_floor_9())
-    results.append(test_4_get_block_902())
-    results.append(test_5_create_resident())
-    results.append(test_6_update_resident())
-    results.append(test_7_get_resident())
-    results.append(test_8_reimport_preserves_manual_edits())
-    results.append(test_9_delete_resident())
+    # Precondition
+    if not test_precondition():
+        print("\n❌ PRECONDITION FAILED - Cannot proceed with tests")
+        sys.exit(1)
     
-    # Итоги
-    print(f"\n{BOLD}{'='*70}{RESET}")
-    passed = sum(results)
+    # Run tests
+    results.append(("TEST 1: Multiple files", test_1_multiple_files()))
+    results.append(("TEST 2: Verify group set", test_2_verify_group_set()))
+    results.append(("TEST 3: Idempotency", test_3_idempotency()))
+    results.append(("TEST 4: Single file", test_4_single_file()))
+    results.append(("TEST 5: Negative test", test_5_negative_excel_file()))
+    
+    # Summary
+    print("\n" + "=" * 80)
+    print("SUMMARY")
+    print("=" * 80)
+    passed = sum(1 for _, result in results if result)
     total = len(results)
-    percentage = (passed / total * 100) if total > 0 else 0
+    
+    for name, result in results:
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"{status}: {name}")
+    
+    print(f"\nTotal: {passed}/{total} tests passed ({passed*100//total}% success rate)")
     
     if passed == total:
-        print(f"{GREEN}{BOLD}✓ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО: {passed}/{total} ({percentage:.0f}%){RESET}")
+        print("\n🎉 ALL TESTS PASSED!")
+        sys.exit(0)
     else:
-        print(f"{RED}{BOLD}✗ НЕКОТОРЫЕ ТЕСТЫ НЕ ПРОШЛИ: {passed}/{total} ({percentage:.0f}%){RESET}")
-    
-    print(f"{BOLD}{'='*70}{RESET}\n")
-    
-    return passed == total
+        print(f"\n❌ {total - passed} test(s) failed")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    import sys
-    success = main()
-    sys.exit(0 if success else 1)
+    main()

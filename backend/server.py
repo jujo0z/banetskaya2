@@ -2105,6 +2105,66 @@ async def residents_import(file: UploadFile = File(...)):
     return {"imported": len(docs)}
 
 
+@api_router.post("/residents/import-groups")
+async def residents_import_groups(files: List[UploadFile] = File(...)):
+    """Загрузка Word-списков групп. Проставляет учебную группу жильцам по ФИО.
+    Можно загрузить сразу несколько файлов. Не найденные в заселении — в отчёте."""
+    pairs = []
+    parsed_files = []
+    for f in files:
+        content = await f.read()
+        try:
+            fp = ressvc.parse_group_lists_docx(content)
+        except Exception as e:
+            logger.exception("group list parse failed")
+            raise HTTPException(status_code=400,
+                                detail=f"Не удалось разобрать «{f.filename}»: {e}")
+        parsed_files.append({"file": f.filename, "names": len(fp)})
+        pairs.extend(fp)
+    if not pairs:
+        raise HTTPException(status_code=400,
+                            detail="В файлах не найдено списков групп (ожидается строка «ГРУППА ...» и ФИО под ней).")
+
+    name_group = {}
+    for fio, g in pairs:
+        name_group[ressvc.normalize_name(fio)] = g
+
+    residents = await db.residents.find(
+        {}, {"_id": 0, "id": 1, "full_name": 1, "study_group": 1}).to_list(100000)
+    res_norms = {ressvc.normalize_name(r["full_name"]) for r in residents}
+
+    now = datetime.now(timezone.utc).isoformat()
+    matched = changed = unchanged = 0
+    groups_applied = {}
+    for r in residents:
+        nn = ressvc.normalize_name(r["full_name"])
+        g = name_group.get(nn)
+        if not g:
+            continue
+        matched += 1
+        groups_applied[g] = groups_applied.get(g, 0) + 1
+        if (r.get("study_group") or "") != g:
+            await db.residents.update_one(
+                {"id": r["id"]}, {"$set": {"study_group": g, "updated_at": now}})
+            changed += 1
+        else:
+            unchanged += 1
+
+    not_found = sorted({fio for fio, _ in pairs
+                        if ressvc.normalize_name(fio) not in res_norms})
+    return {
+        "files": parsed_files,
+        "total_names": len(pairs),
+        "groups_in_files": len({g for _, g in pairs}),
+        "matched": matched,
+        "changed": changed,
+        "unchanged": unchanged,
+        "not_found_count": len(not_found),
+        "not_found": not_found[:300],
+        "groups": dict(sorted(groups_applied.items())),
+    }
+
+
 @api_router.get("/residents/floors")
 async def residents_floors():
     docs = await db.residents.find({}, {"_id": 0, "floor": 1, "block": 1}).to_list(100000)

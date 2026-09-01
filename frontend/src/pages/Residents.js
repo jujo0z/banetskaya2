@@ -4,6 +4,7 @@ import {
   residentsFloor,
   residentsBlock,
   residentsImport,
+  residentsImportGroups,
   residentUpdate,
   residentCreate,
   residentDelete,
@@ -31,6 +32,8 @@ import {
   UserPlus,
   X,
   BadgeCheck,
+  ListChecks,
+  GraduationCap,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -56,8 +59,11 @@ export default function Residents() {
   const [blockOpen, setBlockOpen] = useState(false);
   const [loadingBlock, setLoadingBlock] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importingGroups, setImportingGroups] = useState(false);
+  const [groupReport, setGroupReport] = useState(null);
   const [editing, setEditing] = useState(null); // resident being edited (or new)
   const fileRef = useRef(null);
+  const groupFileRef = useRef(null);
 
   const loadFloors = useCallback(async () => {
     try {
@@ -129,6 +135,23 @@ export default function Residents() {
     }
   };
 
+  const handleGroupFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setImportingGroups(true);
+    try {
+      const res = await residentsImportGroups(files);
+      setGroupReport(res);
+      toast.success(`Группы проставлены: ${res.changed} чел. (совпало ${res.matched})`);
+      await refreshAll();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Ошибка загрузки списков групп");
+    } finally {
+      setImportingGroups(false);
+      if (groupFileRef.current) groupFileRef.current.value = "";
+    }
+  };
+
   const saveResident = async (form) => {
     try {
       if (form.id) {
@@ -182,6 +205,24 @@ export default function Residents() {
             onChange={handleImportFile}
             data-testid="residents-import-input"
           />
+          <input
+            ref={groupFileRef}
+            type="file"
+            accept=".docx"
+            multiple
+            className="hidden"
+            onChange={handleGroupFiles}
+            data-testid="groups-import-input"
+          />
+          <Button
+            variant="outline"
+            onClick={() => groupFileRef.current?.click()}
+            disabled={importingGroups || total === 0}
+            data-testid="groups-import-btn"
+          >
+            <GraduationCap className="h-4 w-4 mr-2" />
+            {importingGroups ? "Загрузка..." : "Загрузить списки групп (Word)"}
+          </Button>
           <Button
             onClick={() => fileRef.current?.click()}
             disabled={importing}
@@ -335,6 +376,78 @@ export default function Residents() {
         onClose={() => setEditing(null)}
         onSave={saveResident}
       />
+
+      {/* Group import report dialog */}
+      <Dialog open={!!groupReport} onOpenChange={(o) => !o && setGroupReport(null)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ListChecks className="h-5 w-5 text-[#EC4899]" /> Отчёт: списки групп
+            </DialogTitle>
+          </DialogHeader>
+          {groupReport && (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <Stat label="Имён в файлах" value={groupReport.total_names} />
+                <Stat label="Групп в файлах" value={groupReport.groups_in_files} />
+                <Stat label="Совпало с заселением" value={groupReport.matched} tone="emerald" />
+                <Stat label="Проставлено групп" value={groupReport.changed} tone="emerald" />
+                <Stat label="Уже были верны" value={groupReport.unchanged} />
+                <Stat label="Не в заселении" value={groupReport.not_found_count} tone="amber" />
+              </div>
+
+              {groupReport.groups && Object.keys(groupReport.groups).length > 0 && (
+                <div>
+                  <div className="text-xs font-mono uppercase tracking-[0.2em] text-slate-400 mb-2">
+                    Проставлено по группам
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(groupReport.groups).map(([g, n]) => (
+                      <span key={g} className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 text-xs">
+                        {g}: {n}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {groupReport.not_found_count > 0 && (
+                <div>
+                  <div className="text-xs font-mono uppercase tracking-[0.2em] text-slate-400 mb-1">
+                    Нет в базе заселения ({groupReport.not_found_count})
+                  </div>
+                  <p className="text-xs text-slate-400 mb-2">
+                    Эти люди есть в списках групп, но пока отсутствуют в заселении — добавятся, когда появятся в базе.
+                  </p>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50 p-2 text-xs text-slate-500 space-y-0.5">
+                    {groupReport.not_found.map((n, i) => (
+                      <div key={i}>{n}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setGroupReport(null)}>Понятно</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }) {
+  const toneCls =
+    tone === "emerald"
+      ? "text-emerald-600"
+      : tone === "amber"
+      ? "text-amber-600"
+      : "text-slate-800";
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white/70 p-3">
+      <div className="text-[11px] text-slate-400">{label}</div>
+      <div className={`text-2xl font-bold font-heading ${toneCls}`}>{value}</div>
     </div>
   );
 }

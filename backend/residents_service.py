@@ -156,3 +156,61 @@ def parse_zaselenie_xlsx(content: bytes):
             best = (len(people), people)
 
     return best[1] if best else []
+
+
+# ---------------------------------------------------------------------------
+# Разбор Word-списков групп: «ГРУППА СД-201» + список ФИО под ней
+# ---------------------------------------------------------------------------
+_GROUP_HEADER_RE = re.compile(r"^\s*группа\s+(.+?)\s*$", re.IGNORECASE)
+
+
+def _looks_like_name(s: str) -> bool:
+    s = (s or "").strip()
+    if len(s) < 3:
+        return False
+    # хотя бы одна кириллическая/латинская буква, не строка-заголовок/номер
+    if not re.search(r"[А-Яа-яЁёA-Za-z]", s):
+        return False
+    if s.isdigit():
+        return False
+    return True
+
+
+def parse_group_lists_docx(content: bytes):
+    """Возвращает список (fio, group) из Word-файла со списками групп.
+
+    Формат: абзац «ГРУППА XXX» задаёт текущую группу, следующие абзацы — ФИО.
+    Учитываются и таблицы (на случай, если списки оформлены таблицей)."""
+    import io
+    from docx import Document
+
+    doc = Document(io.BytesIO(content))
+    pairs = []
+    current = None
+
+    def handle_line(text):
+        nonlocal current
+        t = (text or "").strip()
+        if not t:
+            return
+        m = _GROUP_HEADER_RE.match(t)
+        if m:
+            current = re.sub(r"\s+", " ", m.group(1).strip())
+            return
+        if current and _looks_like_name(t):
+            # убираем ведущую нумерацию "1. ", "12) "
+            t = re.sub(r"^\s*\d+[.)]\s*", "", t).strip()
+            if _looks_like_name(t):
+                pairs.append((t, current))
+
+    for p in doc.paragraphs:
+        handle_line(p.text)
+
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    handle_line(p.text)
+
+    return pairs
+
