@@ -108,6 +108,133 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Заселение по этажам (residents): импорт Excel + CRUD + сверка с базой договоров /api/residents/*"
+    implemented: true
+    working: true
+    file: "residents_service.py, server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: >
+          Новый раздел «Заселение». Эндпоинты (все с префиксом /api):
+          (1) POST /residents/import — загрузка Excel заселения (multipart file). Парсит лист с колонками
+          «Блок» (формат «902/2»), «Ф.И.О», «Статус», «Группа», «Дата заселения», «Номер договора»,
+          «Срок действия», «Примечание». Возвращает {imported:N}. При повторном импорте СОХРАНЯЕТ ранее
+          введённые вручную поля benefit(ЛЬГОТА) и study_group по совпадению ФИО.
+          Для теста файл лежит в /tmp/zaselenie.xlsx (674 жильца, этажи 2-9).
+          (2) GET /residents/floors — сводка {floors:[{floor,people,blocks_present}],total}.
+          (3) GET /residents/floor/{floor} — 15 блоков X01..X15 {blocks:[{block,index,people,rooms}]}.
+          (4) GET /residents/block/{block} — люди по комнатам, у каждого поле checks со сверкой с договором.
+          (5) POST /residents — создать (body: full_name обязателен, block/room и др.). floor вычисляется из block.
+          (6) PATCH /residents/{id} — частичное обновление ЛЮБЫХ полей (имя, блок, комната, статус, группа,
+          льгота, договор, даты, примечание). При смене block пересчитывается floor.
+          (7) DELETE /residents/{id}.
+          СВЕРКА С ДОГОВОРАМИ (checks): по ФИО ищется договор в коллекции contracts (не изменяется!).
+          checks={has_contract,no_contract,room_mismatch,contract_room,contract_number,mismatches:[{field,label,accommodation,contract}]}.
+          room_mismatch=true если комната в заселении ≠ master.room_number в договоре. Если договор не найден -> mismatch «Договор».
+          Для проверки подсветки в БД засеяны 2 тестовых договора (demo:true): «Мороз Иван Дмитриевич» комн 902/2 (совпадает),
+          «Чумаков Иван Сергеевич» комн 905/4 (НЕ совпадает с заселением 902/2).
+          Чек-лист: импорт возвращает 674; floors содержит этажи 2-9; floor/9 отдаёт 15 блоков; block/902 -> Мороз без mismatch,
+          Чумаков с room_mismatch=true; PATCH льготы/группы сохраняется; повторный импорт не затирает вручную введённую льготу;
+          POST создаёт жильца с корректным floor; DELETE удаляет.
+        -working: true
+        -agent: "testing"
+        -comment: >
+          ✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (9/9, 100% success rate). РАЗДЕЛ «ЗАСЕЛЕНИЕ» ПОЛНОСТЬЮ РАБОТАЕТ.
+          
+          ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+          
+          ✅ ТЕСТ 1: POST /api/residents/import с файлом /tmp/zaselenie.xlsx
+             → 200, {imported:674} — импортировано РОВНО 674 жильца (ожидалось ~674) ✓
+          
+          ✅ ТЕСТ 2: GET /api/residents/floors
+             → 200, {floors:[...], total:674}
+             → Этажи 2-9 присутствуют (все 8 этажей) ✓
+             → У каждого этажа people > 0 ✓
+             → total=674 (> 600 требование выполнено) ✓
+          
+          ✅ ТЕСТ 3: GET /api/residents/floor/9
+             → 200, {floor:9, blocks:[...], total:...}
+             → Получено РОВНО 15 блоков (901-915) ✓
+             → Блок 901 присутствует ✓
+             → Каждый блок содержит поля: block, index, people, rooms ✓
+          
+          ✅ ТЕСТ 4: GET /api/residents/block/902 (КРИТИЧЕСКИЙ ТЕСТ СВЕРКИ С ДОГОВОРАМИ)
+             → 200, {block:'902', floor:9, rooms:[...]}
+             → Структура ответа корректна (block, floor, rooms) ✓
+             → block='902', floor=9 ✓
+             
+             ПРОВЕРКА СВЕРКИ С ДОГОВОРАМИ:
+             
+             • Мороз Иван Дмитриевич (комната 902/2 СОВПАДАЕТ с договором):
+               - checks.has_contract = true ✓
+               - checks.room_mismatch = false ✓
+               - checks.mismatches = [] (пустой массив) ✓
+               → БЕЗ НЕСОВПАДЕНИЙ (ожидаемое поведение) ✓
+             
+             • Чумаков Иван Сергеевич (комната в заселении 902/2, в договоре 905/4 — НЕ СОВПАДАЕТ):
+               - checks.has_contract = true ✓
+               - checks.room_mismatch = true ✓
+               - checks.mismatches содержит mismatch с field='room' ✓
+               - mismatch.accommodation содержит '902/2' (заселение) ✓
+               - mismatch.contract содержит '905/4' (договор) ✓
+               → НЕСОВПАДЕНИЕ КОМНАТЫ ОБНАРУЖЕНО (ожидаемое поведение) ✓
+             
+             • Люди без договора:
+               - checks.no_contract = true ✓
+               - checks.mismatches содержит mismatch с field='contract' ✓
+               → ОТСУТСТВИЕ ДОГОВОРА ОБНАРУЖЕНО (ожидаемое поведение) ✓
+          
+          ✅ ТЕСТ 5: POST /api/residents (создание нового жильца)
+             → 200, {id:'...', full_name:'Тест Тестов Тестович', block:'910', room:'2', benefit:'сирота', study_group:'ТЕСТ-1', floor:9, ...}
+             → floor=9 ВЫЧИСЛЕН КОРРЕКТНО из block='910' (первая цифра блока) ✓
+             → Все поля сохранены корректно ✓
+          
+          ✅ ТЕСТ 6: PATCH /api/residents/{id} (обновление полей)
+             → 200, {benefit:'ЧАЭС', study_group:'НОВ-2', room:'4', ...}
+             → Поля обновлены корректно: benefit='ЧАЭС', study_group='НОВ-2', room='4' ✓
+          
+          ✅ ТЕСТ 7: GET /api/residents/{id} (проверка обновлений)
+             → 200, {benefit:'ЧАЭС', study_group:'НОВ-2', room:'4', full_name:'Тест Тестов Тестович', block:'910', floor:9, ...}
+             → Обновления из теста 6 отражены корректно ✓
+          
+          ✅ ТЕСТ 8: ПОВТОРНЫЙ ИМПОРТ СОХРАНЯЕТ РУЧНЫЕ ПРАВКИ (КРИТИЧЕСКИЙ ТЕСТ МЕРДЖА ПО ФИО)
+             → Шаг 1: Выбран жилец «Мороз Иван Дмитриевич» из блока 902
+             → Шаг 2: PATCH /api/residents/{id} {benefit:'ПРОВЕРКА_ЛЬГОТЫ'} → 200 ✓
+             → Шаг 3: POST /api/residents/import (повторный импорт) → 200, {imported:674} ✓
+             → Шаг 4: GET /api/residents/block/902 → поиск «Мороз Иван Дмитриевич» по ФИО
+             → benefit='ПРОВЕРКА_ЛЬГОТЫ' СОХРАНИЛСЯ после повторного импорта ✓
+             → МЕРДЖ ПО ФИО РАБОТАЕТ КОРРЕКТНО (ручные правки не затираются) ✓
+          
+          ✅ ТЕСТ 9: DELETE /api/residents/{id} (удаление жильца)
+             → Создан новый жилец «Удаляемый Жилец Тестович» (id='...') ✓
+             → DELETE /api/residents/{id} → 200, {deleted:true} ✓
+             → GET /api/residents/{id} → 404 (жилец действительно удалён) ✓
+          
+          ЗАКЛЮЧЕНИЕ:
+          
+          🎉 РАЗДЕЛ «ЗАСЕЛЕНИЕ» ПОЛНОСТЬЮ ФУНКЦИОНАЛЕН:
+          • Импорт Excel заселения (674 жильца, этажи 2-9) работает корректно
+          • Сводка по этажам (GET /residents/floors) возвращает корректные данные
+          • Получение блоков этажа (GET /residents/floor/{floor}) возвращает 15 блоков
+          • Получение жильцов блока (GET /residents/block/{block}) с полной структурой rooms
+          • СВЕРКА С ДОГОВОРАМИ работает корректно:
+            - Мороз (совпадение) → has_contract=true, room_mismatch=false
+            - Чумаков (несовпадение) → has_contract=true, room_mismatch=true, mismatches содержит room
+            - Люди без договора → no_contract=true, mismatches содержит contract
+          • CRUD операции работают корректно:
+            - POST /residents создаёт жильца с корректным floor (вычисляется из block)
+            - PATCH /residents/{id} обновляет любые поля
+            - GET /residents/{id} возвращает актуальные данные
+            - DELETE /residents/{id} удаляет жильца (GET возвращает 404)
+          • ПОВТОРНЫЙ ИМПОРТ СОХРАНЯЕТ РУЧНЫЕ ПРАВКИ (мердж по ФИО работает корректно)
+          • Все backend API полностью функциональны
+          • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+          
+          Раздел «Заселение» готов к использованию.
   - task: "Форма 19 (Адресный листок прибытия): векторная отрисовка + эндпоинты /api/forma19/*"
     implemented: true
     working: true
@@ -1021,18 +1148,27 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "3.2"
-  test_sequence: 17
+  version: "3.3"
+  test_sequence: 18
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Заявление о регистрации по месту жительства: векторная отрисовка + эндпоинты /api/zayavlenie/*"
+    - "Заселение по этажам (residents): импорт Excel + CRUD + сверка с базой договоров /api/residents/*"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "main"
+      message: >
+        (2026-09-01) Новый раздел «Заселение по этажам». Прошу протестировать ТОЛЬКО backend
+        /api/residents/* (задача первая в backend-секции, needs_retesting:true, high). Тестовый Excel:
+        /tmp/zaselenie.xlsx (674 жильца, этажи 2-9). В БД засеяны 2 демо-договора для проверки подсветки:
+        «Мороз Иван Дмитриевич» (902/2, совпадает) и «Чумаков Иван Сергеевич» (договор 905/4 ≠ заселение 902/2).
+        Полный чек-лист — в комментарии задачи. Ключевое: block/902 должен вернуть Мороза без mismatch и
+        Чумакова с room_mismatch=true; повторный импорт не затирает вручную введённую льготу. Фронтенд НЕ
+        тестировать без разрешения пользователя.
     - agent: "main"
       message: >
         (2026-08-27, итерация 2) Бланк «Заявления» стал РЕДАКТИРУЕМЫМ ШАБЛОНОМ (список элементов

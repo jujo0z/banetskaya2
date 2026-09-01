@@ -573,6 +573,40 @@ export async function saveZayavlenieRecords(records) {
 }
 
 
+// ======================= ЗАСЕЛЕНИЕ — распределение по этажам =======================
+export async function residentsImport(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post("/residents/import", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data; // { imported }
+}
+export async function residentsFloors() {
+  const { data } = await api.get("/residents/floors");
+  return data; // { floors:[{floor,people,blocks_present}], total }
+}
+export async function residentsFloor(floor) {
+  const { data } = await api.get(`/residents/floor/${floor}`);
+  return data; // { floor, blocks:[{block,index,people,rooms}], total }
+}
+export async function residentsBlock(block) {
+  const { data } = await api.get(`/residents/block/${block}`);
+  return data; // { block, floor, rooms:[{room, people:[{...,checks}]}], total }
+}
+export async function residentCreate(payload) {
+  const { data } = await api.post("/residents", payload);
+  return data;
+}
+export async function residentUpdate(id, payload) {
+  const { data } = await api.patch(`/residents/${id}`, payload);
+  return data;
+}
+export async function residentDelete(id) {
+  const { data } = await api.delete(`/residents/${id}`);
+  return data;
+}
+
 // ---- Полный пакет документов (договор + Ф19 + Ф24 + сообщение) ----
 export async function openPackagePdf(people, duplexFlip = "long", include = {}) {
   const res = await api.post("/package", { people, duplex_flip: duplexFlip, include }, { responseType: "blob" });

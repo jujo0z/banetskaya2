@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp, FileText, Activity, ClipboardList, Printer } from "lucide-react";
+import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp, FileText, Activity, ClipboardList, Printer, Building2 } from "lucide-react";
 
 const NAV_GROUPS = [
   {
@@ -7,6 +7,7 @@ const NAV_GROUPS = [
     items: [
       { to: "/", end: true, label: "Дашборд", icon: LayoutDashboard, testid: "nav-dashboard" },
       { to: "/package", label: "Полный пакет", icon: Printer, testid: "nav-package" },
+      { to: "/residents", label: "Заселение по этажам", icon: Building2, testid: "nav-residents" },
     ],
   },
   {

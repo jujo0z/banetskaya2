@@ -14,6 +14,7 @@ import Forma19 from "@/pages/Forma19";
 import Forma24 from "@/pages/Forma24";
 import Zayavlenie from "@/pages/Zayavlenie";
 import Package from "@/pages/Package";
+import Residents from "@/pages/Residents";
 import Landing from "@/pages/Landing";
 import { IS_WEB, IS_DESKTOP } from "@/lib/env";
 
@@ -71,6 +72,7 @@ function App() {
           <Route path="forma24" element={<Forma24 />} />
           <Route path="zayavlenie" element={<Zayavlenie />} />
           <Route path="package" element={<Package />} />
+          <Route path="residents" element={<Residents />} />
           <Route path="diagnostics" element={<Diagnostics />} />
           <Route path="settings" element={<Settings />} />
         </Route>

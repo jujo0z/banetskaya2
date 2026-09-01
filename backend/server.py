@@ -19,6 +19,7 @@ from openpyxl import load_workbook, Workbook
 
 import document_service as docsvc
 import master_data as masterdata
+import residents_service as ressvc
 
 # Sample Excel columns (header -> example value) matching the contract template.
 SAMPLE_COLUMNS = [
@@ -135,6 +136,39 @@ class Preset(BaseModel):
 class PresetRequest(BaseModel):
     name: str
     fields: Dict[str, str]
+
+
+class Resident(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    floor: int = 0
+    block: str = ""            # "902"
+    room: str = ""             # "2"
+    full_name: str = ""
+    status: str = ""
+    study_group: str = ""      # учебная группа (Группа)
+    benefit: str = ""          # ЛЬГОТА
+    contract_number: str = ""
+    move_in_date: str = ""
+    term: str = ""             # срок действия
+    note: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class ResidentRequest(BaseModel):
+    """Частичное создание/обновление жильца."""
+    model_config = ConfigDict(extra="ignore")
+    block: Optional[str] = None
+    room: Optional[str] = None
+    full_name: Optional[str] = None
+    status: Optional[str] = None
+    study_group: Optional[str] = None
+    benefit: Optional[str] = None
+    contract_number: Optional[str] = None
+    move_in_date: Optional[str] = None
+    term: Optional[str] = None
+    note: Optional[str] = None
 
 
 # ---------- Helpers ----------
@@ -1961,6 +1995,204 @@ async def contracts_package(req: ContractsPackageRequest):
     return StreamingResponse(
         io.BytesIO(pdf), media_type="application/pdf",
         headers={"Content-Disposition": "inline; filename=paket_dokumentov.pdf"})
+
+# ============================================================================
+#  РАЗДЕЛ «ЗАСЕЛЕНИЕ» — распределение жильцов по этажам/блокам/комнатам
+# ============================================================================
+
+def _norm_room(s: str) -> str:
+    """'902 / 2' -> '902/2'."""
+    s = (s or "").strip()
+    m = re.match(r"^\s*(\d{3,4})\s*/\s*(\d+)", s)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
+    return s
+
+
+def _contract_room(c: dict) -> str:
+    m = c.get("master") or {}
+    f = c.get("fields") or {}
+    return _norm_room(m.get("room_number") or f.get("room_number") or "")
+
+
+def _contract_num(c: dict) -> str:
+    return (c.get("contract_number")
+            or (c.get("master") or {}).get("contract_number")
+            or (c.get("fields") or {}).get("contract_number") or "").strip()
+
+
+async def _contract_for_name(full_name: str):
+    """Ищем договор по ФИО (нечувствительно к регистру / ё / пробелам)."""
+    norm = ressvc.normalize_name(full_name)
+    if not norm:
+        return None
+    surname = full_name.split()[0] if full_name.split() else full_name
+    esc = re.escape(surname)
+    cands = await db.contracts.find(
+        {"$or": [
+            {"full_name": {"$regex": esc, "$options": "i"}},
+            {"master.fio": {"$regex": esc, "$options": "i"}},
+        ]},
+        {"_id": 0},
+    ).to_list(80)
+    for c in cands:
+        names = [c.get("full_name", ""), (c.get("master") or {}).get("fio", "")]
+        if norm in [ressvc.normalize_name(n) for n in names if n]:
+            return c
+    return None
+
+
+async def _resident_checks(res: dict) -> dict:
+    """Сверка жильца с базой договоров. Договоры не меняем — только подсвечиваем."""
+    room = f"{res.get('block','')}/{res.get('room','')}" if res.get("room") else res.get("block", "")
+    checks = {"has_contract": False, "room_mismatch": False,
+              "no_contract": True, "contract_room": "", "contract_number": "",
+              "mismatches": []}
+    c = await _contract_for_name(res.get("full_name", ""))
+    if not c:
+        checks["mismatches"].append({
+            "field": "contract", "label": "Договор",
+            "accommodation": "есть в заселении", "contract": "договор не найден"})
+        return checks
+    checks["has_contract"] = True
+    checks["no_contract"] = False
+    croom = _contract_room(c)
+    cnum = _contract_num(c)
+    checks["contract_room"] = croom
+    checks["contract_number"] = cnum
+    if croom and _norm_room(room) != croom:
+        checks["room_mismatch"] = True
+        checks["mismatches"].append({
+            "field": "room", "label": "Комната",
+            "accommodation": room, "contract": croom})
+    rnum = str(res.get("contract_number") or "").strip()
+    if rnum and cnum and rnum != cnum:
+        checks["mismatches"].append({
+            "field": "contract_number", "label": "Номер договора",
+            "accommodation": rnum, "contract": cnum})
+    return checks
+
+
+@api_router.post("/residents/import")
+async def residents_import(file: UploadFile = File(...)):
+    """Импорт Excel заселения. Сохраняет уже введённые вручную ЛЬГОТА/Группа."""
+    content = await file.read()
+    try:
+        parsed = ressvc.parse_zaselenie_xlsx(content)
+    except Exception as e:
+        logger.exception("residents import parse failed")
+        raise HTTPException(status_code=400, detail=f"Не удалось разобрать файл: {e}")
+    if not parsed:
+        raise HTTPException(status_code=400,
+                            detail="В файле не найдено ни одного жильца (проверьте лист с колонками «Блок», «Ф.И.О»).")
+    # сохраняем ручные правки по совпадению ФИО
+    existing = await db.residents.find({}, {"_id": 0}).to_list(100000)
+    prev = {}
+    for e in existing:
+        prev[ressvc.normalize_name(e.get("full_name", ""))] = e
+    docs = []
+    for p in parsed:
+        old = prev.get(ressvc.normalize_name(p["full_name"]))
+        if old:
+            if not p.get("benefit"):
+                p["benefit"] = old.get("benefit", "")
+            if not p.get("study_group"):
+                p["study_group"] = old.get("study_group", "")
+        docs.append(Resident(**p).model_dump())
+    await db.residents.delete_many({})
+    if docs:
+        await db.residents.insert_many(docs)
+    return {"imported": len(docs)}
+
+
+@api_router.get("/residents/floors")
+async def residents_floors():
+    docs = await db.residents.find({}, {"_id": 0, "floor": 1, "block": 1}).to_list(100000)
+    floors = {}
+    for d in docs:
+        f = d.get("floor", 0)
+        floors.setdefault(f, {"floor": f, "people": 0, "blocks": set()})
+        floors[f]["people"] += 1
+        if d.get("block"):
+            floors[f]["blocks"].add(d["block"])
+    out = [{"floor": f, "people": v["people"], "blocks_present": len(v["blocks"])}
+           for f, v in sorted(floors.items())]
+    return {"floors": out, "total": len(docs)}
+
+
+@api_router.get("/residents/floor/{floor}")
+async def residents_floor(floor: int):
+    docs = await db.residents.find({"floor": floor}, {"_id": 0}).to_list(100000)
+    by_block = {}
+    for d in docs:
+        by_block.setdefault(d.get("block", ""), []).append(d)
+    blocks = []
+    for i in range(1, 16):
+        block = f"{floor}{i:02d}"
+        ppl = by_block.get(block, [])
+        rooms = sorted({p.get("room", "") for p in ppl if p.get("room")})
+        blocks.append({"block": block, "index": i, "people": len(ppl), "rooms": rooms})
+    return {"floor": floor, "blocks": blocks, "total": len(docs)}
+
+
+@api_router.get("/residents/block/{block}")
+async def residents_block(block: str):
+    floor = ressvc._floor_of(block)
+    docs = await db.residents.find({"block": block}, {"_id": 0}).to_list(1000)
+    docs.sort(key=lambda d: (d.get("room", ""), d.get("full_name", "")))
+    rooms = {}
+    for d in docs:
+        d["checks"] = await _resident_checks(d)
+        rooms.setdefault(d.get("room", ""), []).append(d)
+    out = [{"room": r, "people": rooms[r]} for r in sorted(rooms.keys())]
+    return {"block": block, "floor": floor, "rooms": out, "total": len(docs)}
+
+
+@api_router.get("/residents/{res_id}")
+async def residents_get(res_id: str):
+    doc = await db.residents.find_one({"id": res_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Жилец не найден")
+    doc["checks"] = await _resident_checks(doc)
+    return doc
+
+
+@api_router.post("/residents")
+async def residents_create(req: ResidentRequest):
+    data = req.model_dump(exclude_none=True)
+    if not data.get("full_name"):
+        raise HTTPException(status_code=400, detail="Укажите ФИО")
+    res = Resident(**data)
+    res.floor = ressvc._floor_of(res.block)
+    await db.residents.insert_one(res.model_dump())
+    doc = await db.residents.find_one({"id": res.id}, {"_id": 0})
+    doc["checks"] = await _resident_checks(doc)
+    return doc
+
+
+@api_router.patch("/residents/{res_id}")
+async def residents_update(res_id: str, req: ResidentRequest):
+    existing = await db.residents.find_one({"id": res_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Жилец не найден")
+    upd = req.model_dump(exclude_none=True)
+    if "block" in upd:
+        upd["floor"] = ressvc._floor_of(upd["block"])
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.residents.update_one({"id": res_id}, {"$set": upd})
+    doc = await db.residents.find_one({"id": res_id}, {"_id": 0})
+    doc["checks"] = await _resident_checks(doc)
+    return doc
+
+
+@api_router.delete("/residents/{res_id}")
+async def residents_delete(res_id: str):
+    res = await db.residents.delete_one({"id": res_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Жилец не найден")
+    return {"deleted": True}
+
+
 
 
 app.include_router(api_router)
