@@ -511,6 +511,20 @@ export async function downloadForma24Pdf(records, duplexFlip = "long") {
   downloadBlob(res.data, "forma24.pdf");
 }
 
+// ---- Редактируемые шаблоны Форм 19/24 (как в «Заявлении») ----
+export async function getFormaTemplate(which) {
+  const { data } = await api.get(`/forma${which}/template`);
+  return data; // {template, slots, is_custom, page_count, page_w_mm, page_h_mm}
+}
+export async function saveFormaTemplate(which, template) {
+  const { data } = await api.post(`/forma${which}/template`, { template });
+  return data;
+}
+export async function resetFormaTemplate(which) {
+  const { data } = await api.post(`/forma${which}/template/reset`);
+  return data;
+}
+
 // ---- Заявление о регистрации по месту жительства ----
 export async function zayavlenieFields() {
   const { data } = await api.get("/zayavlenie/fields");

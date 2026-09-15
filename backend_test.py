@@ -1,331 +1,461 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for Banetskaya.by - Residents Filtering Endpoints
-Testing TWO new GET endpoints for filtering residents section.
+Backend testing for editable templates feature (Forms 19/24).
+Tests ONLY backend API endpoints.
 """
-
 import requests
+import json
 import sys
-from urllib.parse import quote
+from io import BytesIO
 
-# Base URL from frontend/.env
-BASE_URL = "https://deploy-preview-152.preview.emergentagent.com/api"
+# Get backend URL from frontend/.env
+BACKEND_URL = "https://2cf70c11-bb53-439d-81a9-b5ab7c9fcf41.preview.emergentagent.com/api"
 
-def test_residents_options():
-    """
-    TEST 1: GET /api/residents/options
-    Expected: {groups:[...], benefits:[...]}
-    - groups should be non-empty sorted array (dozens of values like "ЗД-11","ЛД-201","СД-201")
-    - benefits should be array (may be empty as benefits not yet set)
-    - No empty strings/null in groups
-    """
-    print("\n" + "="*80)
-    print("TEST 1: GET /api/residents/options")
-    print("="*80)
+def test_forma19_template_get():
+    """Test 1: GET /api/forma19/template"""
+    print("\n=== TEST 1: GET /api/forma19/template ===")
+    r = requests.get(f"{BACKEND_URL}/forma19/template")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
     
-    url = f"{BASE_URL}/residents/options"
-    response = requests.get(url)
+    # Check required keys
+    assert "template" in data, "Missing 'template' key"
+    assert "slots" in data, "Missing 'slots' key"
+    assert "is_custom" in data, "Missing 'is_custom' key"
+    assert "page_count" in data, "Missing 'page_count' key"
+    assert "page_w_mm" in data, "Missing 'page_w_mm' key"
+    assert "page_h_mm" in data, "Missing 'page_h_mm' key"
     
-    print(f"Status: {response.status_code}")
+    # Check values
+    assert isinstance(data["template"], list), "template should be a list"
+    assert len(data["template"]) > 0, "template should not be empty"
+    assert isinstance(data["slots"], list), "slots should be a list"
+    assert len(data["slots"]) > 0, "slots should not be empty"
+    assert data["is_custom"] == False, f"is_custom should be False initially, got {data['is_custom']}"
+    assert data["page_count"] == 2, f"page_count should be 2, got {data['page_count']}"
+    assert data["page_w_mm"] == 105, f"page_w_mm should be 105, got {data['page_w_mm']}"
+    assert data["page_h_mm"] == 145, f"page_h_mm should be 145, got {data['page_h_mm']}"
     
-    if response.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {response.status_code}")
-        print(f"Response: {response.text}")
-        return False
+    # Check template elements have required types
+    element_types = set()
+    field_count = 0
+    for el in data["template"]:
+        el_type = el.get("type")
+        element_types.add(el_type)
+        if el_type == "field":
+            field_count += 1
     
-    data = response.json()
-    print(f"Response keys: {list(data.keys())}")
+    assert "text" in element_types, "template should have 'text' elements"
+    assert "line" in element_types, "template should have 'line' elements"
+    assert "rect" in element_types, "template should have 'rect' elements"
+    assert "field" in element_types, "template should have 'field' elements"
+    assert field_count > 10, f"template should have many 'field' elements, got {field_count}"
     
-    # Check structure
-    if "groups" not in data or "benefits" not in data:
-        print(f"❌ FAIL: Missing 'groups' or 'benefits' key")
-        print(f"Response: {data}")
-        return False
+    # Check slots structure
+    for slot in data["slots"]:
+        assert "slot" in slot, "Each slot should have 'slot' key"
+        assert "label" in slot, "Each slot should have 'label' key"
     
-    groups = data["groups"]
-    benefits = data["benefits"]
+    print(f"✅ PASS: template has {len(data['template'])} elements, {field_count} fields")
+    print(f"✅ PASS: slots has {len(data['slots'])} items")
+    print(f"✅ PASS: is_custom={data['is_custom']}, page_count={data['page_count']}, dimensions={data['page_w_mm']}×{data['page_h_mm']} mm")
     
-    print(f"Groups count: {len(groups)}")
-    print(f"Benefits count: {len(benefits)}")
-    
-    # Check groups is non-empty
-    if not groups:
-        print(f"❌ FAIL: groups array is empty (expected dozens of values)")
-        return False
-    
-    # Check no empty strings/null in groups
-    for g in groups:
-        if not g or not str(g).strip():
-            print(f"❌ FAIL: Found empty/null value in groups: {repr(g)}")
-            return False
-    
-    # Check groups is sorted
-    if groups != sorted(groups):
-        print(f"❌ FAIL: groups array is not sorted")
-        print(f"Expected: {sorted(groups)[:5]}...")
-        print(f"Got: {groups[:5]}...")
-        return False
-    
-    # Show sample groups
-    print(f"Sample groups (first 10): {groups[:10]}")
-    print(f"Sample benefits: {benefits}")
-    
-    print(f"✅ PASS: /api/residents/options returns valid structure")
-    print(f"   - groups: {len(groups)} values, sorted, no empty strings")
-    print(f"   - benefits: {len(benefits)} values")
-    
-    return True, groups
+    return data["template"]
 
 
-def test_residents_filter_by_group(group_name, expected_min_total=0):
-    """
-    TEST 2-4: GET /api/residents/filter?group=<group_name>
-    Expected: {residents:[...], total}
-    - total > 0 for existing groups
-    - Each resident has: floor, block, room, full_name, study_group, checks
-    - List sorted by floor, block, room
-    - All residents have study_group == group_name
-    """
-    print("\n" + "="*80)
-    print(f"TEST: GET /api/residents/filter?group={group_name}")
-    print("="*80)
+def test_forma24_template_get():
+    """Test 2: GET /api/forma24/template"""
+    print("\n=== TEST 2: GET /api/forma24/template ===")
+    r = requests.get(f"{BACKEND_URL}/forma24/template")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
     
-    url = f"{BASE_URL}/residents/filter?group={quote(group_name)}"
-    response = requests.get(url)
+    # Check required keys
+    assert "template" in data, "Missing 'template' key"
+    assert "slots" in data, "Missing 'slots' key"
+    assert "is_custom" in data, "Missing 'is_custom' key"
+    assert data["is_custom"] == False, f"is_custom should be False initially, got {data['is_custom']}"
     
-    print(f"Status: {response.status_code}")
+    # Check template is non-empty
+    assert isinstance(data["template"], list), "template should be a list"
+    assert len(data["template"]) > 0, "template should not be empty"
     
-    if response.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {response.status_code}")
-        print(f"Response: {response.text}")
-        return False
+    field_count = sum(1 for el in data["template"] if el.get("type") == "field")
     
-    data = response.json()
-    print(f"Response keys: {list(data.keys())}")
+    print(f"✅ PASS: template has {len(data['template'])} elements, {field_count} fields")
+    print(f"✅ PASS: is_custom={data['is_custom']}")
     
-    # Check structure
-    if "residents" not in data or "total" not in data:
-        print(f"❌ FAIL: Missing 'residents' or 'total' key")
-        print(f"Response: {data}")
-        return False
-    
-    residents = data["residents"]
-    total = data["total"]
-    
-    print(f"Total: {total}")
-    print(f"Residents count: {len(residents)}")
-    
-    # Check total matches length
-    if total != len(residents):
-        print(f"❌ FAIL: total ({total}) != len(residents) ({len(residents)})")
-        return False
-    
-    # Check expected minimum
-    if expected_min_total > 0 and total < expected_min_total:
-        print(f"⚠️  WARNING: Expected total >= {expected_min_total}, got {total}")
-    
-    if total == 0:
-        print(f"✅ PASS: Empty result for non-existent group (expected)")
-        return True
-    
-    # Check first resident structure
-    if residents:
-        r = residents[0]
-        required_fields = ["floor", "block", "room", "full_name", "study_group", "checks"]
-        missing = [f for f in required_fields if f not in r]
-        if missing:
-            print(f"❌ FAIL: Missing fields in resident: {missing}")
-            print(f"Resident: {r}")
-            return False
-        
-        print(f"Sample resident fields: {list(r.keys())}")
-        print(f"Sample resident: {r['full_name']}, floor={r['floor']}, block={r['block']}, room={r['room']}, study_group={r['study_group']}")
-    
-    # Check all residents have correct study_group
-    wrong_group = [r for r in residents if r.get("study_group") != group_name]
-    if wrong_group:
-        print(f"❌ FAIL: Found {len(wrong_group)} residents with wrong study_group")
-        print(f"Expected: {group_name}")
-        print(f"Sample wrong: {wrong_group[0]}")
-        return False
-    
-    # Check sorting (floor, block, room)
-    prev_floor = -1
-    prev_block = ""
-    prev_room = ""
-    for r in residents:
-        floor = r.get("floor", 0)
-        block = r.get("block", "")
-        room = r.get("room", "")
-        
-        if floor < prev_floor:
-            print(f"❌ FAIL: Not sorted by floor: {prev_floor} -> {floor}")
-            return False
-        if floor == prev_floor and block < prev_block:
-            print(f"❌ FAIL: Not sorted by block: {prev_block} -> {block}")
-            return False
-        if floor == prev_floor and block == prev_block and room < prev_room:
-            print(f"❌ FAIL: Not sorted by room: {prev_room} -> {room}")
-            return False
-        
-        prev_floor = floor
-        prev_block = block
-        prev_room = room
-    
-    print(f"✅ PASS: /api/residents/filter?group={group_name}")
-    print(f"   - total: {total}")
-    print(f"   - All residents have study_group='{group_name}'")
-    print(f"   - Sorted by floor, block, room")
-    print(f"   - All required fields present")
-    
-    return True
+    return data["template"]
 
 
-def test_residents_filter_nonexistent():
-    """
-    TEST 5: GET /api/residents/filter?group=НЕСУЩЕСТВУЮЩАЯ-999
-    Expected: total==0, residents==[] (not error)
-    """
-    print("\n" + "="*80)
-    print("TEST 5: GET /api/residents/filter?group=НЕСУЩЕСТВУЮЩАЯ-999")
-    print("="*80)
+def test_forma19_template_save(original_template):
+    """Test 3: POST /api/forma19/template (modify and save)"""
+    print("\n=== TEST 3: POST /api/forma19/template (save custom) ===")
     
-    url = f"{BASE_URL}/residents/filter?group={quote('НЕСУЩЕСТВУЮЩАЯ-999')}"
-    response = requests.get(url)
+    # Modify one text element
+    modified_template = []
+    modified = False
+    for el in original_template:
+        el_copy = dict(el)
+        if not modified and el.get("type") == "text":
+            # Add " ТЕСТ" to the text
+            el_copy["text"] = el.get("text", "") + " ТЕСТ"
+            modified = True
+            print(f"Modified element: {el.get('text', '')} -> {el_copy['text']}")
+        modified_template.append(el_copy)
     
-    print(f"Status: {response.status_code}")
+    assert modified, "Should have modified at least one text element"
     
-    if response.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {response.status_code}")
-        print(f"Response: {response.text}")
-        return False
+    # Save the modified template
+    r = requests.post(f"{BACKEND_URL}/forma19/template", 
+                     json={"template": modified_template})
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
     
-    data = response.json()
+    assert "saved" in data, "Missing 'saved' key"
+    assert data["saved"] == True, f"saved should be True, got {data['saved']}"
+    assert "count" in data, "Missing 'count' key"
+    assert data["count"] == len(modified_template), f"count should be {len(modified_template)}, got {data['count']}"
     
-    if data.get("total") != 0:
-        print(f"❌ FAIL: Expected total=0, got {data.get('total')}")
-        return False
+    print(f"✅ PASS: saved={data['saved']}, count={data['count']}")
     
-    if data.get("residents") != []:
-        print(f"❌ FAIL: Expected residents=[], got {data.get('residents')}")
-        return False
+    # Verify the change persisted
+    print("\n=== TEST 3b: Verify custom template persisted ===")
+    r = requests.get(f"{BACKEND_URL}/forma19/template")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
     
-    print(f"✅ PASS: Empty result for non-existent group (total=0, residents=[])")
-    return True
+    assert data["is_custom"] == True, f"is_custom should be True after save, got {data['is_custom']}"
+    
+    # Find the modified element
+    found_modification = False
+    for el in data["template"]:
+        if el.get("type") == "text" and " ТЕСТ" in el.get("text", ""):
+            found_modification = True
+            print(f"Found modified element: {el.get('text')}")
+            break
+    
+    assert found_modification, "Modified text element not found in saved template"
+    
+    print(f"✅ PASS: is_custom={data['is_custom']}, modification present")
 
 
-def test_residents_options_not_captured_by_id_route():
-    """
-    TEST 6: Verify /api/residents/options is NOT captured by /api/residents/{res_id}
-    Should return groups/benefits structure, not 404 "Жилец не найден"
-    """
-    print("\n" + "="*80)
-    print("TEST 6: Verify /api/residents/options NOT captured by /{res_id} route")
-    print("="*80)
+def test_forma19_preview():
+    """Test 4: POST /api/forma19/preview (PDF generation)"""
+    print("\n=== TEST 4: POST /api/forma19/preview ===")
     
-    url = f"{BASE_URL}/residents/options"
-    response = requests.get(url)
+    payload = {
+        "records": [
+            {
+                "surname": "Иванов",
+                "first_name": "Иван",
+                "birth_year": "2005",
+                "citizenship": "РБ"
+            }
+        ],
+        "duplex_flip": "long"
+    }
     
-    print(f"Status: {response.status_code}")
+    r = requests.post(f"{BACKEND_URL}/forma19/preview", json=payload)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    assert r.headers.get("Content-Type") == "application/pdf", \
+        f"Expected application/pdf, got {r.headers.get('Content-Type')}"
     
-    if response.status_code == 404:
-        print(f"❌ FAIL: Got 404, route is captured by /residents/{{res_id}}")
-        print(f"Response: {response.text}")
-        return False
+    pdf_data = r.content
+    assert pdf_data[:4] == b"%PDF", "PDF should start with %PDF signature"
     
-    if response.status_code != 200:
-        print(f"❌ FAIL: Expected 200, got {response.status_code}")
-        return False
+    # Check page count using pymupdf
+    try:
+        import pymupdf
+        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
+        page_count = len(doc)
+        doc.close()
+        assert page_count == 2, f"PDF should have 2 pages (front+back), got {page_count}"
+        print(f"✅ PASS: Valid PDF, {page_count} pages, {len(pdf_data)} bytes")
+    except ImportError:
+        print(f"⚠️  WARNING: pymupdf not available, skipping page count check")
+        print(f"✅ PASS: Valid PDF, {len(pdf_data)} bytes")
+
+
+def test_forma24_preview():
+    """Test 4b: POST /api/forma24/preview (PDF generation)"""
+    print("\n=== TEST 4b: POST /api/forma24/preview ===")
     
-    data = response.json()
+    payload = {
+        "records": [
+            {
+                "surname": "Петров",
+                "first_name": "Пётр"
+            }
+        ],
+        "duplex_flip": "long"
+    }
     
-    # Should have groups/benefits, not resident fields
-    if "groups" in data and "benefits" in data:
-        print(f"✅ PASS: /api/residents/options returns correct structure (not captured by /{{res_id}})")
-        return True
-    else:
-        print(f"❌ FAIL: Response doesn't have groups/benefits structure")
-        print(f"Response: {data}")
-        return False
+    r = requests.post(f"{BACKEND_URL}/forma24/preview", json=payload)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    assert r.headers.get("Content-Type") == "application/pdf", \
+        f"Expected application/pdf, got {r.headers.get('Content-Type')}"
+    
+    pdf_data = r.content
+    assert pdf_data[:4] == b"%PDF", "PDF should start with %PDF signature"
+    
+    # Check page count
+    try:
+        import pymupdf
+        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
+        page_count = len(doc)
+        doc.close()
+        assert page_count == 2, f"PDF should have 2 pages (front+back), got {page_count}"
+        print(f"✅ PASS: Valid PDF, {page_count} pages, {len(pdf_data)} bytes")
+    except ImportError:
+        print(f"⚠️  WARNING: pymupdf not available, skipping page count check")
+        print(f"✅ PASS: Valid PDF, {len(pdf_data)} bytes")
+
+
+def test_forma19_preview_png():
+    """Test 5: POST /api/forma19/preview-png (PNG generation)"""
+    print("\n=== TEST 5: POST /api/forma19/preview-png ===")
+    
+    payload = {
+        "records": [
+            {
+                "surname": "Тестов",
+                "first_name": "Тест"
+            }
+        ],
+        "side": "front"
+    }
+    
+    # Test front side
+    r = requests.post(f"{BACKEND_URL}/forma19/preview-png", json=payload)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    assert r.headers.get("Content-Type") == "image/png", \
+        f"Expected image/png, got {r.headers.get('Content-Type')}"
+    
+    png_data = r.content
+    assert png_data[:4] == b"\x89PNG", "PNG should start with PNG signature"
+    print(f"✅ PASS: Valid PNG (front), {len(png_data)} bytes")
+    
+    # Test back side
+    payload["side"] = "back"
+    r = requests.post(f"{BACKEND_URL}/forma19/preview-png", json=payload)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    assert r.headers.get("Content-Type") == "image/png", \
+        f"Expected image/png, got {r.headers.get('Content-Type')}"
+    
+    png_data_back = r.content
+    assert png_data_back[:4] == b"\x89PNG", "PNG should start with PNG signature"
+    print(f"✅ PASS: Valid PNG (back), {len(png_data_back)} bytes")
+
+
+def test_package():
+    """Test 6: POST /api/package (combined package)"""
+    print("\n=== TEST 6: POST /api/package ===")
+    
+    payload = {
+        "people": [
+            {
+                "ФИО": "Иванов Иван Иванович",
+                "Номер комнаты": "902/2"
+            }
+        ],
+        "duplex_flip": "long",
+        "include": {
+            "forma19": True,
+            "forma24": True,
+            "contract": False,
+            "soobshenie": False,
+            "zayavlenie": False
+        }
+    }
+    
+    r = requests.post(f"{BACKEND_URL}/package", json=payload)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    assert r.headers.get("Content-Type") == "application/pdf", \
+        f"Expected application/pdf, got {r.headers.get('Content-Type')}"
+    
+    pdf_data = r.content
+    assert pdf_data[:4] == b"%PDF", "PDF should start with %PDF signature"
+    
+    # Check it's a valid PDF
+    try:
+        import pymupdf
+        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
+        page_count = len(doc)
+        doc.close()
+        print(f"✅ PASS: Valid combined PDF (F19+F24), {page_count} pages, {len(pdf_data)} bytes")
+    except ImportError:
+        print(f"✅ PASS: Valid combined PDF (F19+F24), {len(pdf_data)} bytes")
+
+
+def test_forma24_template_save():
+    """Test 7: POST /api/forma24/template (save default as-is)"""
+    print("\n=== TEST 7: POST /api/forma24/template (save default) ===")
+    
+    # Get default template
+    r = requests.get(f"{BACKEND_URL}/forma24/template")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    template = data["template"]
+    
+    # Save it as-is
+    r = requests.post(f"{BACKEND_URL}/forma24/template", 
+                     json={"template": template})
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    result = r.json()
+    
+    assert result["saved"] == True, f"saved should be True, got {result['saved']}"
+    print(f"✅ PASS: saved={result['saved']}, count={result['count']}")
+    
+    # Verify is_custom is now True
+    r = requests.get(f"{BACKEND_URL}/forma24/template")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    assert data["is_custom"] == True, f"is_custom should be True after save, got {data['is_custom']}"
+    print(f"✅ PASS: is_custom={data['is_custom']}")
+
+
+def test_regression_fields():
+    """Test 8: Regression - GET /api/forma19/fields and /api/forma24/fields"""
+    print("\n=== TEST 8: REGRESSION - GET /api/forma19/fields ===")
+    
+    r = requests.get(f"{BACKEND_URL}/forma19/fields")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    
+    assert "groups" in data, "Missing 'groups' key"
+    assert "keys" in data, "Missing 'keys' key"
+    assert isinstance(data["groups"], list), "groups should be a list"
+    assert isinstance(data["keys"], list), "keys should be a list"
+    print(f"✅ PASS: forma19/fields returns {len(data['groups'])} groups, {len(data['keys'])} keys")
+    
+    print("\n=== TEST 8b: REGRESSION - GET /api/forma24/fields ===")
+    r = requests.get(f"{BACKEND_URL}/forma24/fields")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    
+    assert "groups" in data, "Missing 'groups' key"
+    assert "keys" in data, "Missing 'keys' key"
+    print(f"✅ PASS: forma24/fields returns {len(data['groups'])} groups, {len(data['keys'])} keys")
+
+
+def test_regression_prefill():
+    """Test 8c: Regression - POST /api/forma19/prefill"""
+    print("\n=== TEST 8c: REGRESSION - POST /api/forma19/prefill ===")
+    
+    payload = {
+        "students": [
+            {
+                "full_name": "Иванов Иван Иванович",
+                "birth_date": "01.01.2005",
+                "passport_number": "AB1234567"
+            }
+        ]
+    }
+    
+    r = requests.post(f"{BACKEND_URL}/forma19/prefill", json=payload)
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    
+    assert "records" in data, "Missing 'records' key"
+    assert len(data["records"]) > 0, "records should not be empty"
+    
+    rec = data["records"][0]
+    assert rec.get("surname") == "Иванов", f"surname should be 'Иванов', got {rec.get('surname')}"
+    assert rec.get("first_name") == "Иван", f"first_name should be 'Иван', got {rec.get('first_name')}"
+    assert rec.get("patronymic") == "Иванович", f"patronymic should be 'Иванович', got {rec.get('patronymic')}"
+    
+    print(f"✅ PASS: prefill works correctly, parsed ФИО: {rec.get('surname')} {rec.get('first_name')} {rec.get('patronymic')}")
+
+
+def test_forma19_template_reset():
+    """Test 9: POST /api/forma19/template/reset (CRITICAL - restore defaults)"""
+    print("\n=== TEST 9: POST /api/forma19/template/reset (CRITICAL) ===")
+    
+    r = requests.post(f"{BACKEND_URL}/forma19/template/reset")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    
+    assert "reset" in data, "Missing 'reset' key"
+    assert data["reset"] == True, f"reset should be True, got {data['reset']}"
+    print(f"✅ PASS: reset={data['reset']}")
+    
+    # Verify is_custom is now False
+    r = requests.get(f"{BACKEND_URL}/forma19/template")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    assert data["is_custom"] == False, f"is_custom should be False after reset, got {data['is_custom']}"
+    print(f"✅ PASS: is_custom={data['is_custom']} (default restored)")
+
+
+def test_forma24_template_reset():
+    """Test 9b: POST /api/forma24/template/reset (CRITICAL - restore defaults)"""
+    print("\n=== TEST 9b: POST /api/forma24/template/reset (CRITICAL) ===")
+    
+    r = requests.post(f"{BACKEND_URL}/forma24/template/reset")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    
+    assert "reset" in data, "Missing 'reset' key"
+    assert data["reset"] == True, f"reset should be True, got {data['reset']}"
+    print(f"✅ PASS: reset={data['reset']}")
+    
+    # Verify is_custom is now False
+    r = requests.get(f"{BACKEND_URL}/forma24/template")
+    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    data = r.json()
+    assert data["is_custom"] == False, f"is_custom should be False after reset, got {data['is_custom']}"
+    print(f"✅ PASS: is_custom={data['is_custom']} (default restored)")
 
 
 def main():
-    print("="*80)
-    print("BACKEND API TESTING: Residents Filtering Endpoints")
-    print("Base URL:", BASE_URL)
-    print("="*80)
+    """Run all tests"""
+    print("=" * 80)
+    print("BACKEND TESTING: Editable Templates for Forms 19/24")
+    print("=" * 80)
     
-    results = []
-    
-    # TEST 1: GET /api/residents/options
-    result = test_residents_options()
-    if isinstance(result, tuple):
-        success, groups = result
-        results.append(("TEST 1: GET /api/residents/options", success))
-    else:
-        results.append(("TEST 1: GET /api/residents/options", result))
-        groups = []
-    
-    # TEST 2: GET /api/residents/filter?group=СД-201
-    if groups and "СД-201" in groups:
-        results.append(("TEST 2: GET /api/residents/filter?group=СД-201", 
-                       test_residents_filter_by_group("СД-201", expected_min_total=5)))
-    else:
-        print("\n⚠️  SKIP TEST 2: Group 'СД-201' not found in options")
-        results.append(("TEST 2: GET /api/residents/filter?group=СД-201", None))
-    
-    # TEST 3: GET /api/residents/filter?group=ЗД-21
-    if groups and "ЗД-21" in groups:
-        results.append(("TEST 3: GET /api/residents/filter?group=ЗД-21", 
-                       test_residents_filter_by_group("ЗД-21", expected_min_total=2)))
-    else:
-        print("\n⚠️  SKIP TEST 3: Group 'ЗД-21' not found in options")
-        results.append(("TEST 3: GET /api/residents/filter?group=ЗД-21", None))
-    
-    # TEST 4: Combined filter with any real group
-    if groups:
-        test_group = groups[0]  # Take first group from options
-        results.append((f"TEST 4: GET /api/residents/filter?group={test_group}", 
-                       test_residents_filter_by_group(test_group)))
-    else:
-        print("\n⚠️  SKIP TEST 4: No groups available")
-        results.append(("TEST 4: Combined filter", None))
-    
-    # TEST 5: Empty result for non-existent group
-    results.append(("TEST 5: GET /api/residents/filter?group=НЕСУЩЕСТВУЮЩАЯ-999", 
-                   test_residents_filter_nonexistent()))
-    
-    # TEST 6: Verify /api/residents/options not captured by /{res_id}
-    results.append(("TEST 6: /api/residents/options NOT captured by /{res_id}", 
-                   test_residents_options_not_captured_by_id_route()))
-    
-    # Summary
-    print("\n" + "="*80)
-    print("TEST SUMMARY")
-    print("="*80)
+    tests = [
+        ("GET /api/forma19/template", test_forma19_template_get),
+        ("GET /api/forma24/template", test_forma24_template_get),
+        ("POST /api/forma19/template (save custom)", test_forma19_template_save),
+        ("POST /api/forma19/preview", test_forma19_preview),
+        ("POST /api/forma24/preview", test_forma24_preview),
+        ("POST /api/forma19/preview-png", test_forma19_preview_png),
+        ("POST /api/package", test_package),
+        ("POST /api/forma24/template (save default)", test_forma24_template_save),
+        ("REGRESSION: fields", test_regression_fields),
+        ("REGRESSION: prefill", test_regression_prefill),
+        ("POST /api/forma19/template/reset (CRITICAL)", test_forma19_template_reset),
+        ("POST /api/forma24/template/reset (CRITICAL)", test_forma24_template_reset),
+    ]
     
     passed = 0
     failed = 0
-    skipped = 0
+    original_template = None
     
-    for test_name, result in results:
-        if result is None:
-            status = "⏭️  SKIPPED"
-            skipped += 1
-        elif result:
-            status = "✅ PASS"
+    for name, test_func in tests:
+        try:
+            if test_func == test_forma19_template_save:
+                # Pass original template to this test
+                result = test_func(original_template)
+            elif test_func == test_forma19_template_get:
+                # Save original template for later use
+                original_template = test_func()
+            else:
+                test_func()
             passed += 1
-        else:
-            status = "❌ FAIL"
+        except AssertionError as e:
+            print(f"❌ FAIL: {name}")
+            print(f"   Error: {e}")
             failed += 1
-        print(f"{status}: {test_name}")
+        except Exception as e:
+            print(f"❌ ERROR: {name}")
+            print(f"   Exception: {e}")
+            failed += 1
     
-    print("\n" + "="*80)
-    print(f"Total: {len(results)} tests")
-    print(f"Passed: {passed}")
-    print(f"Failed: {failed}")
-    print(f"Skipped: {skipped}")
-    print("="*80)
+    print("\n" + "=" * 80)
+    print(f"SUMMARY: {passed} passed, {failed} failed out of {passed + failed} tests")
+    print("=" * 80)
     
     if failed > 0:
         sys.exit(1)

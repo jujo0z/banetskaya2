@@ -1585,17 +1585,19 @@ async def forma19_prefill(payload: Forma19Prefill):
     return {"records": out}
 
 
-def _build_forma19_pdf(req: "Forma19Request") -> bytes:
+def _build_forma19_pdf(req: "Forma19Request", template=None) -> bytes:
     return docsvc.build_forma19(
         people=req.records,
         duplex_flip=req.duplex_flip,
+        template=template,
     )
 
 
 @api_router.post("/forma19/preview")
 async def forma19_preview(req: Forma19Request):
     try:
-        data = _build_forma19_pdf(req)
+        tpl = await _forma_template_overrides(19)
+        data = _build_forma19_pdf(req, template=tpl)
     except Exception as e:
         logger.exception("forma19 generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -1611,7 +1613,8 @@ async def forma19_preview_png(req: Forma19Request):
     """Лист как PNG — надёжный предпросмотр. side='front' → стр.1 (лицо),
     side='back' → стр.2 (оборот)."""
     try:
-        pdf = _build_forma19_pdf(req)
+        tpl = await _forma_template_overrides(19)
+        pdf = _build_forma19_pdf(req, template=tpl)
         page_index = 1 if str(req.side or "front").lower() == "back" else 0
         png = docsvc.render_pdf_page_png(pdf, page_index, scale=2.0)
     except Exception as e:
@@ -1655,14 +1658,16 @@ async def forma24_prefill(payload: Forma19Prefill):
     return {"records": [docsvc.forma24_from_contract(s) for s in payload.students]}
 
 
-def _build_forma24_pdf(req: "Forma24Request") -> bytes:
-    return docsvc.build_forma24(people=req.records, duplex_flip=req.duplex_flip)
+def _build_forma24_pdf(req: "Forma24Request", template=None) -> bytes:
+    return docsvc.build_forma24(people=req.records, duplex_flip=req.duplex_flip,
+                                template=template)
 
 
 @api_router.post("/forma24/preview")
 async def forma24_preview(req: Forma24Request):
     try:
-        data = _build_forma24_pdf(req)
+        tpl = await _forma_template_overrides(24)
+        data = _build_forma24_pdf(req, template=tpl)
     except Exception as e:
         logger.exception("forma24 generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -1673,13 +1678,78 @@ async def forma24_preview(req: Forma24Request):
 @api_router.post("/forma24/preview-png")
 async def forma24_preview_png(req: Forma24Request):
     try:
-        pdf = _build_forma24_pdf(req)
+        tpl = await _forma_template_overrides(24)
+        pdf = _build_forma24_pdf(req, template=tpl)
         idx = 1 if str(req.side or "front").lower() == "back" else 0
         png = docsvc.render_pdf_page_png(pdf, idx, scale=2.0)
     except Exception as e:
         logger.exception("forma24 preview failed")
         raise HTTPException(status_code=500, detail=f"Ошибка предпросмотра: {e}")
     return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+
+# ---------- Редактируемые шаблоны Форм 19/24 (как в «Заявлении») ----------
+class FormaTemplate(BaseModel):
+    template: List[Dict[str, Any]] = []
+
+
+@api_router.get("/forma19/template")
+async def forma19_get_template():
+    ov = await _forma_template_overrides(19)
+    return {
+        "template": ov if ov is not None else docsvc.get_forma19_default_template(),
+        "slots": docsvc.forma_slots(19),
+        "is_custom": ov is not None,
+        "page_count": 2,
+        "page_w_mm": docsvc.FORMA19_MM[0],
+        "page_h_mm": docsvc.FORMA19_MM[1],
+    }
+
+
+@api_router.post("/forma19/template")
+async def forma19_save_template(payload: FormaTemplate):
+    await db.app_settings.update_one(
+        {"key": "forma19_template"},
+        {"$set": {"key": "forma19_template", "value": payload.template}},
+        upsert=True,
+    )
+    return {"saved": True, "count": len(payload.template)}
+
+
+@api_router.post("/forma19/template/reset")
+async def forma19_reset_template():
+    await db.app_settings.delete_one({"key": "forma19_template"})
+    return {"reset": True, "template": docsvc.get_forma19_default_template()}
+
+
+@api_router.get("/forma24/template")
+async def forma24_get_template():
+    ov = await _forma_template_overrides(24)
+    return {
+        "template": ov if ov is not None else docsvc.get_forma24_default_template(),
+        "slots": docsvc.forma_slots(24),
+        "is_custom": ov is not None,
+        "page_count": 2,
+        "page_w_mm": docsvc.FORMA19_MM[0],
+        "page_h_mm": docsvc.FORMA19_MM[1],
+    }
+
+
+@api_router.post("/forma24/template")
+async def forma24_save_template(payload: FormaTemplate):
+    await db.app_settings.update_one(
+        {"key": "forma24_template"},
+        {"$set": {"key": "forma24_template", "value": payload.template}},
+        upsert=True,
+    )
+    return {"saved": True, "count": len(payload.template)}
+
+
+@api_router.post("/forma24/template/reset")
+async def forma24_reset_template():
+    await db.app_settings.delete_one({"key": "forma24_template"})
+    return {"reset": True, "template": docsvc.get_forma24_default_template()}
 
 
 
@@ -1712,6 +1782,15 @@ async def _zayav_template_overrides():
     doc = await db.app_settings.find_one({"key": "zayavlenie_template"}, {"_id": 0})
     val = (doc or {}).get("value")
     return val if isinstance(val, list) and val else None
+
+
+async def _forma_template_overrides(which: int):
+    """Кастомный шаблон Формы 19/24 из БД (или None → дефолт)."""
+    key = "forma19_template" if int(which) == 19 else "forma24_template"
+    doc = await db.app_settings.find_one({"key": key}, {"_id": 0})
+    val = (doc or {}).get("value")
+    return val if isinstance(val, list) and val else None
+
 
 
 @api_router.get("/zayavlenie/fields")
@@ -1893,6 +1972,8 @@ async def _build_package_pdf(req: "PackageRequest") -> bytes:
     tpl = await _active_tpl()
     inc = req.include or {}
     _zayav_tpl = await _zayav_template_overrides()
+    _tpl19 = await _forma_template_overrides(19)
+    _tpl24 = await _forma_template_overrides(24)
     parts: List[bytes] = []
     for m in (req.people or []):
         if _pkg_on(inc, "contract"):
@@ -1905,13 +1986,15 @@ async def _build_package_pdf(req: "PackageRequest") -> bytes:
             # обе формы на одном листе (верх — Ф-19, низ — Ф-24), лицо+оборот
             parts.append(docsvc.build_forma_combined(
                 masterdata.master_to_forma19(m), masterdata.master_to_forma24(m),
-                duplex_flip=req.duplex_flip))
+                duplex_flip=req.duplex_flip, tpl19=_tpl19, tpl24=_tpl24))
         elif want19:
             parts.append(docsvc.build_forma19(
-                [masterdata.master_to_forma19(m)], duplex_flip=req.duplex_flip))
+                [masterdata.master_to_forma19(m)], duplex_flip=req.duplex_flip,
+                template=_tpl19))
         elif want24:
             parts.append(docsvc.build_forma24(
-                [masterdata.master_to_forma24(m)], duplex_flip=req.duplex_flip))
+                [masterdata.master_to_forma24(m)], duplex_flip=req.duplex_flip,
+                template=_tpl24))
         if _pkg_on(inc, "soobshenie"):
             parts.append(docsvc.build_overlay(
                 [masterdata.master_to_soobshenie(m)],

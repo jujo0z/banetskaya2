@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 
-const A4_W_PT = 595.2756;
+const PT_PER_MM = 72 / 25.4;
 const SERIF = '"Times New Roman", "Liberation Serif", "PT Serif", serif';
 const SANS = '"Arial", "Liberation Sans", system-ui, sans-serif';
 
@@ -22,6 +22,10 @@ export default function ZayavPreview({
   onStartTextEdit = () => {},
   onCommitText = () => {},
   onChange = () => {},
+  pageWmm = 210,
+  pageHmm = 297,
+  selectedCell = null,
+  onCellClick = null,
 }) {
   const ref = useRef(null);
   const [W, setW] = useState(800);
@@ -78,7 +82,7 @@ export default function ZayavPreview({
     window.addEventListener("pointerup", onPointerUp);
   };
 
-  const pxPerPt = W / A4_W_PT;
+  const pxPerPt = W / (pageWmm * PT_PER_MM);
 
   const moveHandle = (el) => (
     <div
@@ -155,6 +159,38 @@ export default function ZayavPreview({
   const renderLine = (el) => {
     const isSel = editMode && selectedId === el.id;
     const thick = Math.max(1, (el.thickness || 0.5) * pxPerPt);
+    // вертикальная / диагональная линия (x2/y2 заданы)
+    if (el.x2 != null || el.y2 != null) {
+      const x1 = el.x, y1 = el.y, x2 = el.x2 != null ? el.x2 : el.x, y2 = el.y2 != null ? el.y2 : el.y;
+      const vertical = Math.abs(x2 - x1) < 0.05;
+      if (vertical) {
+        const top = Math.min(y1, y2), h = Math.abs(y2 - y1);
+        return (
+          <div key={el.id}
+            onClick={(e) => { if (!editMode) return; e.stopPropagation(); onSelect(el.id); }}
+            data-testid={`zayav-el-${el.id}`}
+            style={{
+              position: "absolute", left: `${x1}%`, top: `${top}%`,
+              width: `${thick}px`, height: `${h}%`, background: el.color || "#17171f",
+              cursor: editMode ? "pointer" : "default",
+              outline: isSel ? "1.5px solid #E11D48" : "none", outlineOffset: "2px",
+            }} />
+        );
+      }
+      // горизонтальная через x2
+      const left = Math.min(x1, x2), w = Math.abs(x2 - x1);
+      return (
+        <div key={el.id}
+          onClick={(e) => { if (!editMode) return; e.stopPropagation(); onSelect(el.id); }}
+          data-testid={`zayav-el-${el.id}`}
+          style={{
+            position: "absolute", left: `${left}%`, top: `${y1}%`, width: `${w}%`,
+            height: `${thick}px`, background: el.color || "#17171f",
+            cursor: editMode ? "pointer" : "default",
+            outline: isSel ? "1.5px solid #E11D48" : "none", outlineOffset: "2px",
+          }} />
+      );
+    }
     return (
       <div key={el.id}
         onClick={(e) => { if (!editMode) return; e.stopPropagation(); onSelect(el.id); }}
@@ -168,15 +204,93 @@ export default function ZayavPreview({
     );
   };
 
+  const renderRect = (el) => {
+    const isSel = editMode && selectedId === el.id;
+    return (
+      <div key={el.id}
+        onClick={(e) => { if (!editMode) return; e.stopPropagation(); onSelect(el.id); }}
+        data-testid={`zayav-el-${el.id}`} title={editMode ? "Заливка" : ""}
+        style={{
+          position: "absolute", left: `${el.x}%`, top: `${el.y}%`,
+          width: `${el.w}%`, height: `${el.h}%`,
+          background: el.fill || el.color || "transparent",
+          border: el.stroke ? `1px solid ${el.stroke}` : "none",
+          cursor: editMode ? "pointer" : "default",
+          outline: isSel ? "1.5px solid #E11D48" : "none",
+        }} />
+    );
+  };
+
+  const renderGrid = (el) => {
+    const isSel = editMode && selectedId === el.id;
+    const cols = el.cols || [];
+    const rows = el.rows || [];
+    const totalW = cols.reduce((a, b) => a + b, 0);
+    const totalH = rows.reduce((a, b) => a + b, 0);
+    const cells = el.cells || {};
+    const border = el.color || "#17171f";
+    const parts = [];
+    let yAcc = 0;
+    for (let r = 0; r < rows.length; r++) {
+      let xAcc = 0;
+      for (let c = 0; c < cols.length; c++) {
+        const key = `${r}_${c}`;
+        const cell = cells[key] || {};
+        const val = cell.field ? (values ? values[cell.field] : "") : cell.text;
+        const shown = val != null && String(val).trim() !== "" ? String(val) : (editMode && cell.field ? `《${cell.field}》` : (cell.text || ""));
+        const cellSel = selectedCell && selectedCell.gridId === el.id && selectedCell.r === r && selectedCell.c === c;
+        parts.push(
+          <div key={key}
+            onClick={(e) => { if (!editMode || !onCellClick) return; e.stopPropagation(); onSelect(el.id); onCellClick(el.id, r, c); }}
+            style={{
+              position: "absolute", left: `${(xAcc / totalW) * 100}%`, top: `${(yAcc / totalH) * 100}%`,
+              width: `${(cols[c] / totalW) * 100}%`, height: `${(rows[r] / totalH) * 100}%`,
+              borderRight: `1px solid ${border}`, borderBottom: `1px solid ${border}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontFamily: el.font === "serif" ? SERIF : SANS,
+              fontSize: `${(cell.size || el.size || 8) * pxPerPt}px`,
+              fontWeight: cell.bold ? 700 : 400, color: cell.color || "#0a0d52",
+              background: cellSel ? "rgba(37,99,235,.18)" : "transparent",
+              cursor: editMode && onCellClick ? "pointer" : "default", overflow: "hidden", whiteSpace: "nowrap",
+            }}>
+            {shown}
+          </div>
+        );
+        xAcc += cols[c];
+      }
+      yAcc += rows[r];
+    }
+    return (
+      <div key={el.id}
+        onClick={(e) => { if (!editMode) return; e.stopPropagation(); onSelect(el.id); }}
+        data-testid={`zayav-el-${el.id}`}
+        style={{
+          position: "absolute", left: `${el.x}%`, top: `${el.y}%`,
+          width: `${totalW}%`, height: `${totalH}%`,
+          borderLeft: `1px solid ${border}`, borderTop: `1px solid ${border}`,
+          outline: isSel ? "1.5px solid #E11D48" : "none", outlineOffset: "2px",
+          cursor: editMode ? "pointer" : "default",
+        }}>
+        {parts}
+      </div>
+    );
+  };
+
   const selEl = (elements || []).find((e) => e.id === selectedId);
 
   return (
     <div ref={ref}
       onPointerDown={(e) => { if (editMode && e.target === ref.current) { onSelect(null); } }}
-      style={{ position: "relative", width: "100%", aspectRatio: "210 / 297", background: "#fff" }}
+      style={{ position: "relative", width: "100%", aspectRatio: `${pageWmm} / ${pageHmm}`, background: "#fff" }}
       data-testid={`zayav-page-${page}`}>
-      {(elements || []).map((el) => (el.type === "line" ? renderLine(el) : renderTextLike(el)))}
-      {editMode && selEl && moveHandle(selEl)}
+      {(elements || []).map((el) => {
+        if (el.type === "line") return renderLine(el);
+        if (el.type === "rect") return renderRect(el);
+        if (el.type === "grid") return renderGrid(el);
+        return renderTextLike(el);
+      })}
+      {editMode && selEl && selEl.type !== "rect" && moveHandle(selEl)}
+      {editMode && selEl && selEl.type === "rect" && moveHandle(selEl)}
     </div>
   );
 }

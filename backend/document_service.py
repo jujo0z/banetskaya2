@@ -1,5 +1,6 @@
 """Document generation: fill the docx template with student data and convert to PDF."""
 import io
+import logging
 import os
 import subprocess
 import sys
@@ -8,6 +9,9 @@ import time
 from pathlib import Path
 
 from docxtpl import DocxTemplate
+
+logger = logging.getLogger("document_service")
+
 
 
 def _resource_base() -> Path:
@@ -1776,7 +1780,7 @@ def _draw_forma19_back(c, zw, zh, rec):
 
 
 
-def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides=True):
+def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides=True, template=None):
     """PDF Формы 19: A4-сетка 2×2. per_sheet = сколько ЧЕЛОВЕК на лист (по 2 копии).
     Порядок страниц: лист1-лицо, лист1-оборот, лист2-лицо, лист2-оборот … —
     для двусторонней печати каждый физический лист = 2 подряд идущие страницы PDF.
@@ -1796,6 +1800,7 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
         people = [{}]
     ppl_per_sheet = 2  # фиксировано: 2 человека (2×2 = по 2 копии)
     duplex_flip = (duplex_flip or "long").lower()
+    tpl_by_page = _forma_tpl_by_page(template) if template else None
 
     def cell_origin(col, row):
         x0 = side_margin + col * sw
@@ -1833,9 +1838,15 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
                 c.rect(0, 0, zw, zh, stroke=1, fill=0)
                 c.setDash()
             if is_back:
-                _draw_forma19_back(c, zw, zh, rec)
+                if tpl_by_page:
+                    _draw_forma_template_card(c, tpl_by_page, rec, zw, zh, True)
+                else:
+                    _draw_forma19_back(c, zw, zh, rec)
             else:
-                _draw_forma19_front(c, zw, zh, rec)
+                if tpl_by_page:
+                    _draw_forma_template_card(c, tpl_by_page, rec, zw, zh, False)
+                else:
+                    _draw_forma19_front(c, zw, zh, rec)
             c.restoreState()
         c.showPage()
 
@@ -2159,7 +2170,7 @@ def _draw_forma24_back(c, zw, zh, rec):
     cap(79.5, cb(y[22], B) + 0.3, "подпись", 4.4)
 
 
-def build_forma24(people, duplex_flip="long", draw_guides=True):
+def build_forma24(people, duplex_flip="long", draw_guides=True, template=None):
     """PDF Формы 24: как build_forma19, но с отрисовкой талона."""
     from reportlab.pdfgen import canvas
     _ensure_fonts()
@@ -2169,6 +2180,7 @@ def build_forma24(people, duplex_flip="long", draw_guides=True):
     scale, sw, sh, side_margin, top_margin = _fit_grid(pw, ph, zw, zh, 2, 2)
     people = list(people or []) or [{}]
     duplex_flip = (duplex_flip or "long").lower()
+    tpl_by_page = _forma_tpl_by_page(template) if template else None
 
     def origin(col, row):
         return side_margin + col * sw, ph - (top_margin + row * sh + sh)
@@ -2186,7 +2198,10 @@ def build_forma24(people, duplex_flip="long", draw_guides=True):
             if draw_guides:
                 c.setStrokeColorRGB(0.75, 0.75, 0.82); c.setLineWidth(0.3); c.setDash(2, 2)
                 c.rect(0, 0, zw, zh, stroke=1, fill=0); c.setDash()
-            (_draw_forma24_back if back else _draw_forma24_front)(c, zw, zh, chunk[pidx])
+            if tpl_by_page:
+                _draw_forma_template_card(c, tpl_by_page, chunk[pidx], zw, zh, back)
+            else:
+                (_draw_forma24_back if back else _draw_forma24_front)(c, zw, zh, chunk[pidx])
             c.restoreState()
         c.showPage()
 
@@ -2202,7 +2217,8 @@ def build_forma24(people, duplex_flip="long", draw_guides=True):
 
 
 
-def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True):
+def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True,
+                         tpl19=None, tpl24=None):
     """Один A4-лист: верхний ряд — Форма 19 (2 копии), нижний ряд — Форма 24
     (2 копии). Лицо + оборот для двусторонней печати. Один формат карты 105×145.
     Экономит бумагу: обе формы на одном листе вместо двух."""
@@ -2216,6 +2232,8 @@ def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True):
     duplex_flip = (duplex_flip or "long").lower()
     rec19 = rec19 or {}
     rec24 = rec24 or {}
+    tpl19_by = _forma_tpl_by_page(tpl19) if tpl19 else None
+    tpl24_by = _forma_tpl_by_page(tpl24) if tpl24 else None
 
     def origin(col, row):
         return side_margin + col * sw, ph - (top_margin + row * sh + sh)
@@ -2232,9 +2250,15 @@ def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True):
             c.rect(0, 0, zw, zh, stroke=1, fill=0)
             c.setDash()
         if which == 19:
-            (_draw_forma19_back if back else _draw_forma19_front)(c, zw, zh, rec19)
+            if tpl19_by:
+                _draw_forma_template_card(c, tpl19_by, rec19, zw, zh, back)
+            else:
+                (_draw_forma19_back if back else _draw_forma19_front)(c, zw, zh, rec19)
         else:
-            (_draw_forma24_back if back else _draw_forma24_front)(c, zw, zh, rec24)
+            if tpl24_by:
+                _draw_forma_template_card(c, tpl24_by, rec24, zw, zh, back)
+            else:
+                (_draw_forma24_back if back else _draw_forma24_front)(c, zw, zh, rec24)
         c.restoreState()
 
     def page(c, back):
@@ -2255,6 +2279,295 @@ def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True):
     c.save()
     buf.seek(0)
     return buf.getvalue()
+
+
+# ==========================================================================
+#  ГЕНЕРАЦИЯ РЕДАКТИРУЕМЫХ ШАБЛОНОВ ДЛЯ ФОРМ (Ф19 / Ф24) — как в «Заявлении»
+#  Идея: прогоняем существующие функции отрисовки через canvas-рекордер и
+#  rec-«зонд» (маркеры полей) → получаем список элементов (text/line/rect/field),
+#  который затем можно двигать/править в редакторе и рендерить обратно 1:1.
+# ==========================================================================
+_FLD_A = "\ue000"
+_FLD_B = "\ue001"
+
+
+class _ProbeRec(dict):
+    """rec-«зонд»: любое поле возвращает маркер \ue000key\ue001, кроме iter_keys."""
+    def __init__(self, iter_keys=()):
+        super().__init__()
+        self._iter = set(iter_keys or ())
+
+    def get(self, k, default=None):
+        if k in self._iter:
+            return ""
+        return _FLD_A + str(k) + _FLD_B
+
+    def __bool__(self):
+        return True
+
+    def __contains__(self, k):
+        return True
+
+
+def _rgbhex(rgb):
+    return "#%02x%02x%02x" % (
+        max(0, min(255, int(round(rgb[0] * 255)))),
+        max(0, min(255, int(round(rgb[1] * 255)))),
+        max(0, min(255, int(round(rgb[2] * 255)))),
+    )
+
+
+class _RecorderCanvas:
+    """Мимикрирует подмножество reportlab canvas и складывает элементы шаблона.
+    Координаты пунктов переводятся в проценты страницы pw×ph (карта 105×145 мм)."""
+    def __init__(self, pw, ph):
+        self.pw = pw
+        self.ph = ph
+        self.elems = []
+        self._fill = (0, 0, 0)
+        self._stroke = (0, 0, 0)
+        self._lw = 0.5
+        self._font = "AppSans"
+        self._size = 9.0
+
+    # --- state ---
+    def setFillColorRGB(self, r, g, b):
+        self._fill = (r, g, b)
+
+    def setStrokeColorRGB(self, r, g, b):
+        self._stroke = (r, g, b)
+
+    def setLineWidth(self, w):
+        self._lw = w
+
+    def setFont(self, name, size):
+        self._font = name
+        self._size = size
+
+    def setDash(self, *a, **k):
+        pass
+
+    def saveState(self):
+        pass
+
+    def restoreState(self):
+        pass
+
+    def stringWidth(self, s, font=None, size=None):
+        from reportlab.pdfbase.pdfmetrics import stringWidth as _sw
+        try:
+            return _sw(str(s), font or self._font, size or self._size)
+        except Exception:
+            return len(str(s)) * (size or self._size) * 0.5
+
+    def _fontmeta(self):
+        n = self._font or ""
+        fam = "serif" if "Serif" in n else "sans"
+        return fam, ("Bold" in n), ("Italic" in n)
+
+    def _text(self, x, y, s, align):
+        s = "" if s is None else str(s)
+        if s == "":
+            return
+        fam, bold, ital = self._fontmeta()
+        base = {
+            "x": round(x / self.pw * 100, 3),
+            "y": round((self.ph - y) / self.ph * 100, 3),
+            "align": align, "size": round(self._size, 2),
+            "bold": bold, "italic": ital, "font": fam,
+            "color": _rgbhex(self._fill),
+        }
+        if s.startswith(_FLD_A):
+            key = s[len(_FLD_A):].split(_FLD_B)[0]
+            base.update({"type": "field", "field": key})
+        else:
+            base.update({"type": "text", "text": s})
+        self.elems.append(base)
+
+    def drawString(self, x, y, s):
+        self._text(x, y, s, "left")
+
+    def drawCentredString(self, x, y, s):
+        self._text(x, y, s, "center")
+
+    def drawCenteredString(self, x, y, s):
+        self._text(x, y, s, "center")
+
+    def drawRightString(self, x, y, s):
+        self._text(x, y, s, "right")
+
+    def line(self, x1, y1, x2, y2):
+        el = {"type": "line", "thickness": round(self._lw, 2), "color": _rgbhex(self._stroke)}
+        el["x"] = round(x1 / self.pw * 100, 3)
+        el["y"] = round((self.ph - y1) / self.ph * 100, 3)
+        if abs(y1 - y2) < 1e-6:
+            el["w"] = round((x2 - x1) / self.pw * 100, 3)
+        else:
+            el["x2"] = round(x2 / self.pw * 100, 3)
+            el["y2"] = round((self.ph - y2) / self.ph * 100, 3)
+        self.elems.append(el)
+
+    def rect(self, x, y, w, h, fill=0, stroke=1):
+        el = {
+            "type": "rect",
+            "x": round(x / self.pw * 100, 3),
+            "y": round((self.ph - (y + h)) / self.ph * 100, 3),
+            "w": round(w / self.pw * 100, 3),
+            "h": round(h / self.ph * 100, 3),
+        }
+        if fill:
+            el["fill"] = _rgbhex(self._fill)
+        if stroke:
+            el["stroke"] = _rgbhex(self._stroke)
+            el["thickness"] = round(self._lw, 2)
+        self.elems.append(el)
+
+
+def _forma_vals(rec):
+    """Значения полей формы: простое приведение к строкам (без спец-логики)."""
+    return {k: ("" if v is None else str(v)) for k, v in (rec or {}).items()}
+
+
+def _build_forma_default_template(front_fn, back_fn, iter_keys=("id_number",),
+                                  extra=None):
+    """Собрать дефолтный шаблон-элементы формы из функций отрисовки."""
+    _ensure_fonts()
+    pw = FORMA19_MM[0] * MM
+    ph = FORMA19_MM[1] * MM
+    elems = []
+    for page, fn in ((1, front_fn), (2, back_fn)):
+        rec = _RecorderCanvas(pw, ph)
+        try:
+            fn(rec, pw, ph, _ProbeRec(iter_keys))
+        except Exception:
+            logger.exception("recorder failed for page %s", page)
+        for e in rec.elems:
+            e["page"] = page
+            elems.append(e)
+    if extra:
+        for e in extra:
+            elems.append(dict(e))
+    for i, e in enumerate(elems):
+        e["id"] = "el%03d" % i
+    return elems
+
+
+_FORMA19_TPL_DEFAULT = None
+_FORMA24_TPL_DEFAULT = None
+
+
+def get_forma19_default_template():
+    global _FORMA19_TPL_DEFAULT
+    if _FORMA19_TPL_DEFAULT is None:
+        # идентификационный номер (14 ячеек) — одно поле слева от первой ячейки
+        extra = [{
+            "type": "field", "field": "id_number", "page": 1,
+            "x": 29.5, "y": round(15.1 / 145.0 * 100, 3), "align": "left",
+            "size": 7.5, "bold": True, "italic": False, "font": "sans", "color": "#0a0d52",
+        }]
+        _FORMA19_TPL_DEFAULT = _build_forma_default_template(
+            _draw_forma19_front, _draw_forma19_back, iter_keys=("id_number",), extra=extra)
+    import copy
+    return copy.deepcopy(_FORMA19_TPL_DEFAULT)
+
+
+def get_forma24_default_template():
+    global _FORMA24_TPL_DEFAULT
+    if _FORMA24_TPL_DEFAULT is None:
+        _FORMA24_TPL_DEFAULT = _build_forma_default_template(
+            _draw_forma24_front, _draw_forma24_back, iter_keys=())
+    import copy
+    return copy.deepcopy(_FORMA24_TPL_DEFAULT)
+
+
+def forma_slots(which):
+    """Список слотов-полей формы для выпадающего списка редактора."""
+    groups = FORMA19_FIELDS if int(which) == 19 else FORMA24_FIELDS
+    out = []
+    for g in groups:
+        for f in g["fields"]:
+            out.append({"slot": f["key"], "label": f["label"]})
+    if int(which) == 19:
+        out.insert(0, {"slot": "id_number", "label": "Идентификационный номер"})
+    return out
+
+
+def _forma_tpl_by_page(tpl):
+    by = {1: [], 2: []}
+    for el in (tpl or []):
+        try:
+            p = int(el.get("page", 1) or 1)
+        except Exception:
+            p = 1
+        if p in by:
+            by[p].append(el)
+    return by
+
+
+def _draw_forma_template_card(c, tpl_by_page, rec, zw, zh, back):
+    """Отрисовать карту формы из шаблона-элементов (в системе координат карты)."""
+    vals = _forma_vals(rec)
+    page = 2 if back else 1
+    for el in tpl_by_page.get(page, []):
+        _draw_zayav_element(c, el, vals, zw, zh)
+
+
+def _draw_grid_element(c, el, vals, pw, ph):
+    """Таблица-«клеточки» (Excel-style). cols/rows — размеры в % страницы;
+    cells — словарь 'r_c' -> {text|field, align, size, bold}."""
+    x0 = float(el.get("x", 0) or 0) / 100.0 * pw
+    y0_top = float(el.get("y", 0) or 0) / 100.0 * ph
+    cols = [float(w) / 100.0 * pw for w in (el.get("cols") or [])]
+    rows = [float(h) / 100.0 * ph for h in (el.get("rows") or [])]
+    if not cols or not rows:
+        return
+    total_w = sum(cols)
+    total_h = sum(rows)
+    border = _hex_rgb(el.get("color", "#17171f"))
+    c.setStrokeColorRGB(*border)
+    c.setLineWidth(float(el.get("thickness", 0.5) or 0.5))
+    xs = [x0]
+    for w in cols:
+        xs.append(xs[-1] + w)
+    ys_top = [y0_top]
+    for h in rows:
+        ys_top.append(ys_top[-1] + h)
+    top_pdf = ph - y0_top
+    bot_pdf = ph - (y0_top + total_h)
+    for xx in xs:
+        c.line(xx, top_pdf, xx, bot_pdf)
+    for yt in ys_top:
+        c.line(x0, ph - yt, x0 + total_w, ph - yt)
+    cells = el.get("cells") or {}
+    dsize = float(el.get("size", 8) or 8)
+    for k, cell in cells.items():
+        try:
+            r, cc = k.split("_")
+            r = int(r)
+            cc = int(cc)
+        except Exception:
+            continue
+        if r >= len(rows) or cc >= len(cols):
+            continue
+        cx0 = xs[cc]
+        cy0_top = ys_top[r]
+        cw = cols[cc]
+        ch = rows[r]
+        if cell.get("field"):
+            txt = vals.get(cell.get("field"), "")
+        else:
+            txt = cell.get("text", "")
+        txt = "" if txt is None else str(txt)
+        if txt == "":
+            continue
+        size = float(cell.get("size", dsize) or dsize)
+        bold = bool(cell.get("bold"))
+        font = _font(bold) if el.get("font", "sans") == "sans" else _serif(bold)
+        c.setFont(font, size)
+        c.setFillColorRGB(*_hex_rgb(cell.get("color", "#0a0d52")))
+        baseline = ph - (cy0_top + ch / 2.0) - size * 0.35
+        c.drawCentredString(cx0 + cw / 2.0, baseline, txt)
+
 
 
 
@@ -2959,13 +3272,37 @@ def _draw_zayav_element(c, el, vals, pw, ph):
     from reportlab.pdfbase.pdfmetrics import stringWidth
     t = el.get("type", "text")
     col = _hex_rgb(el.get("color", "#000000"))
+    if t == "rect":
+        # прямоугольник-заливка: x,y — верх-левый угол (%), w,h — размеры (%)
+        x = float(el.get("x", 0) or 0) / 100.0 * pw
+        w = float(el.get("w", 0) or 0) / 100.0 * pw
+        h = float(el.get("h", 0) or 0) / 100.0 * ph
+        y_top = float(el.get("y", 0) or 0) / 100.0 * ph
+        yb = ph - y_top - h
+        fill = el.get("fill", el.get("color", "#e6e6e8"))
+        if fill:
+            c.setFillColorRGB(*_hex_rgb(fill))
+        stroke = el.get("stroke")
+        if stroke:
+            c.setStrokeColorRGB(*_hex_rgb(stroke))
+        c.setLineWidth(float(el.get("thickness", 0.4) or 0.4))
+        c.rect(x, yb, w, h, fill=1 if fill else 0, stroke=1 if stroke else 0)
+        return
+    if t == "grid":
+        _draw_grid_element(c, el, vals, pw, ph)
+        return
     if t == "line":
         x = float(el.get("x", 0) or 0) / 100.0 * pw
         y = float(el.get("y", 0) or 0) / 100.0 * ph
-        w = float(el.get("w", 0) or 0) / 100.0 * pw
         c.setStrokeColorRGB(*col)
         c.setLineWidth(float(el.get("thickness", 0.5) or 0.5))
-        c.line(x, ph - y, x + w, ph - y)
+        if el.get("x2") is not None or el.get("y2") is not None:
+            x2 = float(el.get("x2", el.get("x", 0)) or 0) / 100.0 * pw
+            y2 = float(el.get("y2", el.get("y", 0)) or 0) / 100.0 * ph
+            c.line(x, ph - y, x2, ph - y2)
+        else:
+            w = float(el.get("w", 0) or 0) / 100.0 * pw
+            c.line(x, ph - y, x + w, ph - y)
         return
     if t == "field":
         txt = vals.get(el.get("field"), "")

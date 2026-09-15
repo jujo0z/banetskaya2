@@ -17,6 +17,7 @@ import {
   ChevronDown,
   Save,
   Wand2,
+  PenSquare,
 } from "lucide-react";
 import {
   forma24Fields,
@@ -31,6 +32,7 @@ import {
   openPackagePdf,
   downloadPackagePdf,
 } from "@/lib/apiClient";
+import DocEditor from "@/components/DocEditor";
 
 const recordLabel = (r, i) => {
   const fio = [r.surname, r.first_name, r.patronymic].filter(Boolean).join(" ").trim();
@@ -50,6 +52,7 @@ export default function Forma24() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewSide, setPreviewSide] = useState("front");
+  const [editMode, setEditMode] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [masterRows, setMasterRows] = useState([]);
@@ -484,41 +487,63 @@ export default function Forma24() {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <div className="text-sm font-semibold text-muted-foreground">
-              Предпросмотр листа ({previewSide === "back" ? "оборотная сторона" : "лицевая сторона"})
+              {editMode ? "Редактор шаблона Формы 24" : `Предпросмотр листа (${previewSide === "back" ? "оборотная сторона" : "лицевая сторона"})`}
             </div>
             <div className="flex items-center gap-2">
-              <div className="flex rounded-md border border-pink-100 overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setPreviewSide("front")}
-                  className={`px-3 py-1.5 text-xs transition ${previewSide === "front" ? "bg-[#EC4899] text-white font-semibold" : "text-muted-foreground hover:text-slate-900"}`}
-                  data-testid="f24-side-front"
-                >
-                  Лицевая
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewSide("back")}
-                  className={`px-3 py-1.5 text-xs transition ${previewSide === "back" ? "bg-[#EC4899] text-white font-semibold" : "text-muted-foreground hover:text-slate-900"}`}
-                  data-testid="f24-side-back"
-                >
-                  Оборотная
-                </button>
-              </div>
-              <Button size="sm" variant="ghost" onClick={refreshPreview} disabled={previewBusy} data-testid="f24-refresh-preview">
-                <RefreshCw className={`h-4 w-4 mr-1 ${previewBusy ? "animate-spin" : ""}`} /> Обновить
+              {!editMode && (
+                <div className="flex rounded-md border border-pink-100 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewSide("front")}
+                    className={`px-3 py-1.5 text-xs transition ${previewSide === "front" ? "bg-[#EC4899] text-white font-semibold" : "text-muted-foreground hover:text-slate-900"}`}
+                    data-testid="f24-side-front"
+                  >
+                    Лицевая
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewSide("back")}
+                    className={`px-3 py-1.5 text-xs transition ${previewSide === "back" ? "bg-[#EC4899] text-white font-semibold" : "text-muted-foreground hover:text-slate-900"}`}
+                    data-testid="f24-side-back"
+                  >
+                    Оборотная
+                  </button>
+                </div>
+              )}
+              {!editMode && (
+                <Button size="sm" variant="ghost" onClick={refreshPreview} disabled={previewBusy} data-testid="f24-refresh-preview">
+                  <RefreshCw className={`h-4 w-4 mr-1 ${previewBusy ? "animate-spin" : ""}`} /> Обновить
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant={editMode ? "default" : "outline"}
+                onClick={() => setEditMode((v) => !v)}
+                className={editMode ? "bg-amber-500 hover:bg-amber-600 text-black" : ""}
+                data-testid="f24-toggle-edit"
+              >
+                <PenSquare className="h-4 w-4 mr-1" /> {editMode ? "Готово" : "Редактор шаблона"}
               </Button>
             </div>
           </div>
-          <div className="rounded-lg border border-pink-100 bg-white overflow-hidden shadow-2xl flex items-center justify-center" style={{ height: "80vh" }}>
-            {previewUrl ? (
-              <img src={previewUrl} alt="Предпросмотр Формы 24" className="max-w-full max-h-full object-contain" data-testid="forma24-preview" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                Формирование предпросмотра…
-              </div>
-            )}
-          </div>
+          {editMode ? (
+            <DocEditor
+              which={24}
+              values={records[activeIdx >= 0 ? activeIdx : 0] || {}}
+              side={previewSide}
+              setSide={setPreviewSide}
+            />
+          ) : (
+            <div className="rounded-lg border border-pink-100 bg-white overflow-hidden shadow-2xl flex items-center justify-center" style={{ height: "80vh" }}>
+              {previewUrl ? (
+                <img src={previewUrl} alt="Предпросмотр Формы 24" className="max-w-full max-h-full object-contain" data-testid="forma24-preview" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                  Формирование предпросмотра…
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

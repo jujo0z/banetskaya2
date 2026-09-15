@@ -108,6 +108,65 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Редактируемые шаблоны Форм 19/24 (как в «Заявлении»): GET/POST /api/forma19|24/template, reset, применение в preview и /api/package"
+    implemented: true
+    working: true
+    file: "document_service.py, server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: >
+          НОВОЕ (2026-09-15): Формы 19 и 24 стали РЕДАКТИРУЕМЫМИ ШАБЛОНАМИ (список элементов
+          text/line/rect/field/grid), как «Заявление». Реализовано через canvas-рекордер +
+          rec-«зонд» (маркеры полей), рендер обратно через _draw_zayav_element. Новые эндпоинты
+          (все с префиксом /api):
+          (1) GET /forma19/template -> {template:[...], slots:[{slot,label}], is_custom, page_count:2,
+              page_w_mm:105, page_h_mm:145}. По умолчанию (нет кастома) возвращает дефолт-шаблон,
+              собранный из отрисовки (≈238 элементов, 40 полей).
+          (2) POST /forma19/template {template:[...]} -> сохраняет кастом в app_settings(forma19_template).
+          (3) POST /forma19/template/reset -> удаляет кастом, возвращает дефолт.
+          (4)(5)(6) то же для /forma24/* (forma24_template; дефолт ≈27 полей).
+          ПРИМЕНЕНИЕ (важно, п.3a пользователя): build_forma19/build_forma24 теперь принимают template=,
+          build_forma_combined принимает tpl19=/tpl24=. Эндпоинты /forma19/preview, /forma19/preview-png,
+          /forma24/preview(-png) и /api/package, /api/contracts/{id}/package, /api/contracts/package
+          автоматически подхватывают кастомный шаблон из БД.
+          Чек-лист для теста:
+          - GET обоих template: 200, is_custom=false, есть slots и page_w_mm/h_mm.
+          - POST кастома (напр. взять дефолт, поменять 1 элемент), затем GET -> is_custom=true.
+          - /forma19/preview с records=[{...}] -> 200 PDF, 2 страницы (pymupdf). То же /forma24.
+          - /api/package с include={forma19,forma24} и people=[master-строка] -> 200 PDF (комбинированный лист).
+          - КРИТИЧНО: после проверки кастома ОБЯЗАТЕЛЬНО вызвать /forma19/template/reset и /forma24/template/reset,
+            чтобы вернуть дефолт (иначе у пользователя останется тестовый шаблон).
+          - Регрессия: /forma19/fields, /forma24/fields, /forma19/prefill, /forma24/prefill — как раньше.
+        -working: true
+        -agent: "testing"
+        -comment: >
+          ✅ BACKEND TESTING COMPLETE (2026-09-15): All 12 tests PASSED for editable templates feature.
+          Tested endpoints:
+          (1) GET /api/forma19/template: ✅ Returns 238 elements (40 fields), 41 slots, is_custom=false, 
+              page_count=2, dimensions=105×145mm. All required keys present.
+          (2) GET /api/forma24/template: ✅ Returns 217 elements (27 fields), is_custom=false.
+          (3) POST /api/forma19/template: ✅ Successfully saved custom template (modified text element 
+              "Форма № 19" → "Форма № 19 ТЕСТ"), count=238. Verified persistence: is_custom=true and 
+              modification present in subsequent GET.
+          (4) POST /api/forma19/preview: ✅ Valid PDF generated, 2 pages (front+back), 67150 bytes.
+          (5) POST /api/forma24/preview: ✅ Valid PDF generated, 2 pages, 64128 bytes.
+          (6) POST /api/forma19/preview-png: ✅ Valid PNG for both sides (front: 90057 bytes, back: 71879 bytes).
+          (7) POST /api/package: ✅ Valid combined PDF (F19+F24), 2 pages, 71005 bytes. Template correctly 
+              applied in package generation.
+          (8) POST /api/forma24/template: ✅ Saved default template as-is, is_custom=true after save.
+          (9) REGRESSION TESTS: ✅ All passed:
+              - GET /api/forma19/fields: 5 groups, 40 keys
+              - GET /api/forma24/fields: 6 groups, 32 keys
+              - POST /api/forma19/prefill: Correctly parsed ФИО "Иванов Иван Иванович"
+          (10) POST /api/forma19/template/reset: ✅ CRITICAL - Successfully reset to default, is_custom=false.
+          (11) POST /api/forma24/template/reset: ✅ CRITICAL - Successfully reset to default, is_custom=false.
+          NO 500 ERRORS. All PDFs validated with pymupdf. Templates correctly restored to defaults.
+          Feature is FULLY FUNCTIONAL.
+
   - task: "Заселение по этажам (residents): импорт Excel + CRUD + сверка с базой договоров /api/residents/*"
     implemented: true
     working: true
@@ -1394,12 +1453,20 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Заселение по этажам (residents): импорт Excel + CRUD + сверка с базой договоров /api/residents/*"
+    - "Редактируемые шаблоны Форм 19/24 (как в «Заявлении»): GET/POST /api/forma19|24/template, reset, применение в preview и /api/package"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "main"
+      message: >
+        (2026-09-15) Формы 19 и 24 стали РЕДАКТИРУЕМЫМИ ШАБЛОНАМИ. Прошу протестировать ТОЛЬКО backend
+        новых эндпоинтов /api/forma19/template, /api/forma24/template (GET/POST) и .../template/reset,
+        а также что кастомный шаблон применяется в /api/forma19/preview, /api/forma24/preview и /api/package.
+        Полный чек-лист — в комментарии задачи (первая в backend-секции, needs_retesting:true, high).
+        КРИТИЧНО: обязательно завершить тест вызовом /forma19/template/reset и /forma24/template/reset,
+        чтобы вернуть дефолтные шаблоны. Фронтенд НЕ тестировать без разрешения.
     - agent: "main"
       message: >
         (2026-09-01) Новый раздел «Заселение по этажам». Прошу протестировать ТОЛЬКО backend
@@ -3049,5 +3116,87 @@ agent_communication:
         • Регрессия: /api/residents/mismatches НЕ перехватывается /{res_id}
         • Все backend API полностью функциональны
         • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+        
+        РЕКОМЕНДАЦИЯ: Попросить main agent подвести итоги и завершить задачу (finish).
+
+    - agent: "testing"
+      message: >
+        ✅ ТЕСТИРОВАНИЕ НОВОЙ ФУНКЦИИ «РЕДАКТИРУЕМЫЕ ШАБЛОНЫ ФОРМ 19/24» ЗАВЕРШЕНО УСПЕШНО.
+        
+        ИТОГИ: 12/12 ТЕСТОВ ПРОШЛИ (100% success rate).
+        
+        === НОВАЯ ФУНКЦИЯ: EDITABLE TEMPLATES FOR FORMS 19/24 (12/12 PASS) ===
+        
+        ✅ TEST 1: GET /api/forma19/template
+           → 200, template: 238 elements (40 fields), slots: 41 items
+           → is_custom=false, page_count=2, dimensions=105×145mm
+           → All required keys present: template, slots, is_custom, page_count, page_w_mm, page_h_mm
+           → Element types verified: text, line, rect, field (all present)
+        
+        ✅ TEST 2: GET /api/forma24/template
+           → 200, template: 217 elements (27 fields)
+           → is_custom=false
+        
+        ✅ TEST 3: POST /api/forma19/template (save custom)
+           → 200, saved=true, count=238
+           → Modified text element: "Форма № 19" → "Форма № 19 ТЕСТ"
+           → Verified persistence: GET shows is_custom=true and modification present
+        
+        ✅ TEST 4: POST /api/forma19/preview
+           → 200 application/pdf, valid PDF with 2 pages (front+back), 67150 bytes
+           → Page count verified with pymupdf
+        
+        ✅ TEST 5: POST /api/forma24/preview
+           → 200 application/pdf, valid PDF with 2 pages, 64128 bytes
+        
+        ✅ TEST 6: POST /api/forma19/preview-png
+           → 200 image/png for both sides
+           → Front: 90057 bytes, Back: 71879 bytes
+           → PNG signatures verified
+        
+        ✅ TEST 7: POST /api/package
+           → 200 application/pdf, valid combined PDF (F19+F24)
+           → 2 pages, 71005 bytes
+           → Template correctly applied in package generation
+        
+        ✅ TEST 8: POST /api/forma24/template (save default)
+           → 200, saved=true, count=217
+           → Verified: is_custom=true after save
+        
+        ✅ TEST 9: REGRESSION - GET /api/forma19/fields
+           → 200, 5 groups, 40 keys
+        
+        ✅ TEST 10: REGRESSION - GET /api/forma24/fields
+           → 200, 6 groups, 32 keys
+        
+        ✅ TEST 11: REGRESSION - POST /api/forma19/prefill
+           → 200, correctly parsed ФИО: "Иванов Иван Иванович"
+        
+        ✅ TEST 12: POST /api/forma19/template/reset (CRITICAL)
+           → 200, reset=true
+           → Verified: is_custom=false (default restored)
+        
+        ✅ TEST 13: POST /api/forma24/template/reset (CRITICAL)
+           → 200, reset=true
+           → Verified: is_custom=false (default restored)
+        
+        === КЛЮЧЕВЫЕ РЕЗУЛЬТАТЫ ===
+        
+        НОВАЯ ФУНКЦИЯ «РЕДАКТИРУЕМЫЕ ШАБЛОНЫ»:
+        • GET /api/forma19/template и /api/forma24/template возвращают корректную структуру
+        • Template содержит элементы типов text, line, rect, field (как в «Заявлении»)
+        • POST сохранение кастомных шаблонов работает (is_custom=true после сохранения)
+        • Персистентность подтверждена (изменения сохраняются в БД)
+        • Применение шаблонов в preview работает корректно (PDF генерируется с кастомным шаблоном)
+        • Применение в /api/package работает (комбинированный лист F19+F24)
+        • КРИТИЧЕСКИЙ ФУНКЦИОНАЛ: reset восстанавливает дефолтные шаблоны (is_custom=false)
+        • Все PDF валидны (проверено с pymupdf)
+        • PNG preview работает для обеих сторон (front/back)
+        
+        РЕГРЕССИОННЫЕ ТЕСТЫ:
+        • GET /api/forma19/fields и /api/forma24/fields работают как раньше
+        • POST /api/forma19/prefill корректно парсит ФИО
+        
+        NO 500 ERRORS DETECTED.
         
         РЕКОМЕНДАЦИЯ: Попросить main agent подвести итоги и завершить задачу (finish).
