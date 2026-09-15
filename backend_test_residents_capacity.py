@@ -26,7 +26,7 @@ import requests
 import sys
 
 # Base URL from frontend/.env
-BASE_URL = "https://cloud-server-1.preview.emergentagent.com/api"
+BASE_URL = "https://deploy-preview-152.preview.emergentagent.com/api"
 
 
 def test_residents_mismatches():

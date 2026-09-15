@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 import fitz  # pymupdf
 
 # Backend URL
-BASE_URL = "https://form-portal-15.preview.emergentagent.com/api"
+BASE_URL = "https://deploy-preview-152.preview.emergentagent.com/api"
 
 # Цвета для вывода
 GREEN = '\033[92m'

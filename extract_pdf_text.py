@@ -3,7 +3,7 @@
 import requests
 import pymupdf
 
-BASE_URL = "https://form-portal-15.preview.emergentagent.com/api"
+BASE_URL = "https://deploy-preview-152.preview.emergentagent.com/api"
 
 # Test overlay/generate
 print("=" * 80)
