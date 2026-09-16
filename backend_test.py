@@ -9,7 +9,7 @@ import sys
 from io import BytesIO
 
 # Get backend URL from frontend/.env
-BACKEND_URL = "https://2cf70c11-bb53-439d-81a9-b5ab7c9fcf41.preview.emergentagent.com/api"
+BACKEND_URL = "https://root-monitor-1.preview.emergentagent.com/api"
 
 def test_forma19_template_get():
     """Test 1: GET /api/forma19/template"""

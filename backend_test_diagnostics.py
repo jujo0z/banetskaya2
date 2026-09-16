@@ -9,7 +9,7 @@ import sys
 import json
 
 # Base URL from frontend/.env
-BASE_URL = "https://deploy-preview-152.preview.emergentagent.com/api"
+BASE_URL = "https://root-monitor-1.preview.emergentagent.com/api"
 
 
 def test_diagnostics_endpoint():
