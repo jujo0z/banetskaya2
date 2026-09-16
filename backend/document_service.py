@@ -1358,6 +1358,7 @@ FORMA19_FIELDS = [
         {"key": "passport_series", "label": "12. Паспорт: серия"},
         {"key": "passport_number", "label": "12. Паспорт: номер"},
         {"key": "passport_issued", "label": "12. Паспорт: кем выдан"},
+        {"key": "passport_valid_until", "label": "12. Паспорт: срок действия"},
     ]},
 ]
 
@@ -1909,6 +1910,7 @@ FORMA24_FIELDS = [
         {"key": "marital", "label": "14. Семейное положение (1..4)"},
         {"key": "spouse_together", "label": "14. Прибыл с супругой(ом) (5=да, 6=нет)"},
         {"key": "children_count", "label": "15. Детей до 14 лет (сколько)"},
+        {"key": "passport_valid_until", "label": "Паспорт: срок действия"},
     ]},
 ]
 FORMA24_FIELD_KEYS = [f["key"] for g in FORMA24_FIELDS for f in g["fields"]]
