@@ -3304,6 +3304,27 @@ def _draw_zayav_element(c, el, vals, pw, ph):
             w = float(el.get("w", 0) or 0) / 100.0 * pw
             c.line(x, ph - y, x + w, ph - y)
         return
+    if t == "spread":
+        # раскладка каждого символа значения по отдельной клетке:
+        # x — левый край первой клетки (%), cw — ширина клетки (%), n — число клеток
+        txt = vals.get(el.get("field"), "") if el.get("field") else el.get("text", "")
+        txt = "" if txt is None else str(txt)
+        if txt.strip() == "":
+            return
+        x0 = float(el.get("x", 0) or 0) / 100.0 * pw
+        cw = float(el.get("cw", 0) or 0) / 100.0 * pw
+        n = int(el.get("n", len(txt)) or len(txt))
+        yb = ph - float(el.get("y", 0) or 0) / 100.0 * ph
+        size = float(el.get("size", 7.5) or 7.5)
+        if el.get("font") == "serif":
+            font = _serif(bool(el.get("bold")), bool(el.get("italic")))
+        else:
+            font = _font(bool(el.get("bold")))
+        c.setFont(font, size)
+        c.setFillColorRGB(*_hex_rgb(el.get("color", "#0a0d52")))
+        for i, ch in enumerate(txt[:n]):
+            c.drawCentredString(x0 + (i + 0.5) * cw, yb, ch)
+        return
     if t == "field":
         txt = vals.get(el.get("field"), "")
     else:
