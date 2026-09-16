@@ -108,6 +108,37 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Формы 19/24: условное подчёркивание «нужное подчеркнуть» (тип элемента ul) + крупная верхняя дата + идент.номер по клеткам (spread)"
+    implemented: true
+    working: "NA"
+    file: "document_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: >
+          БАГФИКС/ФИЧА (2026-09-16). Пользователь: в формах не подчёркивается выбранный вариант
+          «нужное подчеркнуть», хотя код задан цифрами.
+          Причина: формы рисуются из шаблона (список элементов), а динамическое подчёркивание было
+          только в хардкод-функциях. Решение — новые типы элементов в _draw_zayav_element:
+          (1) type="ul" — условное подчёркивание: линия рисуется ТОЛЬКО если значение поля совпадает
+              с вариантом (on.eq / on.contains). Поля Формы 24: sex, purpose_choice (лицо);
+              education, marital, spouse_together (оборот). 17 вариантов.
+          (2) type="spread" — раскладка каждого символа значения по отдельной клетке (идент.номер Ф19).
+          Также дефолтный шаблон Ф24 теперь генерит ul через build_forma24_ul_elements().
+          Как тестировать (локальный backend, дефолтный шаблон, БД пустая):
+          - POST /api/forma24/preview-png {records:[{...}], side:"front"} и side:"back" -> 200, PNG (не JSON).
+          - Проверить, что при разных кодах ответ РАЗЛИЧАЕТСЯ (условный рендер): напр.
+            sex="1" vs sex="2"; purpose_choice="1" vs "2"; education="3" vs "5";
+            marital="2" vs "4"; spouse_together="5" vs "6" -> байты PNG должны отличаться.
+          - GET /api/forma24/template -> 200; в default-шаблоне есть элементы type=="ul" (17 шт).
+          - GET /api/forma19/template -> 200; есть элемент type=="spread" (идент.номер) ИЛИ поле id_number.
+          - /api/forma19/preview-png и /api/forma24/preview-png -> 200 PDF/PNG, 2 страницы у PDF.
+          ПРИМЕЧАНИЕ: правка данных 2026->2027 (contract_end_date, residents.term) сделана напрямую
+          в БД на проде (VPS), локально не тестируется.
+
   - task: "Редактируемые шаблоны Форм 19/24 (как в «Заявлении»): GET/POST /api/forma19|24/template, reset, применение в preview и /api/package"
     implemented: true
     working: true
@@ -1453,12 +1484,20 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Редактируемые шаблоны Форм 19/24 (как в «Заявлении»): GET/POST /api/forma19|24/template, reset, применение в preview и /api/package"
+    - "Формы 19/24: условное подчёркивание «нужное подчеркнуть» (тип элемента ul) + крупная верхняя дата + идент.номер по клеткам (spread)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "main"
+      message: >
+      NEW (2026-09-16): Добавлены типы элементов шаблона "ul" (условное подчёркивание по значению поля)
+      и "spread" (символы по клеткам). Прошу протестировать локальный backend: /api/forma24/preview-png
+      (front и back) с разными кодами (sex, purpose_choice, education, marital, spouse_together) —
+      ответ 200 и PNG должен ОТЛИЧАТЬСЯ при разных кодах (условное подчёркивание). Также GET
+      /api/forma24/template (в default 17 элементов type=="ul") и GET /api/forma19/template
+      (есть spread/id_number). Детали и чек-лист — в задаче выше (needs_retesting=true).
     - agent: "main"
       message: >
         (2026-09-15) Формы 19 и 24 стали РЕДАКТИРУЕМЫМИ ШАБЛОНАМИ. Прошу протестировать ТОЛЬКО backend

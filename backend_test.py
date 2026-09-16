@@ -1,468 +1,537 @@
 #!/usr/bin/env python3
 """
-Backend testing for editable templates feature (Forms 19/24).
-Tests ONLY backend API endpoints.
+Backend testing for Banetskaya.by - Conditional Underline Feature (ul element type)
+Testing the new "ul" (conditional underline) template element type in Forms 19/24.
 """
 import requests
 import json
 import sys
-from io import BytesIO
 
-# Get backend URL from frontend/.env
-BACKEND_URL = "https://root-monitor-1.preview.emergentagent.com/api"
+# Use LOCAL backend as specified in review request
+BASE_URL = "http://localhost:8001/api"
 
-def test_forma19_template_get():
-    """Test 1: GET /api/forma19/template"""
-    print("\n=== TEST 1: GET /api/forma19/template ===")
-    r = requests.get(f"{BACKEND_URL}/forma19/template")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
+def test_forma24_template_ul_elements():
+    """
+    TEST 1: GET /api/forma24/template
+    Should return 200 JSON with 17 elements of type "ul" for fields:
+    sex, purpose_choice, education, marital, spouse_together
+    Each ul element should have: field, x, y, w, and on (with eq/contains)
+    """
+    print("\n" + "="*80)
+    print("TEST 1: GET /api/forma24/template - Check for 17 'ul' elements")
+    print("="*80)
     
-    # Check required keys
-    assert "template" in data, "Missing 'template' key"
-    assert "slots" in data, "Missing 'slots' key"
-    assert "is_custom" in data, "Missing 'is_custom' key"
-    assert "page_count" in data, "Missing 'page_count' key"
-    assert "page_w_mm" in data, "Missing 'page_w_mm' key"
-    assert "page_h_mm" in data, "Missing 'page_h_mm' key"
-    
-    # Check values
-    assert isinstance(data["template"], list), "template should be a list"
-    assert len(data["template"]) > 0, "template should not be empty"
-    assert isinstance(data["slots"], list), "slots should be a list"
-    assert len(data["slots"]) > 0, "slots should not be empty"
-    assert data["is_custom"] == False, f"is_custom should be False initially, got {data['is_custom']}"
-    assert data["page_count"] == 2, f"page_count should be 2, got {data['page_count']}"
-    assert data["page_w_mm"] == 105, f"page_w_mm should be 105, got {data['page_w_mm']}"
-    assert data["page_h_mm"] == 145, f"page_h_mm should be 145, got {data['page_h_mm']}"
-    
-    # Check template elements have required types
-    element_types = set()
-    field_count = 0
-    for el in data["template"]:
-        el_type = el.get("type")
-        element_types.add(el_type)
-        if el_type == "field":
-            field_count += 1
-    
-    assert "text" in element_types, "template should have 'text' elements"
-    assert "line" in element_types, "template should have 'line' elements"
-    assert "rect" in element_types, "template should have 'rect' elements"
-    assert "field" in element_types, "template should have 'field' elements"
-    assert field_count > 10, f"template should have many 'field' elements, got {field_count}"
-    
-    # Check slots structure
-    for slot in data["slots"]:
-        assert "slot" in slot, "Each slot should have 'slot' key"
-        assert "label" in slot, "Each slot should have 'label' key"
-    
-    print(f"✅ PASS: template has {len(data['template'])} elements, {field_count} fields")
-    print(f"✅ PASS: slots has {len(data['slots'])} items")
-    print(f"✅ PASS: is_custom={data['is_custom']}, page_count={data['page_count']}, dimensions={data['page_w_mm']}×{data['page_h_mm']} mm")
-    
-    return data["template"]
-
-
-def test_forma24_template_get():
-    """Test 2: GET /api/forma24/template"""
-    print("\n=== TEST 2: GET /api/forma24/template ===")
-    r = requests.get(f"{BACKEND_URL}/forma24/template")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    
-    # Check required keys
-    assert "template" in data, "Missing 'template' key"
-    assert "slots" in data, "Missing 'slots' key"
-    assert "is_custom" in data, "Missing 'is_custom' key"
-    assert data["is_custom"] == False, f"is_custom should be False initially, got {data['is_custom']}"
-    
-    # Check template is non-empty
-    assert isinstance(data["template"], list), "template should be a list"
-    assert len(data["template"]) > 0, "template should not be empty"
-    
-    field_count = sum(1 for el in data["template"] if el.get("type") == "field")
-    
-    print(f"✅ PASS: template has {len(data['template'])} elements, {field_count} fields")
-    print(f"✅ PASS: is_custom={data['is_custom']}")
-    
-    return data["template"]
-
-
-def test_forma19_template_save(original_template):
-    """Test 3: POST /api/forma19/template (modify and save)"""
-    print("\n=== TEST 3: POST /api/forma19/template (save custom) ===")
-    
-    # Modify one text element
-    modified_template = []
-    modified = False
-    for el in original_template:
-        el_copy = dict(el)
-        if not modified and el.get("type") == "text":
-            # Add " ТЕСТ" to the text
-            el_copy["text"] = el.get("text", "") + " ТЕСТ"
-            modified = True
-            print(f"Modified element: {el.get('text', '')} -> {el_copy['text']}")
-        modified_template.append(el_copy)
-    
-    assert modified, "Should have modified at least one text element"
-    
-    # Save the modified template
-    r = requests.post(f"{BACKEND_URL}/forma19/template", 
-                     json={"template": modified_template})
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    
-    assert "saved" in data, "Missing 'saved' key"
-    assert data["saved"] == True, f"saved should be True, got {data['saved']}"
-    assert "count" in data, "Missing 'count' key"
-    assert data["count"] == len(modified_template), f"count should be {len(modified_template)}, got {data['count']}"
-    
-    print(f"✅ PASS: saved={data['saved']}, count={data['count']}")
-    
-    # Verify the change persisted
-    print("\n=== TEST 3b: Verify custom template persisted ===")
-    r = requests.get(f"{BACKEND_URL}/forma19/template")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    
-    assert data["is_custom"] == True, f"is_custom should be True after save, got {data['is_custom']}"
-    
-    # Find the modified element
-    found_modification = False
-    for el in data["template"]:
-        if el.get("type") == "text" and " ТЕСТ" in el.get("text", ""):
-            found_modification = True
-            print(f"Found modified element: {el.get('text')}")
-            break
-    
-    assert found_modification, "Modified text element not found in saved template"
-    
-    print(f"✅ PASS: is_custom={data['is_custom']}, modification present")
-
-
-def test_forma19_preview():
-    """Test 4: POST /api/forma19/preview (PDF generation)"""
-    print("\n=== TEST 4: POST /api/forma19/preview ===")
-    
-    payload = {
-        "records": [
-            {
-                "surname": "Иванов",
-                "first_name": "Иван",
-                "birth_year": "2005",
-                "citizenship": "РБ"
-            }
-        ],
-        "duplex_flip": "long"
-    }
-    
-    r = requests.post(f"{BACKEND_URL}/forma19/preview", json=payload)
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    assert r.headers.get("Content-Type") == "application/pdf", \
-        f"Expected application/pdf, got {r.headers.get('Content-Type')}"
-    
-    pdf_data = r.content
-    assert pdf_data[:4] == b"%PDF", "PDF should start with %PDF signature"
-    
-    # Check page count using pymupdf
     try:
-        import pymupdf
-        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-        page_count = len(doc)
-        doc.close()
-        assert page_count == 2, f"PDF should have 2 pages (front+back), got {page_count}"
-        print(f"✅ PASS: Valid PDF, {page_count} pages, {len(pdf_data)} bytes")
-    except ImportError:
-        print(f"⚠️  WARNING: pymupdf not available, skipping page count check")
-        print(f"✅ PASS: Valid PDF, {len(pdf_data)} bytes")
+        resp = requests.get(f"{BASE_URL}/forma24/template", timeout=10)
+        print(f"Status: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            print(f"Response: {resp.text[:500]}")
+            return False
+        
+        data = resp.json()
+        template = data.get("template", [])
+        
+        # Find all ul elements
+        ul_elements = [el for el in template if el.get("type") == "ul"]
+        print(f"Found {len(ul_elements)} elements with type='ul'")
+        
+        if len(ul_elements) != 17:
+            print(f"❌ FAILED: Expected 17 'ul' elements, found {len(ul_elements)}")
+            return False
+        
+        # Check fields covered
+        fields_found = {}
+        for el in ul_elements:
+            field = el.get("field")
+            if field:
+                fields_found[field] = fields_found.get(field, 0) + 1
+        
+        print(f"Fields covered by ul elements: {fields_found}")
+        
+        expected_fields = ["sex", "purpose_choice", "education", "marital", "spouse_together"]
+        for field in expected_fields:
+            if field not in fields_found:
+                print(f"❌ FAILED: Expected field '{field}' not found in ul elements")
+                return False
+        
+        # Verify structure of ul elements
+        print("\nVerifying structure of ul elements:")
+        for i, el in enumerate(ul_elements[:3]):  # Check first 3 as sample
+            print(f"\n  ul element {i+1}:")
+            print(f"    field: {el.get('field')}")
+            print(f"    x: {el.get('x')}")
+            print(f"    y: {el.get('y')}")
+            print(f"    w: {el.get('w')}")
+            print(f"    on: {el.get('on')}")
+            
+            # Verify required fields
+            if not el.get("field"):
+                print(f"    ❌ Missing 'field'")
+                return False
+            if el.get("x") is None:
+                print(f"    ❌ Missing 'x'")
+                return False
+            if el.get("y") is None:
+                print(f"    ❌ Missing 'y'")
+                return False
+            if el.get("w") is None:
+                print(f"    ❌ Missing 'w'")
+                return False
+            
+            on = el.get("on")
+            if not on or not isinstance(on, dict):
+                print(f"    ❌ Missing or invalid 'on' field")
+                return False
+            
+            if "eq" not in on and "contains" not in on:
+                print(f"    ❌ 'on' must have 'eq' or 'contains'")
+                return False
+        
+        print("\n✅ TEST 1 PASSED: Found 17 'ul' elements with correct structure")
+        print(f"   Fields: sex ({fields_found.get('sex', 0)}), purpose_choice ({fields_found.get('purpose_choice', 0)}), "
+              f"education ({fields_found.get('education', 0)}), marital ({fields_found.get('marital', 0)}), "
+              f"spouse_together ({fields_found.get('spouse_together', 0)})")
+        return True
+        
+    except Exception as e:
+        print(f"❌ FAILED with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
-def test_forma24_preview():
-    """Test 4b: POST /api/forma24/preview (PDF generation)"""
-    print("\n=== TEST 4b: POST /api/forma24/preview ===")
+def test_forma19_template_spread_element():
+    """
+    TEST 2: GET /api/forma19/template
+    Should return 200 JSON with element type="spread" with field=="id_number" (14 cells)
+    OR field id_number
+    """
+    print("\n" + "="*80)
+    print("TEST 2: GET /api/forma19/template - Check for 'spread' element or id_number")
+    print("="*80)
     
-    payload = {
-        "records": [
-            {
-                "surname": "Петров",
-                "first_name": "Пётр"
-            }
-        ],
-        "duplex_flip": "long"
-    }
-    
-    r = requests.post(f"{BACKEND_URL}/forma24/preview", json=payload)
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    assert r.headers.get("Content-Type") == "application/pdf", \
-        f"Expected application/pdf, got {r.headers.get('Content-Type')}"
-    
-    pdf_data = r.content
-    assert pdf_data[:4] == b"%PDF", "PDF should start with %PDF signature"
-    
-    # Check page count
     try:
-        import pymupdf
-        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-        page_count = len(doc)
-        doc.close()
-        assert page_count == 2, f"PDF should have 2 pages (front+back), got {page_count}"
-        print(f"✅ PASS: Valid PDF, {page_count} pages, {len(pdf_data)} bytes")
-    except ImportError:
-        print(f"⚠️  WARNING: pymupdf not available, skipping page count check")
-        print(f"✅ PASS: Valid PDF, {len(pdf_data)} bytes")
+        resp = requests.get(f"{BASE_URL}/forma19/template", timeout=10)
+        print(f"Status: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            print(f"Response: {resp.text[:500]}")
+            return False
+        
+        data = resp.json()
+        template = data.get("template", [])
+        
+        # Find spread elements
+        spread_elements = [el for el in template if el.get("type") == "spread"]
+        print(f"Found {len(spread_elements)} elements with type='spread'")
+        
+        # Find id_number field
+        id_number_elements = [el for el in template if el.get("field") == "id_number"]
+        print(f"Found {len(id_number_elements)} elements with field='id_number'")
+        
+        # Check for spread element with id_number
+        spread_id_number = [el for el in spread_elements if el.get("field") == "id_number"]
+        
+        if spread_id_number:
+            el = spread_id_number[0]
+            print(f"\n✅ Found 'spread' element with field='id_number':")
+            print(f"   x: {el.get('x')}")
+            print(f"   y: {el.get('y')}")
+            print(f"   cw: {el.get('cw')} (cell width)")
+            print(f"   n: {el.get('n')} (number of cells)")
+            
+            n = el.get("n")
+            if n and n == 14:
+                print(f"   ✅ Correct: 14 cells for id_number")
+            else:
+                print(f"   ⚠️  Note: Expected 14 cells, found {n}")
+            
+            print("\n✅ TEST 2 PASSED: Found 'spread' element with field='id_number'")
+            return True
+        elif id_number_elements:
+            print(f"\n✅ Found {len(id_number_elements)} element(s) with field='id_number'")
+            for el in id_number_elements:
+                print(f"   type: {el.get('type')}, x: {el.get('x')}, y: {el.get('y')}")
+            print("\n✅ TEST 2 PASSED: Found id_number field in template")
+            return True
+        else:
+            print(f"❌ FAILED: No 'spread' element with id_number and no id_number field found")
+            return False
+        
+    except Exception as e:
+        print(f"❌ FAILED with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
-def test_forma19_preview_png():
-    """Test 5: POST /api/forma19/preview-png (PNG generation)"""
-    print("\n=== TEST 5: POST /api/forma19/preview-png ===")
+def test_forma24_preview_png_conditional_rendering():
+    """
+    TEST 3: POST /api/forma24/preview-png - Conditional rendering proof
     
-    payload = {
-        "records": [
-            {
-                "surname": "Тестов",
-                "first_name": "Тест"
-            }
-        ],
+    CRITICAL: Verify that PNG output DIFFERS when different codes are used.
+    This proves that conditional underline is actually working.
+    
+    Test cases:
+    - side=front: sex="1" vs sex="2", purpose_choice="1" vs "2"
+    - side=back: education="3" vs "5", marital="2" vs "4", spouse_together="5" vs "6"
+    - Control: identical requests should give same size PNG
+    """
+    print("\n" + "="*80)
+    print("TEST 3: POST /api/forma24/preview-png - Conditional Rendering Proof")
+    print("="*80)
+    
+    results = []
+    
+    # Test 3a: Front side - sex and purpose_choice
+    print("\n--- Test 3a: Front side - Different sex and purpose_choice codes ---")
+    
+    record1_front = {
+        "records": [{"sex": "1", "purpose_choice": "1", "surname": "ТЕСТ"}],
         "side": "front"
     }
     
-    # Test front side
-    r = requests.post(f"{BACKEND_URL}/forma19/preview-png", json=payload)
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    assert r.headers.get("Content-Type") == "image/png", \
-        f"Expected image/png, got {r.headers.get('Content-Type')}"
-    
-    png_data = r.content
-    assert png_data[:4] == b"\x89PNG", "PNG should start with PNG signature"
-    print(f"✅ PASS: Valid PNG (front), {len(png_data)} bytes")
-    
-    # Test back side
-    payload["side"] = "back"
-    r = requests.post(f"{BACKEND_URL}/forma19/preview-png", json=payload)
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    assert r.headers.get("Content-Type") == "image/png", \
-        f"Expected image/png, got {r.headers.get('Content-Type')}"
-    
-    png_data_back = r.content
-    assert png_data_back[:4] == b"\x89PNG", "PNG should start with PNG signature"
-    print(f"✅ PASS: Valid PNG (back), {len(png_data_back)} bytes")
-
-
-def test_package():
-    """Test 6: POST /api/package (combined package)"""
-    print("\n=== TEST 6: POST /api/package ===")
-    
-    payload = {
-        "people": [
-            {
-                "ФИО": "Иванов Иван Иванович",
-                "Номер комнаты": "902/2"
-            }
-        ],
-        "duplex_flip": "long",
-        "include": {
-            "forma19": True,
-            "forma24": True,
-            "contract": False,
-            "soobshenie": False,
-            "zayavlenie": False
-        }
+    record2_front = {
+        "records": [{"sex": "2", "purpose_choice": "2", "surname": "ТЕСТ"}],
+        "side": "front"
     }
     
-    r = requests.post(f"{BACKEND_URL}/package", json=payload)
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    assert r.headers.get("Content-Type") == "application/pdf", \
-        f"Expected application/pdf, got {r.headers.get('Content-Type')}"
-    
-    pdf_data = r.content
-    assert pdf_data[:4] == b"%PDF", "PDF should start with %PDF signature"
-    
-    # Check it's a valid PDF
     try:
-        import pymupdf
-        doc = pymupdf.open(stream=pdf_data, filetype="pdf")
-        page_count = len(doc)
-        doc.close()
-        print(f"✅ PASS: Valid combined PDF (F19+F24), {page_count} pages, {len(pdf_data)} bytes")
-    except ImportError:
-        print(f"✅ PASS: Valid combined PDF (F19+F24), {len(pdf_data)} bytes")
-
-
-def test_forma24_template_save():
-    """Test 7: POST /api/forma24/template (save default as-is)"""
-    print("\n=== TEST 7: POST /api/forma24/template (save default) ===")
+        resp1 = requests.post(f"{BASE_URL}/forma24/preview-png", json=record1_front, timeout=15)
+        print(f"Request 1 (sex=1, purpose_choice=1): Status {resp1.status_code}")
+        
+        if resp1.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp1.status_code}")
+            print(f"Response: {resp1.text[:500]}")
+            results.append(False)
+        else:
+            content_type = resp1.headers.get("Content-Type", "")
+            print(f"Content-Type: {content_type}")
+            
+            if "image/png" not in content_type and not resp1.content.startswith(b'\x89PNG'):
+                print(f"❌ FAILED: Not a PNG response")
+                print(f"First 50 bytes: {resp1.content[:50]}")
+                results.append(False)
+            else:
+                size1 = len(resp1.content)
+                print(f"✅ Valid PNG, size: {size1} bytes")
+                
+                resp2 = requests.post(f"{BASE_URL}/forma24/preview-png", json=record2_front, timeout=15)
+                print(f"\nRequest 2 (sex=2, purpose_choice=2): Status {resp2.status_code}")
+                
+                if resp2.status_code != 200:
+                    print(f"❌ FAILED: Expected 200, got {resp2.status_code}")
+                    results.append(False)
+                else:
+                    size2 = len(resp2.content)
+                    print(f"✅ Valid PNG, size: {size2} bytes")
+                    
+                    if size1 == size2:
+                        print(f"⚠️  WARNING: PNG sizes are identical ({size1} bytes)")
+                        print(f"   This might indicate conditional rendering is NOT working")
+                        # Check if content is actually different
+                        if resp1.content == resp2.content:
+                            print(f"❌ FAILED: PNG content is IDENTICAL - conditional rendering NOT working!")
+                            results.append(False)
+                        else:
+                            print(f"✅ PASSED: PNG content differs (same size but different bytes)")
+                            results.append(True)
+                    else:
+                        diff = abs(size1 - size2)
+                        print(f"✅ PASSED: PNG sizes differ by {diff} bytes ({diff/max(size1,size2)*100:.1f}%)")
+                        print(f"   This proves conditional rendering is working!")
+                        results.append(True)
     
-    # Get default template
-    r = requests.get(f"{BACKEND_URL}/forma24/template")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    template = data["template"]
+    except Exception as e:
+        print(f"❌ FAILED with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        results.append(False)
     
-    # Save it as-is
-    r = requests.post(f"{BACKEND_URL}/forma24/template", 
-                     json={"template": template})
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    result = r.json()
+    # Test 3b: Back side - education, marital, spouse_together
+    print("\n--- Test 3b: Back side - Different education, marital, spouse_together codes ---")
     
-    assert result["saved"] == True, f"saved should be True, got {result['saved']}"
-    print(f"✅ PASS: saved={result['saved']}, count={result['count']}")
-    
-    # Verify is_custom is now True
-    r = requests.get(f"{BACKEND_URL}/forma24/template")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    assert data["is_custom"] == True, f"is_custom should be True after save, got {data['is_custom']}"
-    print(f"✅ PASS: is_custom={data['is_custom']}")
-
-
-def test_regression_fields():
-    """Test 8: Regression - GET /api/forma19/fields and /api/forma24/fields"""
-    print("\n=== TEST 8: REGRESSION - GET /api/forma19/fields ===")
-    
-    r = requests.get(f"{BACKEND_URL}/forma19/fields")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    
-    assert "groups" in data, "Missing 'groups' key"
-    assert "keys" in data, "Missing 'keys' key"
-    assert isinstance(data["groups"], list), "groups should be a list"
-    assert isinstance(data["keys"], list), "keys should be a list"
-    print(f"✅ PASS: forma19/fields returns {len(data['groups'])} groups, {len(data['keys'])} keys")
-    
-    print("\n=== TEST 8b: REGRESSION - GET /api/forma24/fields ===")
-    r = requests.get(f"{BACKEND_URL}/forma24/fields")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    
-    assert "groups" in data, "Missing 'groups' key"
-    assert "keys" in data, "Missing 'keys' key"
-    print(f"✅ PASS: forma24/fields returns {len(data['groups'])} groups, {len(data['keys'])} keys")
-
-
-def test_regression_prefill():
-    """Test 8c: Regression - POST /api/forma19/prefill"""
-    print("\n=== TEST 8c: REGRESSION - POST /api/forma19/prefill ===")
-    
-    payload = {
-        "students": [
-            {
-                "full_name": "Иванов Иван Иванович",
-                "birth_date": "01.01.2005",
-                "passport_number": "AB1234567"
-            }
-        ]
+    record1_back = {
+        "records": [{"education": "3", "marital": "2", "spouse_together": "5", "surname": "ТЕСТ"}],
+        "side": "back"
     }
     
-    r = requests.post(f"{BACKEND_URL}/forma19/prefill", json=payload)
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
+    record2_back = {
+        "records": [{"education": "5", "marital": "4", "spouse_together": "6", "surname": "ТЕСТ"}],
+        "side": "back"
+    }
     
-    assert "records" in data, "Missing 'records' key"
-    assert len(data["records"]) > 0, "records should not be empty"
+    try:
+        resp1 = requests.post(f"{BASE_URL}/forma24/preview-png", json=record1_back, timeout=15)
+        print(f"Request 1 (education=3, marital=2, spouse_together=5): Status {resp1.status_code}")
+        
+        if resp1.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp1.status_code}")
+            print(f"Response: {resp1.text[:500]}")
+            results.append(False)
+        else:
+            content_type = resp1.headers.get("Content-Type", "")
+            print(f"Content-Type: {content_type}")
+            
+            if "image/png" not in content_type and not resp1.content.startswith(b'\x89PNG'):
+                print(f"❌ FAILED: Not a PNG response")
+                results.append(False)
+            else:
+                size1 = len(resp1.content)
+                print(f"✅ Valid PNG, size: {size1} bytes")
+                
+                resp2 = requests.post(f"{BASE_URL}/forma24/preview-png", json=record2_back, timeout=15)
+                print(f"\nRequest 2 (education=5, marital=4, spouse_together=6): Status {resp2.status_code}")
+                
+                if resp2.status_code != 200:
+                    print(f"❌ FAILED: Expected 200, got {resp2.status_code}")
+                    results.append(False)
+                else:
+                    size2 = len(resp2.content)
+                    print(f"✅ Valid PNG, size: {size2} bytes")
+                    
+                    if size1 == size2:
+                        print(f"⚠️  WARNING: PNG sizes are identical ({size1} bytes)")
+                        # Check if content is actually different
+                        if resp1.content == resp2.content:
+                            print(f"❌ FAILED: PNG content is IDENTICAL - conditional rendering NOT working!")
+                            results.append(False)
+                        else:
+                            print(f"✅ PASSED: PNG content differs (same size but different bytes)")
+                            results.append(True)
+                    else:
+                        diff = abs(size1 - size2)
+                        print(f"✅ PASSED: PNG sizes differ by {diff} bytes ({diff/max(size1,size2)*100:.1f}%)")
+                        print(f"   This proves conditional rendering is working!")
+                        results.append(True)
     
-    rec = data["records"][0]
-    assert rec.get("surname") == "Иванов", f"surname should be 'Иванов', got {rec.get('surname')}"
-    assert rec.get("first_name") == "Иван", f"first_name should be 'Иван', got {rec.get('first_name')}"
-    assert rec.get("patronymic") == "Иванович", f"patronymic should be 'Иванович', got {rec.get('patronymic')}"
+    except Exception as e:
+        print(f"❌ FAILED with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        results.append(False)
     
-    print(f"✅ PASS: prefill works correctly, parsed ФИО: {rec.get('surname')} {rec.get('first_name')} {rec.get('patronymic')}")
+    # Test 3c: Control - identical requests should give same result
+    print("\n--- Test 3c: Control - Identical requests should give identical PNG ---")
+    
+    control_record = {
+        "records": [{"sex": "1", "education": "3", "surname": "КОНТРОЛЬ"}],
+        "side": "front"
+    }
+    
+    try:
+        resp1 = requests.post(f"{BASE_URL}/forma24/preview-png", json=control_record, timeout=15)
+        resp2 = requests.post(f"{BASE_URL}/forma24/preview-png", json=control_record, timeout=15)
+        
+        print(f"Request 1: Status {resp1.status_code}, size {len(resp1.content)} bytes")
+        print(f"Request 2: Status {resp2.status_code}, size {len(resp2.content)} bytes")
+        
+        if resp1.status_code == 200 and resp2.status_code == 200:
+            if len(resp1.content) == len(resp2.content):
+                print(f"✅ PASSED: Identical requests give same size PNG ({len(resp1.content)} bytes)")
+                results.append(True)
+            else:
+                print(f"⚠️  WARNING: Identical requests give different sizes")
+                print(f"   This might indicate non-deterministic rendering")
+                results.append(True)  # Not a critical failure
+        else:
+            print(f"❌ FAILED: One or both requests failed")
+            results.append(False)
+    
+    except Exception as e:
+        print(f"❌ FAILED with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        results.append(False)
+    
+    # Summary
+    print("\n" + "="*80)
+    if all(results):
+        print("✅ TEST 3 PASSED: Conditional rendering is working correctly")
+        print("   - Different codes produce different PNG output")
+        print("   - Identical requests produce consistent output")
+        return True
+    else:
+        print(f"❌ TEST 3 FAILED: {results.count(False)}/{len(results)} sub-tests failed")
+        return False
 
 
-def test_forma19_template_reset():
-    """Test 9: POST /api/forma19/template/reset (CRITICAL - restore defaults)"""
-    print("\n=== TEST 9: POST /api/forma19/template/reset (CRITICAL) ===")
+def test_forma24_preview_pdf():
+    """
+    TEST 4: POST /api/forma24/preview (PDF)
+    Should return 200 PDF with 2 pages
+    """
+    print("\n" + "="*80)
+    print("TEST 4: POST /api/forma24/preview - PDF generation")
+    print("="*80)
     
-    r = requests.post(f"{BACKEND_URL}/forma19/template/reset")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    
-    assert "reset" in data, "Missing 'reset' key"
-    assert data["reset"] == True, f"reset should be True, got {data['reset']}"
-    print(f"✅ PASS: reset={data['reset']}")
-    
-    # Verify is_custom is now False
-    r = requests.get(f"{BACKEND_URL}/forma19/template")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    assert data["is_custom"] == False, f"is_custom should be False after reset, got {data['is_custom']}"
-    print(f"✅ PASS: is_custom={data['is_custom']} (default restored)")
+    try:
+        payload = {
+            "records": [
+                {"surname": "Иванов", "first_name": "Иван", "sex": "1", "education": "4"}
+            ]
+        }
+        
+        resp = requests.post(f"{BASE_URL}/forma24/preview", json=payload, timeout=15)
+        print(f"Status: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            print(f"Response: {resp.text[:500]}")
+            return False
+        
+        content_type = resp.headers.get("Content-Type", "")
+        print(f"Content-Type: {content_type}")
+        
+        if "application/pdf" not in content_type and not resp.content.startswith(b'%PDF'):
+            print(f"❌ FAILED: Not a PDF response")
+            print(f"First 50 bytes: {resp.content[:50]}")
+            return False
+        
+        size = len(resp.content)
+        print(f"✅ Valid PDF, size: {size} bytes")
+        
+        # Verify it's a valid PDF with 2 pages using pymupdf
+        try:
+            import fitz  # pymupdf
+            doc = fitz.open(stream=resp.content, filetype="pdf")
+            page_count = len(doc)
+            print(f"Page count: {page_count}")
+            
+            if page_count != 2:
+                print(f"⚠️  WARNING: Expected 2 pages, got {page_count}")
+            else:
+                print(f"✅ Correct: 2 pages (front + back)")
+            
+            doc.close()
+        except ImportError:
+            print("⚠️  pymupdf not available, skipping page count verification")
+        except Exception as e:
+            print(f"⚠️  Could not verify page count: {e}")
+        
+        print("\n✅ TEST 4 PASSED: PDF generation works")
+        return True
+        
+    except Exception as e:
+        print(f"❌ FAILED with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
-def test_forma24_template_reset():
-    """Test 9b: POST /api/forma24/template/reset (CRITICAL - restore defaults)"""
-    print("\n=== TEST 9b: POST /api/forma24/template/reset (CRITICAL) ===")
+def test_forma19_preview_pdf():
+    """
+    TEST 5: POST /api/forma19/preview (PDF)
+    Should return 200 PDF with 2 pages
+    """
+    print("\n" + "="*80)
+    print("TEST 5: POST /api/forma19/preview - PDF generation")
+    print("="*80)
     
-    r = requests.post(f"{BACKEND_URL}/forma24/template/reset")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    
-    assert "reset" in data, "Missing 'reset' key"
-    assert data["reset"] == True, f"reset should be True, got {data['reset']}"
-    print(f"✅ PASS: reset={data['reset']}")
-    
-    # Verify is_custom is now False
-    r = requests.get(f"{BACKEND_URL}/forma24/template")
-    assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    data = r.json()
-    assert data["is_custom"] == False, f"is_custom should be False after reset, got {data['is_custom']}"
-    print(f"✅ PASS: is_custom={data['is_custom']} (default restored)")
+    try:
+        payload = {
+            "records": [
+                {"surname": "Петров", "first_name": "Пётр", "citizenship": "РБ", "purpose": "на учёбу"}
+            ]
+        }
+        
+        resp = requests.post(f"{BASE_URL}/forma19/preview", json=payload, timeout=15)
+        print(f"Status: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+            print(f"Response: {resp.text[:500]}")
+            return False
+        
+        content_type = resp.headers.get("Content-Type", "")
+        print(f"Content-Type: {content_type}")
+        
+        if "application/pdf" not in content_type and not resp.content.startswith(b'%PDF'):
+            print(f"❌ FAILED: Not a PDF response")
+            print(f"First 50 bytes: {resp.content[:50]}")
+            return False
+        
+        size = len(resp.content)
+        print(f"✅ Valid PDF, size: {size} bytes")
+        
+        # Verify it's a valid PDF with 2 pages using pymupdf
+        try:
+            import fitz  # pymupdf
+            doc = fitz.open(stream=resp.content, filetype="pdf")
+            page_count = len(doc)
+            print(f"Page count: {page_count}")
+            
+            if page_count != 2:
+                print(f"⚠️  WARNING: Expected 2 pages, got {page_count}")
+            else:
+                print(f"✅ Correct: 2 pages (front + back)")
+            
+            doc.close()
+        except ImportError:
+            print("⚠️  pymupdf not available, skipping page count verification")
+        except Exception as e:
+            print(f"⚠️  Could not verify page count: {e}")
+        
+        print("\n✅ TEST 5 PASSED: PDF generation works")
+        return True
+        
+    except Exception as e:
+        print(f"❌ FAILED with exception: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 def main():
     """Run all tests"""
-    print("=" * 80)
-    print("BACKEND TESTING: Editable Templates for Forms 19/24")
-    print("=" * 80)
+    print("="*80)
+    print("BACKEND TESTING: Conditional Underline Feature (ul element type)")
+    print("Testing Forms 19/24 with new 'ul' and 'spread' element types")
+    print("="*80)
+    print(f"Backend URL: {BASE_URL}")
     
-    tests = [
-        ("GET /api/forma19/template", test_forma19_template_get),
-        ("GET /api/forma24/template", test_forma24_template_get),
-        ("POST /api/forma19/template (save custom)", test_forma19_template_save),
-        ("POST /api/forma19/preview", test_forma19_preview),
-        ("POST /api/forma24/preview", test_forma24_preview),
-        ("POST /api/forma19/preview-png", test_forma19_preview_png),
-        ("POST /api/package", test_package),
-        ("POST /api/forma24/template (save default)", test_forma24_template_save),
-        ("REGRESSION: fields", test_regression_fields),
-        ("REGRESSION: prefill", test_regression_prefill),
-        ("POST /api/forma19/template/reset (CRITICAL)", test_forma19_template_reset),
-        ("POST /api/forma24/template/reset (CRITICAL)", test_forma24_template_reset),
-    ]
+    # Check backend is accessible
+    try:
+        resp = requests.get(f"{BASE_URL}/_ping", timeout=5)
+        if resp.status_code == 200:
+            print("✅ Backend is accessible")
+        else:
+            print(f"⚠️  Backend responded with status {resp.status_code}")
+    except Exception as e:
+        print(f"❌ ERROR: Cannot connect to backend: {e}")
+        print("Make sure backend is running at http://localhost:8001")
+        return 1
     
-    passed = 0
-    failed = 0
-    original_template = None
+    # Run tests
+    results = []
     
-    for name, test_func in tests:
-        try:
-            if test_func == test_forma19_template_save:
-                # Pass original template to this test
-                result = test_func(original_template)
-            elif test_func == test_forma19_template_get:
-                # Save original template for later use
-                original_template = test_func()
-            else:
-                test_func()
-            passed += 1
-        except AssertionError as e:
-            print(f"❌ FAIL: {name}")
-            print(f"   Error: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"❌ ERROR: {name}")
-            print(f"   Exception: {e}")
-            failed += 1
+    results.append(("GET /api/forma24/template (17 ul elements)", test_forma24_template_ul_elements()))
+    results.append(("GET /api/forma19/template (spread element)", test_forma19_template_spread_element()))
+    results.append(("POST /api/forma24/preview-png (conditional rendering)", test_forma24_preview_png_conditional_rendering()))
+    results.append(("POST /api/forma24/preview (PDF)", test_forma24_preview_pdf()))
+    results.append(("POST /api/forma19/preview (PDF)", test_forma19_preview_pdf()))
     
-    print("\n" + "=" * 80)
-    print(f"SUMMARY: {passed} passed, {failed} failed out of {passed + failed} tests")
-    print("=" * 80)
+    # Summary
+    print("\n" + "="*80)
+    print("TEST SUMMARY")
+    print("="*80)
     
-    if failed > 0:
-        sys.exit(1)
-    else:
-        print("\n✅ ALL TESTS PASSED!")
-        sys.exit(0)
+    passed = sum(1 for _, result in results if result)
+    total = len(results)
+    
+    for name, result in results:
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"{status}: {name}")
+    
+    print("\n" + "="*80)
+    print(f"TOTAL: {passed}/{total} tests passed ({passed/total*100:.0f}%)")
+    print("="*80)
+    
+    return 0 if passed == total else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -2471,11 +2471,69 @@ def get_forma19_default_template():
     return copy.deepcopy(_FORMA19_TPL_DEFAULT)
 
 
+_FORMA24_UL_OPTS = [
+    ("муж. - 1", "sex", ["1", "м", "муж", "муж.", "мужской"], []),
+    ("жен. - 2", "sex", ["2", "ж", "жен", "жен.", "женский"], []),
+    ("на работу - 1", "purpose_choice", ["1"], ["работ"]),
+    ("на обучение - 2", "purpose_choice", ["2"], ["обуч", "учеб"]),
+    ("высшее - 1", "education", ["1"], []),
+    ("среднее специальное - 2", "education", ["2"], []),
+    ("профессионально-техническое - 3", "education", ["3"], []),
+    ("общее среднее - 4", "education", ["4"], []),
+    ("общее базовое - 5", "education", ["5"], []),
+    ("общее начальное - 6", "education", ["6"], []),
+    ("не имеет начального - 7", "education", ["7"], []),
+    ("состоит в браке - 1", "marital", ["1"], []),
+    ("никогда не состоял(а) в браке - 2", "marital", ["2"], []),
+    ("вдовец(а) - 3", "marital", ["3"], []),
+    ("разведен(а) - 4", "marital", ["4"], []),
+    ("да - 5", "spouse_together", ["5"], []),
+    ("нет - 6", "spouse_together", ["6"], []),
+]
+
+
+def build_forma24_ul_elements(elems):
+    """Собрать условные подчёркивания «нужное подчеркнуть» под текстами-вариантами.
+    Линия рисуется только если значение поля совпадает с вариантом (см. _FORMA24_UL_OPTS)."""
+    _ensure_fonts()
+    from reportlab.pdfbase import pdfmetrics
+    pw_mm, ph_mm = FORMA19_MM[0], FORMA19_MM[1]
+    ul_off = 1.1 / ph_mm * 100.0
+    by_text = {}
+    for e in elems:
+        if e.get("type") == "text" and e.get("text") and e["text"] not in by_text:
+            by_text[e["text"]] = e
+    out = []
+    for text, field, eq, contains in _FORMA24_UL_OPTS:
+        el = by_text.get(text)
+        if not el:
+            continue
+        size = float(el.get("size", 5.5) or 5.5)
+        try:
+            w_mm = pdfmetrics.stringWidth(text, _font(False), size) / MM
+        except Exception:
+            w_mm = len(text) * size * 0.5 / MM
+        out.append({
+            "type": "ul", "field": field, "page": int(el.get("page", 1) or 1),
+            "x": round(float(el.get("x", 0)), 3),
+            "y": round(float(el.get("y", 0)) + ul_off, 3),
+            "w": round(w_mm / pw_mm * 100.0, 3),
+            "thickness": 0.6, "color": el.get("color", "#1a1a29"),
+            "on": {"eq": eq, "contains": contains},
+        })
+    return out
+
+
 def get_forma24_default_template():
     global _FORMA24_TPL_DEFAULT
     if _FORMA24_TPL_DEFAULT is None:
-        _FORMA24_TPL_DEFAULT = _build_forma_default_template(
+        base = _build_forma_default_template(
             _draw_forma24_front, _draw_forma24_back, iter_keys=())
+        uls = build_forma24_ul_elements(base)
+        base.extend(uls)
+        for i, e in enumerate(base):
+            e["id"] = "el%03d" % i
+        _FORMA24_TPL_DEFAULT = base
     import copy
     return copy.deepcopy(_FORMA24_TPL_DEFAULT)
 
@@ -3303,6 +3361,26 @@ def _draw_zayav_element(c, el, vals, pw, ph):
         else:
             w = float(el.get("w", 0) or 0) / 100.0 * pw
             c.line(x, ph - y, x + w, ph - y)
+        return
+    if t == "ul":
+        # условное подчёркивание «нужное подчеркнуть»: линия рисуется,
+        # только если значение поля совпадает с одним из вариантов (on.eq / on.contains)
+        v = vals.get(el.get("field"), "")
+        v = "" if v is None else str(v).strip().lower()
+        if v == "":
+            return
+        on = el.get("on", {}) or {}
+        eq = [str(s).strip().lower() for s in on.get("eq", [])]
+        contains = [str(s).strip().lower() for s in on.get("contains", [])]
+        hit = (v in eq) or any(sub and sub in v for sub in contains)
+        if not hit:
+            return
+        x = float(el.get("x", 0) or 0) / 100.0 * pw
+        y = float(el.get("y", 0) or 0) / 100.0 * ph
+        w = float(el.get("w", 0) or 0) / 100.0 * pw
+        c.setStrokeColorRGB(*col)
+        c.setLineWidth(float(el.get("thickness", 0.6) or 0.6))
+        c.line(x, ph - y, x + w, ph - y)
         return
     if t == "spread":
         # раскладка каждого символа значения по отдельной клетке:
