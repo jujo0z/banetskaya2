@@ -6,7 +6,7 @@ import pytest
 import requests
 from openpyxl import Workbook
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://root-monitor-1.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://analysis-tool-42.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 RUSSIAN_HEADERS = [
