@@ -2236,12 +2236,29 @@ def _pkg_on(include: Dict[str, bool], key: str) -> bool:
     return bool(include.get(key, True))
 
 
+async def _soobshenie_pkg_layout():
+    """Стандартный layout Сообщения + свои поля-столбцы (cc_*) из активного профиля наложения.
+    Стандартные поля и их позиции не меняются — только добавляются пользовательские столбцы."""
+    layout = list(docsvc.SOOBSHENIE_LAYOUT)
+    try:
+        act = await db.app_settings.find_one({"key": "overlay_active_profile"})
+        pid = (act or {}).get("value")
+        prof = await db.overlay_profiles.find_one({"id": pid}) if pid else None
+        for f in ((prof or {}).get("layout") or []):
+            if f.get("custom") and str(f.get("key", "")).startswith("cc_"):
+                layout.append(f)
+    except Exception:
+        logger.exception("soobshenie custom layout build failed")
+    return layout
+
+
 async def _build_package_pdf(req: "PackageRequest") -> bytes:
     tpl = await _active_tpl()
     inc = req.include or {}
     _zayav_tpl = await _zayav_template_overrides()
     _tpl19 = await _forma_template_overrides(19)
     _tpl24 = await _forma_template_overrides(24)
+    _soob_layout = await _soobshenie_pkg_layout()
     parts: List[bytes] = []
     for m in (req.people or []):
         if _pkg_on(inc, "contract"):
@@ -2266,7 +2283,7 @@ async def _build_package_pdf(req: "PackageRequest") -> bytes:
         if _pkg_on(inc, "soobshenie"):
             parts.append(docsvc.build_overlay(
                 [masterdata.master_to_soobshenie(m)],
-                layout=docsvc.SOOBSHENIE_LAYOUT, page_size="a4", with_form=True))
+                layout=_soob_layout, page_size="a4", with_form=True))
         if _pkg_on(inc, "zayavlenie"):
             parts.append(docsvc.build_zayavlenie(
                 [masterdata.master_to_zayavlenie(m)], template=_zayav_tpl,

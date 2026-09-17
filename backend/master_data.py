@@ -113,6 +113,15 @@ def _apply_deps(doc_name: str, rec: dict, m: dict) -> dict:
     return rec
 
 
+def _merge_custom(rec: dict, m: dict) -> dict:
+    """Прокинуть значения своих столбцов (ключи cc_*) в запись документа,
+    чтобы поставленное в редакторе поле-столбец печаталось по координатам."""
+    for k, v in (m or {}).items():
+        if isinstance(k, str) and k.startswith("cc_") and str(v).strip():
+            rec[k] = str(v)
+    return rec
+
+
 # ---------------------------------------------------------------------------
 # Вспомогательные разборщики дат
 # ---------------------------------------------------------------------------
@@ -207,7 +216,7 @@ def master_to_forma24(m: dict) -> dict:
         "spouse_together": m.get("spouse_together", ""),
         "children_count": m.get("children_count", ""),
     }
-    return _apply_deps("forma24", {k: v for k, v in rec.items() if str(v).strip()}, m)
+    return _merge_custom(_apply_deps("forma24", {k: v for k, v in rec.items() if str(v).strip()}, m), m)
 
 
 def master_to_forma19(m: dict) -> dict:
@@ -239,7 +248,7 @@ def master_to_forma19(m: dict) -> dict:
         "passport_series": ser, "passport_number": num,
         "passport_issued": m.get("passport_issued_by", ""),
     }
-    return _apply_deps("forma19", {k: v for k, v in rec.items() if str(v).strip()}, m)
+    return _merge_custom(_apply_deps("forma19", {k: v for k, v in rec.items() if str(v).strip()}, m), m)
 
 
 def master_to_soobshenie(m: dict) -> dict:
@@ -269,7 +278,7 @@ def master_to_soobshenie(m: dict) -> dict:
         "to_day": td, "to_month": tm, "to_year": ty[-2:] if ty else "",
         "chief": m.get("reg_chief", ""),
     }
-    return _apply_deps("soobshenie", {k: v for k, v in rec.items() if str(v).strip()}, m)
+    return _merge_custom(_apply_deps("soobshenie", {k: v for k, v in rec.items() if str(v).strip()}, m), m)
 
 
 # Общая площадь жилого помещения (общежития) — константа для всех (стр. 2).
@@ -318,7 +327,7 @@ def master_to_zayavlenie(m: dict) -> dict:
         "sign_date": m.get("sign_date", ""),
         "area": ZAYAV_AREA_DEFAULT,
     }
-    return _apply_deps("zayavlenie", rec, m)
+    return _merge_custom(_apply_deps("zayavlenie", rec, m), m)
 
 
 def derive_all(m: dict) -> dict:

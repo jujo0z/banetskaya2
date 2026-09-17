@@ -24,7 +24,7 @@ export function zayavOverlayText(rec) {
   const applicant = fio + (by ? `, ${by} г.р.` : "");
   const [sd, smon, sy] = splitRuDate(rec.sign_date);
   const sy2 = sy ? sy.slice(-2) : "";
-  return {
+  const out = {
     applicant,
     doc_name: g("doc_name"),
     passport_series: g("passport_series"),
@@ -48,6 +48,13 @@ export function zayavOverlayText(rec) {
     occupancy_count: g("occupancy_count"),
     minors_count: g("minors_count"),
   };
+  // свои столбцы (cc_*) — прокидываем как есть
+  Object.keys(rec).forEach((k) => {
+    if (k.indexOf("cc_") === 0 && rec[k] != null && String(rec[k]).trim() !== "") {
+      out[k] = String(rec[k]);
+    }
+  });
+  return out;
 }
 
 // Слот-наложение -> поле записи (для правки данных ПРЯМО в бланке).

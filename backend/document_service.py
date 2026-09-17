@@ -3188,7 +3188,7 @@ def zayav_overlay_text(rec):
     applicant = fio + ((", %s г.р." % by) if by else "")
     sd, smon, sy = _split_ru_date(rec.get("sign_date", ""))
     sy2 = sy[-2:] if sy else ""
-    return {
+    out = {
         "applicant": applicant,
         "doc_name": g("doc_name"),
         "passport_series": g("passport_series"),
@@ -3212,6 +3212,11 @@ def zayav_overlay_text(rec):
         "occupancy_count": g("occupancy_count"),
         "minors_count": g("minors_count"),
     }
+    # свои столбцы (cc_*) — прокидываем как есть, чтобы поставленные в редакторе поля печатались
+    for k, v in rec.items():
+        if isinstance(k, str) and k.startswith("cc_") and str(v).strip():
+            out[k] = str(v)
+    return out
 
 
 _SQRT2 = 1.41421356237

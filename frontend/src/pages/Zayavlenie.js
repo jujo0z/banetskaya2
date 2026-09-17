@@ -13,10 +13,9 @@ import {
   zayavlenieFields, getZayavlenieDefaults, saveZayavlenieDefaults, zayavleniePrefill,
   openZayavleniePdf, downloadZayavleniePdf, masterUpload, downloadMasterTemplate,
   getZayavlenieTemplate, saveZayavlenieTemplate, resetZayavlenieTemplate,
-  getZayavlenieRecords, saveZayavlenieRecords,
+  getZayavlenieRecords, saveZayavlenieRecords, getCustomColumns,
 } from "@/lib/apiClient";
 import ZayavPreview from "@/components/ZayavPreview";
-import DependencyManager from "@/components/DependencyManager";
 import { zayavOverlayText } from "@/lib/zayavOverlay";
 
 const recordLabel = (r, i) => (r.fio && String(r.fio).trim()) || `Заявление ${i + 1}`;
@@ -77,7 +76,13 @@ export default function Zayavlenie() {
         setGroups(f.groups || []);
         setDefaults(d || {});
         setTemplate((tpl.template || []).map((e) => ({ ...e, id: e.id || uid() })));
-        setSlotsMeta(tpl.slots || []);
+        let slots = tpl.slots || [];
+        try {
+          const cc = await getCustomColumns();
+          const extra = (cc.columns || []).map((c) => ({ slot: c.key, label: `★ ${c.label}` }));
+          slots = [...slots, ...extra];
+        } catch (e) { /* нет своих столбцов — не критично */ }
+        setSlotsMeta(slots);
         const prefillList = location.state?.prefillList || null;
         if (Array.isArray(prefillList) && prefillList.length) {
           const recs = await zayavleniePrefill(prefillList);
@@ -221,8 +226,6 @@ export default function Zayavlenie() {
           Кнопка <b>«2 на лист»</b> печатает 2 разных человека на одном листе A4 — оба из одного шаблона.
         </p>
       </div>
-
-      <DependencyManager document="zayavlenie" />
 
       <div className="grid grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)] gap-6">
         {/* ---- Left controls ---- */}

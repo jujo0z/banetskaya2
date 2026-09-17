@@ -29,6 +29,7 @@ import {
   Copy,
   Pencil,
   FolderPlus,
+  Database,
 } from "lucide-react";
 import {
   getOverlayLayout,
@@ -45,9 +46,9 @@ import {
   updateOverlayProfile,
   deleteOverlayProfile,
   setActiveOverlayProfile,
+  getCustomColumns,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
-import DependencyManager from "@/components/DependencyManager";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const BG_URL = `${BACKEND_URL}/api/overlay/background`;
@@ -121,6 +122,7 @@ export default function BlankOverlay() {
   const [profiles, setProfiles] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [layout, setLayout] = useState([]);
+  const [customCols, setCustomCols] = useState([]);
   const [values, setValues] = useState({});
   const [locked, setLocked] = useState(new Set()); // ключи «постоянных» (замок) полей
   const [dx, setDx] = useState(0);
@@ -386,6 +388,31 @@ export default function BlankOverlay() {
   };
 
   // ---- fields: add / remove / lock (constant) ----
+  const addColumnField = async () => {
+    let cols = customCols;
+    if (!cols.length) {
+      try { const cc = await getCustomColumns(); cols = cc.columns || []; setCustomCols(cols); } catch (e) { /* ignore */ }
+    }
+    if (!cols.length) {
+      toast.info("Сначала добавьте свой столбец в разделе «Таблица данных»");
+      return;
+    }
+    const list = cols.map((c, i) => `${i + 1}. ${c.label}`).join("\n");
+    const ans = window.prompt(`Выберите столбец для нового поля данных:\n${list}\n\nВведите номер:`, "1");
+    if (ans == null) return;
+    const idx = parseInt(ans, 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= cols.length) return;
+    const col = cols[idx];
+    if (layout.some((f) => f.key === col.key)) {
+      toast.info("Такое поле уже есть на бланке");
+      setSelected(col.key);
+      return;
+    }
+    setLayout((l) => [...l, { key: col.key, label: col.label, x_pct: 45, y_pct: 45, font_pt: 9, group: "Свои столбцы", custom: true }]);
+    setSelected(col.key);
+    toast.success(`Поле «${col.label}» добавлено — перетащите на место и сохраните профиль`);
+  };
+
   const addField = () => {
     const label = window.prompt("Название нового поля (например: «Особые отметки»):", "");
     if (!label) return;
@@ -569,10 +596,6 @@ export default function BlankOverlay() {
           </Button>
           <Button variant="outline" onClick={clearAll}>Очистить</Button>
         </div>
-      </div>
-
-      <div className="mb-6">
-        <DependencyManager document="soobshenie" />
       </div>
 
       {/* Profile bar */}
@@ -901,9 +924,14 @@ export default function BlankOverlay() {
           <div className="rounded-lg border border-pink-100 bg-white/80 p-4 space-y-4 max-h-[520px] overflow-auto">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold">Данные и поля</div>
-              <Button size="sm" variant="outline" onClick={addField} data-testid="btn-add-field">
-                <Plus className="h-4 w-4 mr-1" /> Добавить поле
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={addColumnField} className="border-[#EC4899]/50 text-[#EC4899]" data-testid="btn-add-column-field" title="Добавить поле, которое заполнится из вашего столбца таблицы данных">
+                  <Database className="h-4 w-4 mr-1" /> Поле из столбца
+                </Button>
+                <Button size="sm" variant="outline" onClick={addField} data-testid="btn-add-field">
+                  <Plus className="h-4 w-4 mr-1" /> Добавить поле
+                </Button>
+              </div>
             </div>
             {Object.entries(groups).map(([g, fs]) => (
               <div key={g}>

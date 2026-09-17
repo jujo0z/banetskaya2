@@ -4,7 +4,7 @@ import {
   Type, Minus, Database, Table2, Bold, Italic, Underline,
   AlignLeft, AlignCenter, AlignRight, Copy, Trash2, Save, RotateCcw, Plus,
 } from "lucide-react";
-import { getFormaTemplate, saveFormaTemplate, resetFormaTemplate } from "@/lib/apiClient";
+import { getFormaTemplate, saveFormaTemplate, resetFormaTemplate, getCustomColumns } from "@/lib/apiClient";
 import ZayavPreview from "@/components/ZayavPreview";
 
 const uid = () => "u" + Math.random().toString(36).slice(2, 9);
@@ -26,7 +26,13 @@ export default function DocEditor({ which, values = {}, side = "front", setSide 
       try {
         const data = await getFormaTemplate(which);
         setTemplate((data.template || []).map((e) => ({ ...e, id: e.id || uid() })));
-        setSlots(data.slots || []);
+        let slots = data.slots || [];
+        try {
+          const cc = await getCustomColumns();
+          const extra = (cc.columns || []).map((c) => ({ slot: c.key, label: `★ ${c.label}` }));
+          slots = [...slots, ...extra];
+        } catch (e) { /* нет своих столбцов */ }
+        setSlots(slots);
         if (data.page_w_mm) setPageWmm(data.page_w_mm);
         if (data.page_h_mm) setPageHmm(data.page_h_mm);
       } catch (e) {
