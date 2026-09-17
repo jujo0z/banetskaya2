@@ -38,6 +38,7 @@ import { generateUpload, saveContractsBatch, batchDownload, batchPrint, download
 import EditContractDialog from "@/components/DocumentEditor";
 import ManualDuplexDialog from "@/components/ManualDuplexDialog";
 import { PageHeader } from "@/components/Page";
+import DependencyManager from "@/components/DependencyManager";
 
 const NONE = "__none__";
 
@@ -228,6 +229,8 @@ export default function Generate() {
         subtitle="Загрузите Excel-таблицу студентов, выберите нужных и сформируйте договоры найма."
         icon={FileSpreadsheet}
       />
+
+      <DependencyManager document="contract" />
 
       {/* Upload */}
       <div className="card-premium p-6">

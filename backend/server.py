@@ -316,6 +316,271 @@ async def create_contract(req: GenerateRequest):
     return contract.model_dump()
 
 
+# ---------------------------------------------------------------------------
+# Настройки приложения (свои столбцы, зависимости) — коллекция settings
+# ---------------------------------------------------------------------------
+SETTINGS_ID = "app_settings"
+
+
+async def _get_setting(key: str, default=None):
+    doc = await db.settings.find_one({"id": SETTINGS_ID}, {"_id": 0})
+    if not doc:
+        return default
+    return doc.get(key, default)
+
+
+async def _set_setting(key: str, value):
+    await db.settings.update_one({"id": SETTINGS_ID},
+                                 {"$set": {"id": SETTINGS_ID, key: value}},
+                                 upsert=True)
+
+
+async def _custom_columns() -> list:
+    return await _get_setting("custom_columns", []) or []
+
+
+# ---------- Схема таблицы (встроенные + свои колонки) ----------
+@api_router.get("/master-schema")
+async def get_master_schema():
+    custom = await _custom_columns()
+    builtin = [{"key": c["key"], "label": c["header"], "section": c["section"],
+                "dropdown": c.get("dropdown"), "builtin": True}
+               for c in masterdata.MASTER_COLUMNS]
+    custom_cols = [{"key": c["key"], "label": c["label"],
+                    "section": c.get("section", "Дополнительно"),
+                    "dropdown": c.get("dropdown"), "builtin": False}
+                   for c in custom]
+    return {"columns": builtin + custom_cols}
+
+
+# ---------- Вся база строками для таблицы-Excel ----------
+@api_router.get("/contracts/grid")
+async def contracts_grid():
+    docs = await db.contracts.find({}, {"_id": 0}).sort("created_at", -1).to_list(100000)
+    rows = []
+    for d in docs:
+        m = dict(d.get("master") or {})
+        if not any(str(v).strip() for v in m.values()):
+            m = masterdata.contract_to_master(d.get("fields", {}) or {})
+        rows.append({
+            "id": d.get("id"),
+            "status": d.get("status", "final"),
+            "created_at": d.get("created_at", ""),
+            "contract_number": d.get("contract_number", ""),
+            "full_name": d.get("full_name", ""),
+            "master": m,
+        })
+    return {"rows": rows}
+
+
+class MasterRowUpdate(BaseModel):
+    id: str
+    master: Dict[str, Any] = {}
+
+
+class MasterBulkRequest(BaseModel):
+    rows: List[MasterRowUpdate]
+
+
+@api_router.put("/contracts/master-bulk")
+async def save_master_bulk(req: MasterBulkRequest):
+    """Сохранить отредактированные строки таблицы: пересобрать поля документов из master."""
+    updated = 0
+    for r in req.rows:
+        m = {k: ("" if v is None else str(v)) for k, v in (r.master or {}).items()}
+        fields = masterdata.master_to_contract(m)
+        upd = {
+            "master": m,
+            "fields": fields,
+            "full_name": fields.get("full_name", "") or m.get("fio", ""),
+            "contract_number": fields.get("contract_number", "") or m.get("contract_number", ""),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        res = await db.contracts.update_one({"id": r.id}, {"$set": upd})
+        if res.matched_count:
+            updated += 1
+    return {"updated": updated}
+
+
+# ---------- Свои столбцы ----------
+class CustomColumnRequest(BaseModel):
+    label: str
+    section: Optional[str] = "Дополнительно"
+    dropdown: Optional[List[str]] = None
+
+
+@api_router.get("/custom-columns")
+async def get_custom_columns():
+    return {"columns": await _custom_columns()}
+
+
+@api_router.post("/custom-columns")
+async def add_custom_column(req: CustomColumnRequest):
+    label = (req.label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Название столбца обязательно")
+    cols = await _custom_columns()
+    if any(c.get("label", "").strip().lower() == label.lower() for c in cols):
+        raise HTTPException(status_code=400, detail="Столбец с таким названием уже есть")
+    col = {
+        "key": "cc_" + uuid.uuid4().hex[:8],
+        "label": label,
+        "section": (req.section or "Дополнительно").strip() or "Дополнительно",
+        "dropdown": [str(x) for x in req.dropdown] if req.dropdown else None,
+    }
+    cols.append(col)
+    await _set_setting("custom_columns", cols)
+    return col
+
+
+@api_router.delete("/custom-columns/{key}")
+async def delete_custom_column(key: str):
+    cols = await _custom_columns()
+    new_cols = [c for c in cols if c.get("key") != key]
+    await _set_setting("custom_columns", new_cols)
+    # заодно чистим зависимости, ссылающиеся на этот столбец
+    deps = await _get_setting("dependencies", []) or []
+    deps = [d for d in deps if d.get("source") != key]
+    await _set_setting("dependencies", deps)
+    _rebuild_active_deps(deps)
+    return {"deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Зависимости: столбец -> поле бланка
+# ---------------------------------------------------------------------------
+DOCUMENT_LABELS = {
+    "contract": "Договор найма",
+    "forma19": "Форма 19 (прибытие)",
+    "forma24": "Талон учёта (Форма 24)",
+    "soobshenie": "Сообщение",
+    "zayavlenie": "Заявление о регистрации",
+}
+
+DOCUMENT_TARGETS = {
+    "contract": [
+        ("full_name", "ФИО"), ("birth_date", "Дата рождения"), ("citizenship", "Гражданство"),
+        ("passport_number", "Паспорт (серия/номер)"), ("passport_issue_date", "Паспорт: дата выдачи"),
+        ("passport_valid_until", "Паспорт: действителен до"), ("passport_issued_by", "Паспорт: кем выдан"),
+        ("id_number", "Идентификационный номер"), ("phone", "Телефон"),
+        ("registration_address", "Адрес регистрации"), ("room_number", "Номер комнаты"),
+        ("contract_number", "Номер договора"), ("sign_date", "Дата подписания"),
+        ("order_number", "Номер приказа"), ("order_date", "Дата приказа"),
+        ("contract_end_date", "Срок договора до"),
+    ],
+    "forma19": [
+        ("surname", "Фамилия"), ("first_name", "Имя"), ("patronymic", "Отчество"),
+        ("id_number", "Идентификационный номер"), ("citizenship", "Гражданство"),
+        ("res_street", "Улица"), ("res_house", "Дом"), ("res_korpus", "Корпус"),
+        ("res_apartment", "Комната/квартира"), ("reg_authority", "Орган регистрации"),
+        ("purpose", "Цель приезда"), ("purpose_term", "Срок пребывания"),
+        ("employment", "Где и кем работал"), ("arrival_date", "Дата прибытия"),
+        ("passport_issued", "Паспорт: кем выдан"),
+    ],
+    "forma24": [
+        ("surname", "Фамилия"), ("first_name", "Имя"), ("patronymic", "Отчество"),
+        ("nationality", "Национальность"), ("citizenship", "Гражданство"),
+        ("arrival_date", "Дата прибытия"), ("lived_since", "Проживал там с"),
+        ("term", "Срок пребывания"), ("prev_work", "Где и кем работал"),
+        ("children_count", "Детей до 14 лет"),
+    ],
+    "soobshenie": [
+        ("reg_organ", "Орган регистрации"), ("number", "№ сообщения"), ("fio", "ФИО"),
+        ("birth", "Место и год рождения"), ("address", "Адрес"),
+        ("issued_by", "Паспорт: кем выдан"), ("chief", "Начальник (ФИО)"),
+    ],
+    "zayavlenie": [
+        ("fio", "ФИО"), ("birth_year", "Год рождения"),
+        ("passport_issued_by", "Паспорт: кем выдан"), ("passport_issue_date", "Паспорт: дата выдачи"),
+        ("res_street", "Улица"), ("res_house", "Дом"), ("res_korpus", "Корпус"),
+        ("res_apartment", "Комната/квартира"), ("stay_term", "Срок пребывания"),
+        ("from_place", "Откуда прибыл"), ("basis", "Основание"),
+        ("sign_date", "Дата подписания"), ("area", "Общая площадь"),
+    ],
+}
+
+
+def _rebuild_active_deps(deps):
+    d = {}
+    for dep in deps or []:
+        doc = dep.get("document")
+        tf = dep.get("target_field")
+        src = dep.get("source")
+        if doc and tf and src:
+            d.setdefault(doc, {})[tf] = src
+    masterdata.ACTIVE_DEPS = d
+
+
+async def _load_active_deps():
+    deps = await _get_setting("dependencies", []) or []
+    _rebuild_active_deps(deps)
+
+
+class DependencyRequest(BaseModel):
+    document: str
+    target_field: str
+    source: str
+
+
+@api_router.get("/document-targets/{document}")
+async def document_targets(document: str):
+    tg = DOCUMENT_TARGETS.get(document)
+    if tg is None:
+        raise HTTPException(status_code=404, detail="Неизвестный документ")
+    return {"document": document, "label": DOCUMENT_LABELS.get(document, document),
+            "targets": [{"field": f, "label": l} for f, l in tg]}
+
+
+@api_router.get("/dependencies")
+async def list_dependencies(document: Optional[str] = None):
+    deps = await _get_setting("dependencies", []) or []
+    if document:
+        deps = [d for d in deps if d.get("document") == document]
+    # обогащаем метками для удобного отображения
+    cols = await _custom_columns()
+    key_to_label = {c["key"]: c["header"] for c in masterdata.MASTER_COLUMNS}
+    key_to_label.update({c["key"]: c["label"] for c in cols})
+    field_labels = {}
+    for doc, items in DOCUMENT_TARGETS.items():
+        field_labels[doc] = {f: l for f, l in items}
+    for d in deps:
+        d["source_label"] = key_to_label.get(d.get("source"), d.get("source"))
+        d["target_label"] = field_labels.get(d.get("document"), {}).get(
+            d.get("target_field"), d.get("target_field"))
+    return {"dependencies": deps}
+
+
+@api_router.post("/dependencies")
+async def add_dependency(req: DependencyRequest):
+    if req.document not in DOCUMENT_TARGETS:
+        raise HTTPException(status_code=400, detail="Неизвестный документ")
+    valid_fields = {f for f, _ in DOCUMENT_TARGETS[req.document]}
+    if req.target_field not in valid_fields:
+        raise HTTPException(status_code=400, detail="Неизвестное поле документа")
+    if not (req.source or "").strip():
+        raise HTTPException(status_code=400, detail="Не выбран столбец-источник")
+    deps = await _get_setting("dependencies", []) or []
+    # одна привязка на поле: заменяем предыдущую
+    deps = [d for d in deps if not (d.get("document") == req.document
+            and d.get("target_field") == req.target_field)]
+    dep = {"id": str(uuid.uuid4()), "document": req.document,
+           "target_field": req.target_field, "source": req.source}
+    deps.append(dep)
+    await _set_setting("dependencies", deps)
+    _rebuild_active_deps(deps)
+    return dep
+
+
+@api_router.delete("/dependencies/{dep_id}")
+async def delete_dependency(dep_id: str):
+    deps = await _get_setting("dependencies", []) or []
+    deps = [d for d in deps if d.get("id") != dep_id]
+    await _set_setting("dependencies", deps)
+    _rebuild_active_deps(deps)
+    return {"deleted": True}
+
+
+
 @api_router.put("/contracts/{contract_id}")
 async def update_contract(contract_id: str, req: GenerateRequest):
     existing = await db.contracts.find_one({"id": contract_id}, {"_id": 0})
@@ -503,7 +768,10 @@ async def export_contracts_base(q: Optional[str] = None, status: Optional[str] =
             }
         rows.append(m)
 
-    data = masterdata.build_master_xlsx(data_rows=rows)
+    custom = await _custom_columns()
+    extra = [{"key": c["key"], "header": c["label"],
+              "dropdown": c.get("dropdown")} for c in custom]
+    data = masterdata.build_master_xlsx(data_rows=rows, extra_columns=extra)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
     fname = f"База_данные_{stamp}.xlsx"
     from urllib.parse import quote
@@ -2514,6 +2782,14 @@ if (FRONTEND_BUILD / "index.html").exists():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+
+@app.on_event("startup")
+async def _init_active_deps():
+    try:
+        await _load_active_deps()
+    except Exception:
+        logger.exception("failed to load active dependencies")
 
 
 @app.on_event("startup")

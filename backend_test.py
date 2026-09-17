@@ -1,537 +1,779 @@
 #!/usr/bin/env python3
 """
-Backend testing for Banetskaya.by - Conditional Underline Feature (ul element type)
-Testing the new "ul" (conditional underline) template element type in Forms 19/24.
+Backend testing for Banetskaya.by NEW FEATURE:
+Встроенная Excel-таблица данных + свои столбцы + зависимости
 """
 import requests
 import json
 import sys
 
-# Use LOCAL backend as specified in review request
-BASE_URL = "http://localhost:8001/api"
+# Backend URL from frontend/.env
+BASE_URL = "https://analysis-tool-42.preview.emergentagent.com/api"
 
-def test_forma24_template_ul_elements():
-    """
-    TEST 1: GET /api/forma24/template
-    Should return 200 JSON with 17 elements of type "ul" for fields:
-    sex, purpose_choice, education, marital, spouse_together
-    Each ul element should have: field, x, y, w, and on (with eq/contains)
-    """
-    print("\n" + "="*80)
-    print("TEST 1: GET /api/forma24/template - Check for 17 'ul' elements")
-    print("="*80)
+def test_master_schema():
+    """TEST 1: GET /api/master-schema -> 200 with builtin + custom columns"""
+    print("\n=== TEST 1: GET /api/master-schema ===")
+    resp = requests.get(f"{BASE_URL}/master-schema")
+    print(f"Status: {resp.status_code}")
     
-    try:
-        resp = requests.get(f"{BASE_URL}/forma24/template", timeout=10)
-        print(f"Status: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            print(f"Response: {resp.text[:500]}")
-            return False
-        
-        data = resp.json()
-        template = data.get("template", [])
-        
-        # Find all ul elements
-        ul_elements = [el for el in template if el.get("type") == "ul"]
-        print(f"Found {len(ul_elements)} elements with type='ul'")
-        
-        if len(ul_elements) != 17:
-            print(f"❌ FAILED: Expected 17 'ul' elements, found {len(ul_elements)}")
-            return False
-        
-        # Check fields covered
-        fields_found = {}
-        for el in ul_elements:
-            field = el.get("field")
-            if field:
-                fields_found[field] = fields_found.get(field, 0) + 1
-        
-        print(f"Fields covered by ul elements: {fields_found}")
-        
-        expected_fields = ["sex", "purpose_choice", "education", "marital", "spouse_together"]
-        for field in expected_fields:
-            if field not in fields_found:
-                print(f"❌ FAILED: Expected field '{field}' not found in ul elements")
-                return False
-        
-        # Verify structure of ul elements
-        print("\nVerifying structure of ul elements:")
-        for i, el in enumerate(ul_elements[:3]):  # Check first 3 as sample
-            print(f"\n  ul element {i+1}:")
-            print(f"    field: {el.get('field')}")
-            print(f"    x: {el.get('x')}")
-            print(f"    y: {el.get('y')}")
-            print(f"    w: {el.get('w')}")
-            print(f"    on: {el.get('on')}")
-            
-            # Verify required fields
-            if not el.get("field"):
-                print(f"    ❌ Missing 'field'")
-                return False
-            if el.get("x") is None:
-                print(f"    ❌ Missing 'x'")
-                return False
-            if el.get("y") is None:
-                print(f"    ❌ Missing 'y'")
-                return False
-            if el.get("w") is None:
-                print(f"    ❌ Missing 'w'")
-                return False
-            
-            on = el.get("on")
-            if not on or not isinstance(on, dict):
-                print(f"    ❌ Missing or invalid 'on' field")
-                return False
-            
-            if "eq" not in on and "contains" not in on:
-                print(f"    ❌ 'on' must have 'eq' or 'contains'")
-                return False
-        
-        print("\n✅ TEST 1 PASSED: Found 17 'ul' elements with correct structure")
-        print(f"   Fields: sex ({fields_found.get('sex', 0)}), purpose_choice ({fields_found.get('purpose_choice', 0)}), "
-              f"education ({fields_found.get('education', 0)}), marital ({fields_found.get('marital', 0)}), "
-              f"spouse_together ({fields_found.get('spouse_together', 0)})")
-        return True
-        
-    except Exception as e:
-        print(f"❌ FAILED with exception: {e}")
-        import traceback
-        traceback.print_exc()
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
         return False
-
-
-def test_forma19_template_spread_element():
-    """
-    TEST 2: GET /api/forma19/template
-    Should return 200 JSON with element type="spread" with field=="id_number" (14 cells)
-    OR field id_number
-    """
-    print("\n" + "="*80)
-    print("TEST 2: GET /api/forma19/template - Check for 'spread' element or id_number")
-    print("="*80)
     
-    try:
-        resp = requests.get(f"{BASE_URL}/forma19/template", timeout=10)
-        print(f"Status: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            print(f"Response: {resp.text[:500]}")
-            return False
-        
-        data = resp.json()
-        template = data.get("template", [])
-        
-        # Find spread elements
-        spread_elements = [el for el in template if el.get("type") == "spread"]
-        print(f"Found {len(spread_elements)} elements with type='spread'")
-        
-        # Find id_number field
-        id_number_elements = [el for el in template if el.get("field") == "id_number"]
-        print(f"Found {len(id_number_elements)} elements with field='id_number'")
-        
-        # Check for spread element with id_number
-        spread_id_number = [el for el in spread_elements if el.get("field") == "id_number"]
-        
-        if spread_id_number:
-            el = spread_id_number[0]
-            print(f"\n✅ Found 'spread' element with field='id_number':")
-            print(f"   x: {el.get('x')}")
-            print(f"   y: {el.get('y')}")
-            print(f"   cw: {el.get('cw')} (cell width)")
-            print(f"   n: {el.get('n')} (number of cells)")
-            
-            n = el.get("n")
-            if n and n == 14:
-                print(f"   ✅ Correct: 14 cells for id_number")
-            else:
-                print(f"   ⚠️  Note: Expected 14 cells, found {n}")
-            
-            print("\n✅ TEST 2 PASSED: Found 'spread' element with field='id_number'")
-            return True
-        elif id_number_elements:
-            print(f"\n✅ Found {len(id_number_elements)} element(s) with field='id_number'")
-            for el in id_number_elements:
-                print(f"   type: {el.get('type')}, x: {el.get('x')}, y: {el.get('y')}")
-            print("\n✅ TEST 2 PASSED: Found id_number field in template")
-            return True
-        else:
-            print(f"❌ FAILED: No 'spread' element with id_number and no id_number field found")
-            return False
-        
-    except Exception as e:
-        print(f"❌ FAILED with exception: {e}")
-        import traceback
-        traceback.print_exc()
+    data = resp.json()
+    if "columns" not in data:
+        print("❌ FAILED: Missing 'columns' key")
         return False
+    
+    columns = data["columns"]
+    builtin = [c for c in columns if c.get("builtin") == True]
+    custom = [c for c in columns if c.get("builtin") == False]
+    
+    print(f"✅ Total columns: {len(columns)}")
+    print(f"✅ Builtin columns: {len(builtin)} (expected ~50)")
+    print(f"✅ Custom columns: {len(custom)}")
+    
+    # Check for required builtin columns
+    keys = [c["key"] for c in columns]
+    required = ["fio", "contract_number", "phone", "room_number"]
+    for req in required:
+        if req in keys:
+            print(f"✅ Required key '{req}' present")
+        else:
+            print(f"❌ FAILED: Required key '{req}' missing")
+            return False
+    
+    # Check structure
+    if builtin:
+        sample = builtin[0]
+        required_fields = ["key", "label", "section", "builtin"]
+        for field in required_fields:
+            if field not in sample:
+                print(f"❌ FAILED: Column missing field '{field}'")
+                return False
+        print(f"✅ Column structure valid: {required_fields}")
+    
+    print("✅ TEST 1 PASSED")
+    return True
 
 
-def test_forma24_preview_png_conditional_rendering():
-    """
-    TEST 3: POST /api/forma24/preview-png - Conditional rendering proof
+def test_contracts_grid():
+    """TEST 2: GET /api/contracts/grid -> 200 with rows containing master data"""
+    print("\n=== TEST 2: GET /api/contracts/grid ===")
+    resp = requests.get(f"{BASE_URL}/contracts/grid")
+    print(f"Status: {resp.status_code}")
     
-    CRITICAL: Verify that PNG output DIFFERS when different codes are used.
-    This proves that conditional underline is actually working.
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+        return False
     
-    Test cases:
-    - side=front: sex="1" vs sex="2", purpose_choice="1" vs "2"
-    - side=back: education="3" vs "5", marital="2" vs "4", spouse_together="5" vs "6"
-    - Control: identical requests should give same size PNG
-    """
-    print("\n" + "="*80)
-    print("TEST 3: POST /api/forma24/preview-png - Conditional Rendering Proof")
-    print("="*80)
+    data = resp.json()
+    if "rows" not in data:
+        print("❌ FAILED: Missing 'rows' key")
+        return False
     
-    results = []
+    rows = data["rows"]
+    print(f"✅ Total rows: {len(rows)}")
     
-    # Test 3a: Front side - sex and purpose_choice
-    print("\n--- Test 3a: Front side - Different sex and purpose_choice codes ---")
-    
-    record1_front = {
-        "records": [{"sex": "1", "purpose_choice": "1", "surname": "ТЕСТ"}],
-        "side": "front"
-    }
-    
-    record2_front = {
-        "records": [{"sex": "2", "purpose_choice": "2", "surname": "ТЕСТ"}],
-        "side": "front"
-    }
-    
-    try:
-        resp1 = requests.post(f"{BASE_URL}/forma24/preview-png", json=record1_front, timeout=15)
-        print(f"Request 1 (sex=1, purpose_choice=1): Status {resp1.status_code}")
-        
-        if resp1.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp1.status_code}")
-            print(f"Response: {resp1.text[:500]}")
-            results.append(False)
-        else:
-            content_type = resp1.headers.get("Content-Type", "")
-            print(f"Content-Type: {content_type}")
-            
-            if "image/png" not in content_type and not resp1.content.startswith(b'\x89PNG'):
-                print(f"❌ FAILED: Not a PNG response")
-                print(f"First 50 bytes: {resp1.content[:50]}")
-                results.append(False)
-            else:
-                size1 = len(resp1.content)
-                print(f"✅ Valid PNG, size: {size1} bytes")
-                
-                resp2 = requests.post(f"{BASE_URL}/forma24/preview-png", json=record2_front, timeout=15)
-                print(f"\nRequest 2 (sex=2, purpose_choice=2): Status {resp2.status_code}")
-                
-                if resp2.status_code != 200:
-                    print(f"❌ FAILED: Expected 200, got {resp2.status_code}")
-                    results.append(False)
-                else:
-                    size2 = len(resp2.content)
-                    print(f"✅ Valid PNG, size: {size2} bytes")
-                    
-                    if size1 == size2:
-                        print(f"⚠️  WARNING: PNG sizes are identical ({size1} bytes)")
-                        print(f"   This might indicate conditional rendering is NOT working")
-                        # Check if content is actually different
-                        if resp1.content == resp2.content:
-                            print(f"❌ FAILED: PNG content is IDENTICAL - conditional rendering NOT working!")
-                            results.append(False)
-                        else:
-                            print(f"✅ PASSED: PNG content differs (same size but different bytes)")
-                            results.append(True)
-                    else:
-                        diff = abs(size1 - size2)
-                        print(f"✅ PASSED: PNG sizes differ by {diff} bytes ({diff/max(size1,size2)*100:.1f}%)")
-                        print(f"   This proves conditional rendering is working!")
-                        results.append(True)
-    
-    except Exception as e:
-        print(f"❌ FAILED with exception: {e}")
-        import traceback
-        traceback.print_exc()
-        results.append(False)
-    
-    # Test 3b: Back side - education, marital, spouse_together
-    print("\n--- Test 3b: Back side - Different education, marital, spouse_together codes ---")
-    
-    record1_back = {
-        "records": [{"education": "3", "marital": "2", "spouse_together": "5", "surname": "ТЕСТ"}],
-        "side": "back"
-    }
-    
-    record2_back = {
-        "records": [{"education": "5", "marital": "4", "spouse_together": "6", "surname": "ТЕСТ"}],
-        "side": "back"
-    }
-    
-    try:
-        resp1 = requests.post(f"{BASE_URL}/forma24/preview-png", json=record1_back, timeout=15)
-        print(f"Request 1 (education=3, marital=2, spouse_together=5): Status {resp1.status_code}")
-        
-        if resp1.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp1.status_code}")
-            print(f"Response: {resp1.text[:500]}")
-            results.append(False)
-        else:
-            content_type = resp1.headers.get("Content-Type", "")
-            print(f"Content-Type: {content_type}")
-            
-            if "image/png" not in content_type and not resp1.content.startswith(b'\x89PNG'):
-                print(f"❌ FAILED: Not a PNG response")
-                results.append(False)
-            else:
-                size1 = len(resp1.content)
-                print(f"✅ Valid PNG, size: {size1} bytes")
-                
-                resp2 = requests.post(f"{BASE_URL}/forma24/preview-png", json=record2_back, timeout=15)
-                print(f"\nRequest 2 (education=5, marital=4, spouse_together=6): Status {resp2.status_code}")
-                
-                if resp2.status_code != 200:
-                    print(f"❌ FAILED: Expected 200, got {resp2.status_code}")
-                    results.append(False)
-                else:
-                    size2 = len(resp2.content)
-                    print(f"✅ Valid PNG, size: {size2} bytes")
-                    
-                    if size1 == size2:
-                        print(f"⚠️  WARNING: PNG sizes are identical ({size1} bytes)")
-                        # Check if content is actually different
-                        if resp1.content == resp2.content:
-                            print(f"❌ FAILED: PNG content is IDENTICAL - conditional rendering NOT working!")
-                            results.append(False)
-                        else:
-                            print(f"✅ PASSED: PNG content differs (same size but different bytes)")
-                            results.append(True)
-                    else:
-                        diff = abs(size1 - size2)
-                        print(f"✅ PASSED: PNG sizes differ by {diff} bytes ({diff/max(size1,size2)*100:.1f}%)")
-                        print(f"   This proves conditional rendering is working!")
-                        results.append(True)
-    
-    except Exception as e:
-        print(f"❌ FAILED with exception: {e}")
-        import traceback
-        traceback.print_exc()
-        results.append(False)
-    
-    # Test 3c: Control - identical requests should give same result
-    print("\n--- Test 3c: Control - Identical requests should give identical PNG ---")
-    
-    control_record = {
-        "records": [{"sex": "1", "education": "3", "surname": "КОНТРОЛЬ"}],
-        "side": "front"
-    }
-    
-    try:
-        resp1 = requests.post(f"{BASE_URL}/forma24/preview-png", json=control_record, timeout=15)
-        resp2 = requests.post(f"{BASE_URL}/forma24/preview-png", json=control_record, timeout=15)
-        
-        print(f"Request 1: Status {resp1.status_code}, size {len(resp1.content)} bytes")
-        print(f"Request 2: Status {resp2.status_code}, size {len(resp2.content)} bytes")
-        
-        if resp1.status_code == 200 and resp2.status_code == 200:
-            if len(resp1.content) == len(resp2.content):
-                print(f"✅ PASSED: Identical requests give same size PNG ({len(resp1.content)} bytes)")
-                results.append(True)
-            else:
-                print(f"⚠️  WARNING: Identical requests give different sizes")
-                print(f"   This might indicate non-deterministic rendering")
-                results.append(True)  # Not a critical failure
-        else:
-            print(f"❌ FAILED: One or both requests failed")
-            results.append(False)
-    
-    except Exception as e:
-        print(f"❌ FAILED with exception: {e}")
-        import traceback
-        traceback.print_exc()
-        results.append(False)
-    
-    # Summary
-    print("\n" + "="*80)
-    if all(results):
-        print("✅ TEST 3 PASSED: Conditional rendering is working correctly")
-        print("   - Different codes produce different PNG output")
-        print("   - Identical requests produce consistent output")
+    if len(rows) == 0:
+        print("⚠️  WARNING: No rows in grid (expected 6 demo contracts)")
         return True
+    
+    # Check structure of first row
+    row = rows[0]
+    required_fields = ["id", "status", "created_at", "contract_number", "full_name", "master"]
+    for field in required_fields:
+        if field not in row:
+            print(f"❌ FAILED: Row missing field '{field}'")
+            return False
+    
+    print(f"✅ Row structure valid: {required_fields}")
+    
+    # Check master data
+    master = row.get("master", {})
+    if not master or not any(str(v).strip() for v in master.values()):
+        print("⚠️  WARNING: First row has empty master data")
     else:
-        print(f"❌ TEST 3 FAILED: {results.count(False)}/{len(results)} sub-tests failed")
-        return False
-
-
-def test_forma24_preview_pdf():
-    """
-    TEST 4: POST /api/forma24/preview (PDF)
-    Should return 200 PDF with 2 pages
-    """
-    print("\n" + "="*80)
-    print("TEST 4: POST /api/forma24/preview - PDF generation")
-    print("="*80)
+        print(f"✅ Master data present: {len(master)} fields")
+        # Show sample keys
+        sample_keys = list(master.keys())[:5]
+        print(f"   Sample keys: {sample_keys}")
     
-    try:
-        payload = {
-            "records": [
-                {"surname": "Иванов", "first_name": "Иван", "sex": "1", "education": "4"}
-            ]
-        }
-        
-        resp = requests.post(f"{BASE_URL}/forma24/preview", json=payload, timeout=15)
-        print(f"Status: {resp.status_code}")
+    print("✅ TEST 2 PASSED")
+    return True
+
+
+def test_custom_columns_create():
+    """TEST 3: POST /api/custom-columns -> 200, creates custom column"""
+    print("\n=== TEST 3: POST /api/custom-columns (create) ===")
+    
+    # Create a custom column
+    payload = {
+        "label": "Курс обучения",
+        "section": "Дополнительно",
+        "dropdown": ["1 курс", "2 курс", "3 курс", "4 курс"]
+    }
+    
+    resp = requests.post(f"{BASE_URL}/custom-columns", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+        if resp.status_code == 400:
+            print(f"   Detail: {resp.json().get('detail')}")
+        return False
+    
+    data = resp.json()
+    required_fields = ["key", "label", "section"]
+    for field in required_fields:
+        if field not in data:
+            print(f"❌ FAILED: Response missing field '{field}'")
+            return False
+    
+    key = data["key"]
+    if not key.startswith("cc_"):
+        print(f"❌ FAILED: Key should start with 'cc_', got '{key}'")
+        return False
+    
+    print(f"✅ Custom column created: key={key}, label={data['label']}")
+    print(f"✅ Section: {data.get('section')}")
+    print(f"✅ Dropdown: {data.get('dropdown')}")
+    
+    # Verify it appears in master-schema
+    print("\n   Verifying in master-schema...")
+    resp2 = requests.get(f"{BASE_URL}/master-schema")
+    if resp2.status_code == 200:
+        columns = resp2.json().get("columns", [])
+        found = any(c.get("key") == key for c in columns)
+        if found:
+            print(f"✅ Custom column appears in master-schema")
+        else:
+            print(f"❌ FAILED: Custom column NOT in master-schema")
+            return False
+    
+    # Verify it appears in custom-columns list
+    print("   Verifying in custom-columns list...")
+    resp3 = requests.get(f"{BASE_URL}/custom-columns")
+    if resp3.status_code == 200:
+        custom_cols = resp3.json().get("columns", [])
+        found = any(c.get("key") == key for c in custom_cols)
+        if found:
+            print(f"✅ Custom column appears in custom-columns list")
+        else:
+            print(f"❌ FAILED: Custom column NOT in custom-columns list")
+            return False
+    
+    print("✅ TEST 3 PASSED")
+    return True, key  # Return the key for later tests
+
+
+def test_custom_columns_duplicate():
+    """TEST 3b: POST /api/custom-columns with duplicate label -> 400"""
+    print("\n=== TEST 3b: POST /api/custom-columns (duplicate) ===")
+    
+    payload = {"label": "Курс обучения"}  # Same as TEST 3
+    resp = requests.post(f"{BASE_URL}/custom-columns", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 400:
+        print(f"❌ FAILED: Expected 400 for duplicate, got {resp.status_code}")
+        return False
+    
+    print(f"✅ Correctly rejected duplicate label")
+    print(f"   Detail: {resp.json().get('detail')}")
+    print("✅ TEST 3b PASSED")
+    return True
+
+
+def test_custom_columns_empty_label():
+    """TEST 3c: POST /api/custom-columns with empty label -> 400"""
+    print("\n=== TEST 3c: POST /api/custom-columns (empty label) ===")
+    
+    payload = {"label": ""}
+    resp = requests.post(f"{BASE_URL}/custom-columns", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 400:
+        print(f"❌ FAILED: Expected 400 for empty label, got {resp.status_code}")
+        return False
+    
+    print(f"✅ Correctly rejected empty label")
+    print(f"   Detail: {resp.json().get('detail')}")
+    print("✅ TEST 3c PASSED")
+    return True
+
+
+def test_master_bulk_update(custom_key):
+    """TEST 4: PUT /api/contracts/master-bulk -> 200, updates master data"""
+    print("\n=== TEST 4: PUT /api/contracts/master-bulk ===")
+    
+    # First, get a contract from grid
+    resp = requests.get(f"{BASE_URL}/contracts/grid")
+    if resp.status_code != 200:
+        print("❌ FAILED: Cannot get contracts grid")
+        return False
+    
+    rows = resp.json().get("rows", [])
+    if not rows:
+        print("❌ FAILED: No contracts to update")
+        return False
+    
+    contract_id = rows[0]["id"]
+    master = dict(rows[0].get("master", {}))
+    
+    print(f"   Updating contract: {contract_id}")
+    print(f"   Original phone: {master.get('phone', 'N/A')}")
+    
+    # Update phone and add custom column value
+    master["phone"] = "+375291234567"
+    master[custom_key] = "2 курс"
+    
+    payload = {
+        "rows": [
+            {
+                "id": contract_id,
+                "master": master
+            }
+        ]
+    }
+    
+    resp = requests.put(f"{BASE_URL}/contracts/master-bulk", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    if data.get("updated") != 1:
+        print(f"❌ FAILED: Expected updated=1, got {data.get('updated')}")
+        return False
+    
+    print(f"✅ Updated {data['updated']} contract(s)")
+    
+    # Verify the update
+    print("\n   Verifying update in grid...")
+    resp2 = requests.get(f"{BASE_URL}/contracts/grid")
+    if resp2.status_code == 200:
+        rows2 = resp2.json().get("rows", [])
+        updated_row = next((r for r in rows2 if r["id"] == contract_id), None)
+        if updated_row:
+            new_master = updated_row.get("master", {})
+            new_phone = new_master.get("phone")
+            new_custom = new_master.get(custom_key)
+            
+            if new_phone == "+375291234567":
+                print(f"✅ Phone updated correctly: {new_phone}")
+            else:
+                print(f"❌ FAILED: Phone not updated, got {new_phone}")
+                return False
+            
+            if new_custom == "2 курс":
+                print(f"✅ Custom column value saved: {custom_key}={new_custom}")
+            else:
+                print(f"⚠️  WARNING: Custom column value: {new_custom}")
+            
+            # Check that full_name and contract_number are preserved
+            if updated_row.get("full_name"):
+                print(f"✅ full_name preserved: {updated_row['full_name']}")
+            if updated_row.get("contract_number"):
+                print(f"✅ contract_number preserved: {updated_row['contract_number']}")
+        else:
+            print("❌ FAILED: Updated contract not found in grid")
+            return False
+    
+    print("✅ TEST 4 PASSED")
+    return True
+
+
+def test_document_targets():
+    """TEST 5: GET /api/document-targets/{document} -> 200 with targets"""
+    print("\n=== TEST 5: GET /api/document-targets/{document} ===")
+    
+    documents = ["zayavlenie", "forma19", "forma24", "soobshenie", "contract"]
+    
+    for doc in documents:
+        print(f"\n   Testing document: {doc}")
+        resp = requests.get(f"{BASE_URL}/document-targets/{doc}")
+        print(f"   Status: {resp.status_code}")
         
         if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            print(f"Response: {resp.text[:500]}")
+            print(f"   ❌ FAILED: Expected 200, got {resp.status_code}")
             return False
         
-        content_type = resp.headers.get("Content-Type", "")
-        print(f"Content-Type: {content_type}")
-        
-        if "application/pdf" not in content_type and not resp.content.startswith(b'%PDF'):
-            print(f"❌ FAILED: Not a PDF response")
-            print(f"First 50 bytes: {resp.content[:50]}")
+        data = resp.json()
+        if "targets" not in data:
+            print(f"   ❌ FAILED: Missing 'targets' key")
             return False
         
-        size = len(resp.content)
-        print(f"✅ Valid PDF, size: {size} bytes")
+        targets = data["targets"]
+        print(f"   ✅ Found {len(targets)} target fields")
         
-        # Verify it's a valid PDF with 2 pages using pymupdf
-        try:
-            import fitz  # pymupdf
-            doc = fitz.open(stream=resp.content, filetype="pdf")
-            page_count = len(doc)
-            print(f"Page count: {page_count}")
-            
-            if page_count != 2:
-                print(f"⚠️  WARNING: Expected 2 pages, got {page_count}")
+        # Check structure
+        if targets:
+            sample = targets[0]
+            if "field" not in sample or "label" not in sample:
+                print(f"   ❌ FAILED: Target missing 'field' or 'label'")
+                return False
+            print(f"   ✅ Sample target: {sample['field']} - {sample['label']}")
+        
+        # Check for specific field in zayavlenie
+        if doc == "zayavlenie":
+            fields = [t["field"] for t in targets]
+            if "stay_term" in fields:
+                print(f"   ✅ 'stay_term' field present in zayavlenie")
             else:
-                print(f"✅ Correct: 2 pages (front + back)")
-            
-            doc.close()
-        except ImportError:
-            print("⚠️  pymupdf not available, skipping page count verification")
-        except Exception as e:
-            print(f"⚠️  Could not verify page count: {e}")
-        
-        print("\n✅ TEST 4 PASSED: PDF generation works")
-        return True
-        
-    except Exception as e:
-        print(f"❌ FAILED with exception: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def test_forma19_preview_pdf():
-    """
-    TEST 5: POST /api/forma19/preview (PDF)
-    Should return 200 PDF with 2 pages
-    """
-    print("\n" + "="*80)
-    print("TEST 5: POST /api/forma19/preview - PDF generation")
-    print("="*80)
+                print(f"   ❌ FAILED: 'stay_term' field missing in zayavlenie")
+                return False
     
-    try:
-        payload = {
-            "records": [
-                {"surname": "Петров", "first_name": "Пётр", "citizenship": "РБ", "purpose": "на учёбу"}
-            ]
-        }
-        
-        resp = requests.post(f"{BASE_URL}/forma19/preview", json=payload, timeout=15)
-        print(f"Status: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {resp.status_code}")
-            print(f"Response: {resp.text[:500]}")
-            return False
-        
-        content_type = resp.headers.get("Content-Type", "")
-        print(f"Content-Type: {content_type}")
-        
-        if "application/pdf" not in content_type and not resp.content.startswith(b'%PDF'):
-            print(f"❌ FAILED: Not a PDF response")
-            print(f"First 50 bytes: {resp.content[:50]}")
-            return False
-        
-        size = len(resp.content)
-        print(f"✅ Valid PDF, size: {size} bytes")
-        
-        # Verify it's a valid PDF with 2 pages using pymupdf
-        try:
-            import fitz  # pymupdf
-            doc = fitz.open(stream=resp.content, filetype="pdf")
-            page_count = len(doc)
-            print(f"Page count: {page_count}")
-            
-            if page_count != 2:
-                print(f"⚠️  WARNING: Expected 2 pages, got {page_count}")
-            else:
-                print(f"✅ Correct: 2 pages (front + back)")
-            
-            doc.close()
-        except ImportError:
-            print("⚠️  pymupdf not available, skipping page count verification")
-        except Exception as e:
-            print(f"⚠️  Could not verify page count: {e}")
-        
-        print("\n✅ TEST 5 PASSED: PDF generation works")
-        return True
-        
-    except Exception as e:
-        print(f"❌ FAILED with exception: {e}")
-        import traceback
-        traceback.print_exc()
+    # Test invalid document
+    print(f"\n   Testing invalid document: badname")
+    resp = requests.get(f"{BASE_URL}/document-targets/badname")
+    print(f"   Status: {resp.status_code}")
+    if resp.status_code != 404:
+        print(f"   ❌ FAILED: Expected 404 for invalid document, got {resp.status_code}")
         return False
+    print(f"   ✅ Correctly rejected invalid document")
+    
+    print("\n✅ TEST 5 PASSED")
+    return True
+
+
+def test_dependencies_create(custom_key):
+    """TEST 6: POST /api/dependencies -> 200, creates dependency"""
+    print("\n=== TEST 6: POST /api/dependencies ===")
+    
+    # Create a dependency: zayavlenie.stay_term <- custom column
+    payload = {
+        "document": "zayavlenie",
+        "target_field": "stay_term",
+        "source": custom_key
+    }
+    
+    resp = requests.post(f"{BASE_URL}/dependencies", json=payload)
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+        if resp.status_code == 400:
+            print(f"   Detail: {resp.json().get('detail')}")
+        return False
+    
+    data = resp.json()
+    required_fields = ["id", "document", "target_field", "source"]
+    for field in required_fields:
+        if field not in data:
+            print(f"❌ FAILED: Response missing field '{field}'")
+            return False
+    
+    dep_id = data["id"]
+    print(f"✅ Dependency created: id={dep_id}")
+    print(f"   document={data['document']}, target_field={data['target_field']}, source={data['source']}")
+    
+    # Test replacing dependency (same target_field)
+    print("\n   Testing replacement (same target_field)...")
+    payload2 = {
+        "document": "zayavlenie",
+        "target_field": "stay_term",
+        "source": "phone"  # Different source
+    }
+    resp2 = requests.post(f"{BASE_URL}/dependencies", json=payload2)
+    if resp2.status_code == 200:
+        print(f"✅ Dependency replaced (one per target_field)")
+        dep_id = resp2.json()["id"]  # Update dep_id for cleanup
+    
+    # Test invalid document
+    print("\n   Testing invalid document...")
+    payload3 = {"document": "badname", "target_field": "stay_term", "source": custom_key}
+    resp3 = requests.post(f"{BASE_URL}/dependencies", json=payload3)
+    if resp3.status_code != 400:
+        print(f"   ❌ FAILED: Expected 400 for invalid document, got {resp3.status_code}")
+        return False
+    print(f"   ✅ Correctly rejected invalid document")
+    
+    # Test invalid target_field
+    print("   Testing invalid target_field...")
+    payload4 = {"document": "zayavlenie", "target_field": "nope", "source": custom_key}
+    resp4 = requests.post(f"{BASE_URL}/dependencies", json=payload4)
+    if resp4.status_code != 400:
+        print(f"   ❌ FAILED: Expected 400 for invalid target_field, got {resp4.status_code}")
+        return False
+    print(f"   ✅ Correctly rejected invalid target_field")
+    
+    # Test empty source
+    print("   Testing empty source...")
+    payload5 = {"document": "zayavlenie", "target_field": "stay_term", "source": ""}
+    resp5 = requests.post(f"{BASE_URL}/dependencies", json=payload5)
+    if resp5.status_code != 400:
+        print(f"   ❌ FAILED: Expected 400 for empty source, got {resp5.status_code}")
+        return False
+    print(f"   ✅ Correctly rejected empty source")
+    
+    print("\n✅ TEST 6 PASSED")
+    return True, dep_id
+
+
+def test_dependencies_list():
+    """TEST 7: GET /api/dependencies?document=... -> 200 with source_label and target_label"""
+    print("\n=== TEST 7: GET /api/dependencies ===")
+    
+    # Get all dependencies
+    resp = requests.get(f"{BASE_URL}/dependencies")
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    if "dependencies" not in data:
+        print("❌ FAILED: Missing 'dependencies' key")
+        return False
+    
+    deps = data["dependencies"]
+    print(f"✅ Total dependencies: {len(deps)}")
+    
+    if deps:
+        sample = deps[0]
+        required_fields = ["id", "document", "target_field", "source", "source_label", "target_label"]
+        for field in required_fields:
+            if field not in sample:
+                print(f"❌ FAILED: Dependency missing field '{field}'")
+                return False
+        
+        print(f"✅ Dependency structure valid")
+        print(f"   Sample: {sample['document']}.{sample['target_field']} <- {sample['source']}")
+        print(f"   Labels: '{sample['target_label']}' <- '{sample['source_label']}'")
+    
+    # Filter by document
+    print("\n   Testing filter by document=zayavlenie...")
+    resp2 = requests.get(f"{BASE_URL}/dependencies?document=zayavlenie")
+    if resp2.status_code == 200:
+        deps2 = resp2.json().get("dependencies", [])
+        print(f"   ✅ Found {len(deps2)} dependencies for zayavlenie")
+        if deps2:
+            all_zayav = all(d.get("document") == "zayavlenie" for d in deps2)
+            if all_zayav:
+                print(f"   ✅ All dependencies are for zayavlenie")
+            else:
+                print(f"   ❌ FAILED: Some dependencies are not for zayavlenie")
+                return False
+    
+    print("\n✅ TEST 7 PASSED")
+    return True
+
+
+def test_package_generation():
+    """TEST 8: POST /api/contracts/{id}/package -> 200 PDF (dependency doesn't break generation)"""
+    print("\n=== TEST 8: POST /api/contracts/{id}/package ===")
+    
+    # Get a contract with master data
+    resp = requests.get(f"{BASE_URL}/contracts/grid")
+    if resp.status_code != 200:
+        print("❌ FAILED: Cannot get contracts grid")
+        return False
+    
+    rows = resp.json().get("rows", [])
+    if not rows:
+        print("❌ FAILED: No contracts available")
+        return False
+    
+    # Find a contract with master data
+    contract_id = None
+    for row in rows:
+        master = row.get("master", {})
+        if master and any(str(v).strip() for v in master.values()):
+            contract_id = row["id"]
+            print(f"   Using contract: {contract_id}")
+            print(f"   Name: {row.get('full_name', 'N/A')}")
+            break
+    
+    if not contract_id:
+        print("⚠️  WARNING: No contracts with master data, using first contract")
+        contract_id = rows[0]["id"]
+    
+    # Generate package
+    resp = requests.post(f"{BASE_URL}/contracts/{contract_id}/package", json={})
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+        if resp.status_code == 500:
+            print(f"   Detail: {resp.json().get('detail')}")
+        return False
+    
+    content_type = resp.headers.get("Content-Type", "")
+    if "application/pdf" not in content_type:
+        print(f"❌ FAILED: Expected PDF, got Content-Type: {content_type}")
+        return False
+    
+    pdf_size = len(resp.content)
+    print(f"✅ PDF generated successfully")
+    print(f"   Content-Type: {content_type}")
+    print(f"   Size: {pdf_size} bytes")
+    
+    # Check PDF signature
+    if resp.content[:4] == b'%PDF':
+        print(f"✅ Valid PDF signature")
+    else:
+        print(f"❌ FAILED: Invalid PDF signature")
+        return False
+    
+    print("✅ TEST 8 PASSED")
+    return True
+
+
+def test_delete_custom_column(custom_key):
+    """TEST 9: DELETE /api/custom-columns/{key} -> 200, cleans dependencies"""
+    print("\n=== TEST 9: DELETE /api/custom-columns/{key} ===")
+    
+    # First, check current dependencies
+    resp = requests.get(f"{BASE_URL}/dependencies")
+    if resp.status_code == 200:
+        deps_before = resp.json().get("dependencies", [])
+        deps_with_key = [d for d in deps_before if d.get("source") == custom_key]
+        print(f"   Dependencies with source={custom_key}: {len(deps_with_key)}")
+    
+    # Delete the custom column
+    resp = requests.delete(f"{BASE_URL}/custom-columns/{custom_key}")
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    if not data.get("deleted"):
+        print(f"❌ FAILED: Expected deleted=true")
+        return False
+    
+    print(f"✅ Custom column deleted")
+    
+    # Verify it's removed from master-schema
+    print("\n   Verifying removal from master-schema...")
+    resp2 = requests.get(f"{BASE_URL}/master-schema")
+    if resp2.status_code == 200:
+        columns = resp2.json().get("columns", [])
+        found = any(c.get("key") == custom_key for c in columns)
+        if not found:
+            print(f"✅ Custom column removed from master-schema")
+        else:
+            print(f"❌ FAILED: Custom column still in master-schema")
+            return False
+    
+    # Verify dependencies are cleaned
+    print("   Verifying dependencies cleanup...")
+    resp3 = requests.get(f"{BASE_URL}/dependencies")
+    if resp3.status_code == 200:
+        deps_after = resp3.json().get("dependencies", [])
+        deps_with_key_after = [d for d in deps_after if d.get("source") == custom_key]
+        if len(deps_with_key_after) == 0:
+            print(f"✅ Dependencies with source={custom_key} cleaned (0 remaining)")
+        else:
+            print(f"❌ FAILED: {len(deps_with_key_after)} dependencies still reference deleted column")
+            return False
+    
+    print("\n✅ TEST 9 PASSED")
+    return True
+
+
+def test_delete_dependency(dep_id):
+    """TEST 10: DELETE /api/dependencies/{id} -> 200"""
+    print("\n=== TEST 10: DELETE /api/dependencies/{id} ===")
+    
+    resp = requests.delete(f"{BASE_URL}/dependencies/{dep_id}")
+    print(f"Status: {resp.status_code}")
+    
+    if resp.status_code != 200:
+        print(f"❌ FAILED: Expected 200, got {resp.status_code}")
+        return False
+    
+    data = resp.json()
+    if not data.get("deleted"):
+        print(f"❌ FAILED: Expected deleted=true")
+        return False
+    
+    print(f"✅ Dependency deleted: {dep_id}")
+    
+    # Verify it's removed
+    print("\n   Verifying removal...")
+    resp2 = requests.get(f"{BASE_URL}/dependencies")
+    if resp2.status_code == 200:
+        deps = resp2.json().get("dependencies", [])
+        found = any(d.get("id") == dep_id for d in deps)
+        if not found:
+            print(f"✅ Dependency removed from list")
+        else:
+            print(f"❌ FAILED: Dependency still in list")
+            return False
+    
+    print("✅ TEST 10 PASSED")
+    return True
 
 
 def main():
-    """Run all tests"""
-    print("="*80)
-    print("BACKEND TESTING: Conditional Underline Feature (ul element type)")
-    print("Testing Forms 19/24 with new 'ul' and 'spread' element types")
-    print("="*80)
-    print(f"Backend URL: {BASE_URL}")
+    print("=" * 70)
+    print("BACKEND TESTING: Banetskaya.by NEW FEATURE")
+    print("Встроенная Excel-таблица данных + свои столбцы + зависимости")
+    print("=" * 70)
     
-    # Check backend is accessible
-    try:
-        resp = requests.get(f"{BASE_URL}/_ping", timeout=5)
-        if resp.status_code == 200:
-            print("✅ Backend is accessible")
-        else:
-            print(f"⚠️  Backend responded with status {resp.status_code}")
-    except Exception as e:
-        print(f"❌ ERROR: Cannot connect to backend: {e}")
-        print("Make sure backend is running at http://localhost:8001")
-        return 1
-    
-    # Run tests
     results = []
+    custom_key = None
+    dep_id = None
     
-    results.append(("GET /api/forma24/template (17 ul elements)", test_forma24_template_ul_elements()))
-    results.append(("GET /api/forma19/template (spread element)", test_forma19_template_spread_element()))
-    results.append(("POST /api/forma24/preview-png (conditional rendering)", test_forma24_preview_png_conditional_rendering()))
-    results.append(("POST /api/forma24/preview (PDF)", test_forma24_preview_pdf()))
-    results.append(("POST /api/forma19/preview (PDF)", test_forma19_preview_pdf()))
+    # TEST 1: master-schema
+    try:
+        result = test_master_schema()
+        results.append(("TEST 1: master-schema", result))
+    except Exception as e:
+        print(f"❌ TEST 1 EXCEPTION: {e}")
+        results.append(("TEST 1: master-schema", False))
+    
+    # TEST 2: contracts/grid
+    try:
+        result = test_contracts_grid()
+        results.append(("TEST 2: contracts/grid", result))
+    except Exception as e:
+        print(f"❌ TEST 2 EXCEPTION: {e}")
+        results.append(("TEST 2: contracts/grid", False))
+    
+    # TEST 3: custom-columns create
+    try:
+        result = test_custom_columns_create()
+        if isinstance(result, tuple):
+            success, custom_key = result
+            results.append(("TEST 3: custom-columns create", success))
+        else:
+            results.append(("TEST 3: custom-columns create", result))
+    except Exception as e:
+        print(f"❌ TEST 3 EXCEPTION: {e}")
+        results.append(("TEST 3: custom-columns create", False))
+    
+    # TEST 3b: custom-columns duplicate
+    try:
+        result = test_custom_columns_duplicate()
+        results.append(("TEST 3b: custom-columns duplicate", result))
+    except Exception as e:
+        print(f"❌ TEST 3b EXCEPTION: {e}")
+        results.append(("TEST 3b: custom-columns duplicate", False))
+    
+    # TEST 3c: custom-columns empty label
+    try:
+        result = test_custom_columns_empty_label()
+        results.append(("TEST 3c: custom-columns empty label", result))
+    except Exception as e:
+        print(f"❌ TEST 3c EXCEPTION: {e}")
+        results.append(("TEST 3c: custom-columns empty label", False))
+    
+    # TEST 4: master-bulk update (requires custom_key)
+    if custom_key:
+        try:
+            result = test_master_bulk_update(custom_key)
+            results.append(("TEST 4: master-bulk update", result))
+        except Exception as e:
+            print(f"❌ TEST 4 EXCEPTION: {e}")
+            results.append(("TEST 4: master-bulk update", False))
+    else:
+        print("\n⚠️  SKIPPING TEST 4: No custom_key available")
+        results.append(("TEST 4: master-bulk update", None))
+    
+    # TEST 5: document-targets
+    try:
+        result = test_document_targets()
+        results.append(("TEST 5: document-targets", result))
+    except Exception as e:
+        print(f"❌ TEST 5 EXCEPTION: {e}")
+        results.append(("TEST 5: document-targets", False))
+    
+    # TEST 6: dependencies create (requires custom_key)
+    if custom_key:
+        try:
+            result = test_dependencies_create(custom_key)
+            if isinstance(result, tuple):
+                success, dep_id = result
+                results.append(("TEST 6: dependencies create", success))
+            else:
+                results.append(("TEST 6: dependencies create", result))
+        except Exception as e:
+            print(f"❌ TEST 6 EXCEPTION: {e}")
+            results.append(("TEST 6: dependencies create", False))
+    else:
+        print("\n⚠️  SKIPPING TEST 6: No custom_key available")
+        results.append(("TEST 6: dependencies create", None))
+    
+    # TEST 7: dependencies list
+    try:
+        result = test_dependencies_list()
+        results.append(("TEST 7: dependencies list", result))
+    except Exception as e:
+        print(f"❌ TEST 7 EXCEPTION: {e}")
+        results.append(("TEST 7: dependencies list", False))
+    
+    # TEST 8: package generation
+    try:
+        result = test_package_generation()
+        results.append(("TEST 8: package generation", result))
+    except Exception as e:
+        print(f"❌ TEST 8 EXCEPTION: {e}")
+        results.append(("TEST 8: package generation", False))
+    
+    # TEST 9: delete custom column (requires custom_key)
+    if custom_key:
+        try:
+            result = test_delete_custom_column(custom_key)
+            results.append(("TEST 9: delete custom-column", result))
+        except Exception as e:
+            print(f"❌ TEST 9 EXCEPTION: {e}")
+            results.append(("TEST 9: delete custom-column", False))
+    else:
+        print("\n⚠️  SKIPPING TEST 9: No custom_key available")
+        results.append(("TEST 9: delete custom-column", None))
+    
+    # TEST 10: delete dependency (requires dep_id)
+    if dep_id:
+        try:
+            result = test_delete_dependency(dep_id)
+            results.append(("TEST 10: delete dependency", result))
+        except Exception as e:
+            print(f"❌ TEST 10 EXCEPTION: {e}")
+            results.append(("TEST 10: delete dependency", False))
+    else:
+        print("\n⚠️  SKIPPING TEST 10: No dep_id available")
+        results.append(("TEST 10: delete dependency", None))
     
     # Summary
-    print("\n" + "="*80)
-    print("TEST SUMMARY")
-    print("="*80)
+    print("\n" + "=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
     
-    passed = sum(1 for _, result in results if result)
+    passed = sum(1 for _, r in results if r is True)
+    failed = sum(1 for _, r in results if r is False)
+    skipped = sum(1 for _, r in results if r is None)
     total = len(results)
     
     for name, result in results:
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status}: {name}")
+        if result is True:
+            print(f"✅ {name}")
+        elif result is False:
+            print(f"❌ {name}")
+        else:
+            print(f"⚠️  {name} (SKIPPED)")
     
-    print("\n" + "="*80)
-    print(f"TOTAL: {passed}/{total} tests passed ({passed/total*100:.0f}%)")
-    print("="*80)
+    print(f"\nTotal: {total} tests")
+    print(f"Passed: {passed}")
+    print(f"Failed: {failed}")
+    print(f"Skipped: {skipped}")
     
-    return 0 if passed == total else 1
+    if failed > 0:
+        print("\n❌ SOME TESTS FAILED")
+        sys.exit(1)
+    elif passed == total:
+        print("\n✅ ALL TESTS PASSED")
+        sys.exit(0)
+    else:
+        print("\n⚠️  SOME TESTS SKIPPED")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

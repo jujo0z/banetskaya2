@@ -306,6 +306,15 @@ export default function History() {
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             <Button
+              className="h-11 bg-[#EC4899] hover:bg-[#DB2777] text-white font-semibold"
+              onClick={() => navigate("/data")}
+              title="Открыть всю базу как Excel-таблицу и редактировать прямо здесь"
+              data-testid="history-edit-data-btn"
+            >
+              <Pencil className="h-4 w-4" />
+              Редактировать данные
+            </Button>
+            <Button
               className="h-11 bg-gradient-to-r from-rose-400 to-pink-500 hover:from-rose-500 hover:to-pink-600 text-white font-semibold"
               onClick={handleExportBase}
               disabled={exportingBase}

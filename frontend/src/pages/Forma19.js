@@ -33,6 +33,7 @@ import {
   downloadPackagePdf,
 } from "@/lib/apiClient";
 import DocEditor from "@/components/DocEditor";
+import DependencyManager from "@/components/DependencyManager";
 
 const recordLabel = (r, i) => {
   const fio = [r.surname, r.first_name, r.patronymic].filter(Boolean).join(" ").trim();
@@ -251,6 +252,8 @@ export default function Forma19() {
           стороны, второй — обороты, для двусторонней печати. Автозаполнение из Excel со студентами.
         </p>
       </div>
+
+      <DependencyManager document="forma19" />
 
       <div className="grid grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)] gap-6">
         {/* ---- Controls ---- */}

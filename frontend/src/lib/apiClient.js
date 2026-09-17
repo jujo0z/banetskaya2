@@ -376,6 +376,61 @@ export async function exportBase(q = "", status = "") {
   downloadBlob(res.data, parseFilename(res.headers, "База_данные.xlsx"));
 }
 
+// ---------- Встроенная таблица данных (Excel в приложении) ----------
+export async function getMasterSchema() {
+  const { data } = await api.get("/master-schema");
+  return data; // { columns: [{key,label,section,dropdown,builtin}] }
+}
+
+export async function getContractsGrid() {
+  const { data } = await api.get("/contracts/grid");
+  return data; // { rows: [{id,status,created_at,contract_number,full_name,master}] }
+}
+
+export async function saveMasterBulk(rows) {
+  // rows: [{ id, master }]
+  const { data } = await api.put("/contracts/master-bulk", { rows });
+  return data; // { updated }
+}
+
+export async function getCustomColumns() {
+  const { data } = await api.get("/custom-columns");
+  return data; // { columns: [...] }
+}
+
+export async function addCustomColumn(label, section = "Дополнительно", dropdown = null) {
+  const { data } = await api.post("/custom-columns", { label, section, dropdown });
+  return data;
+}
+
+export async function deleteCustomColumn(key) {
+  const { data } = await api.delete(`/custom-columns/${key}`);
+  return data;
+}
+
+// ---------- Зависимости (свой столбец -> поле бланка) ----------
+export async function getDependencies(document = "") {
+  const params = document ? { document } : {};
+  const { data } = await api.get("/dependencies", { params });
+  return data; // { dependencies: [...] }
+}
+
+export async function getDocumentTargets(document) {
+  const { data } = await api.get(`/document-targets/${document}`);
+  return data; // { targets: [{field,label}] }
+}
+
+export async function addDependency(document, target_field, source) {
+  const { data } = await api.post("/dependencies", { document, target_field, source });
+  return data;
+}
+
+export async function deleteDependency(id) {
+  const { data } = await api.delete(`/dependencies/${id}`);
+  return data;
+}
+
+
 // ---------- System diagnostics ----------
 export async function getDiagnostics() {
   const { data } = await api.get("/health/diagnostics");

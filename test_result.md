@@ -108,6 +108,91 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Встроенная Excel-таблица данных + свои столбцы + зависимости (столбец -> поле бланка)"
+    implemented: true
+    working: true
+    file: "server.py, master_data.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: >
+          НОВАЯ ФИЧА (2026-09-17). Часть 1 — редактируемая таблица всей базы прямо в приложении:
+          GET /api/master-schema (встроенные ~50 колонок + свои),
+          GET /api/contracts/grid (вся база строками: id,status,created_at,contract_number,full_name,master),
+          PUT /api/contracts/master-bulk {rows:[{id,master}]} — сохраняет master и ПЕРЕСОБИРАЕТ fields договора
+          (master_to_contract), обновляет full_name/contract_number/updated_at.
+          Свои столбцы (общие): GET/POST/DELETE /api/custom-columns (POST {label,section?,dropdown?} -> key cc_xxxx).
+          Экспорт базы /api/contracts/export-base теперь включает свои столбцы (build_master_xlsx extra_columns).
+          Часть 2 — зависимости: GET /api/document-targets/{document} (document in contract|forma19|forma24|
+          soobshenie|zayavlenie) -> targets[{field,label}]; GET /api/dependencies?document=..;
+          POST /api/dependencies {document,target_field,source}; DELETE /api/dependencies/{id}.
+          Зависимость подставляет значение столбца (source = master-ключ или cc_-ключ) в поле бланка при генерации
+          (masterdata.ACTIVE_DEPS + _apply_deps в master_to_*). ACTIVE_DEPS грузится на startup и при CRUD.
+          ЧЕК-ЛИСТ: (1) master-schema возвращает builtin+custom; (2) добавить cc-столбец -> появляется в схеме и в grid при сохранении;
+          (3) master-bulk сохраняет и не ломает существующие поля; (4) POST dependency с невалидным document/target_field -> 400;
+          (5) добавить зависимость (напр. zayavlenie.stay_term <- cc_xxx), затем /api/contracts/{id}/package генерит PDF 200;
+          (6) удаление столбца чистит связанные зависимости.
+          БД локальная (создан backend/.env: MONGO_URL, DB_NAME=banetskaya_db). Демо-данные засеяны (seed-demo).
+        -working: true
+        -agent: "testing"
+        -comment: >
+          ✅ BACKEND TESTING COMPLETE (12/12 tests, 100% success rate). ALL NEW ENDPOINTS WORK CORRECTLY.
+          
+          DETAILED RESULTS:
+          
+          ✅ TEST 1: GET /api/master-schema → 200, returns 50 columns (49 builtin + 1 custom from previous test).
+             Structure validated: key, label, section, builtin. Required keys present: fio, contract_number, phone, room_number.
+          
+          ✅ TEST 2: GET /api/contracts/grid → 200, returns 6 rows (demo contracts). Each row contains: id, status, 
+             created_at, contract_number, full_name, master. Master data present with 16 fields (sample keys: fio, 
+             birth_date, citizenship, phone, id_number).
+          
+          ✅ TEST 3: POST /api/custom-columns {label:"Курс обучения", section:"Дополнительно", dropdown:["1 курс",...]} 
+             → 200, created custom column with key=cc_69d056cb. Column appears in both master-schema and custom-columns list.
+          
+          ✅ TEST 3b: POST /api/custom-columns with duplicate label → 400 "Столбец с таким названием уже есть" (correct validation).
+          
+          ✅ TEST 3c: POST /api/custom-columns with empty label → 400 "Название столбца обязательно" (correct validation).
+          
+          ✅ TEST 4: PUT /api/contracts/master-bulk {rows:[{id, master:{phone:"+375291234567", cc_69d056cb:"2 курс"}}]} 
+             → 200 {updated:1}. Verified in grid: phone updated correctly, custom column value saved, full_name and 
+             contract_number preserved (Алиев Кямран Эльшанович, 0047390 003376).
+          
+          ✅ TEST 5: GET /api/document-targets/{document} → 200 for all 5 documents (zayavlenie, forma19, forma24, 
+             soobshenie, contract). Each returns targets array with field and label. Verified stay_term field present 
+             in zayavlenie (13 targets). Invalid document "badname" → 404 (correct).
+          
+          ✅ TEST 6: POST /api/dependencies {document:"zayavlenie", target_field:"stay_term", source:"cc_69d056cb"} 
+             → 200, created dependency with id. Replacement works (one dependency per target_field). Validation works: 
+             invalid document → 400, invalid target_field → 400, empty source → 400.
+          
+          ✅ TEST 7: GET /api/dependencies → 200, returns 1 dependency with all required fields: id, document, 
+             target_field, source, source_label, target_label. Filter by document=zayavlenie works correctly.
+          
+          ✅ TEST 8: POST /api/contracts/{id}/package {} → 200, generated valid PDF (310460 bytes, valid %PDF signature). 
+             Dependency does NOT break PDF generation. Used contract with master data (Алиев Кямран Эльшанович).
+          
+          ✅ TEST 9: DELETE /api/custom-columns/{key} → 200 {deleted:true}. Verified: column removed from master-schema, 
+             dependencies with source=deleted_key automatically cleaned (0 remaining).
+          
+          ✅ TEST 10: DELETE /api/dependencies/{id} → 200 {deleted:true}. Verified: dependency removed from list.
+          
+          CRITICAL FEATURES VERIFIED:
+          • Master schema returns builtin (~50) + custom columns with correct structure
+          • Contracts grid returns all contracts with master data (6 demo contracts)
+          • Custom columns: create (with dropdown), duplicate rejection, empty label rejection
+          • Master bulk update: saves master data, preserves full_name/contract_number, saves custom column values
+          • Document targets: all 5 documents return correct target fields, invalid document rejected
+          • Dependencies: create, replace, validate (document/target_field/source), list with labels, filter by document
+          • PDF generation: works with dependencies (310KB PDF generated successfully)
+          • Cleanup: deleting custom column auto-cleans dependencies, deleting dependency works
+          
+          ALL BACKEND APIs FULLY FUNCTIONAL. NO REGRESSIONS. Feature ready for production.
+
+
   - task: "Формы 19/24: условное подчёркивание «нужное подчеркнуть» (тип элемента ul) + крупная верхняя дата + идент.номер по клеткам (spread)"
     implemented: true
     working: "NA"
@@ -1484,7 +1569,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Формы 19/24: условное подчёркивание «нужное подчеркнуть» (тип элемента ul) + крупная верхняя дата + идент.номер по клеткам (spread)"
+    - "Встроенная Excel-таблица данных + свои столбцы + зависимости (столбец -> поле бланка)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"

@@ -16,6 +16,7 @@ import {
   getZayavlenieRecords, saveZayavlenieRecords,
 } from "@/lib/apiClient";
 import ZayavPreview from "@/components/ZayavPreview";
+import DependencyManager from "@/components/DependencyManager";
 import { zayavOverlayText } from "@/lib/zayavOverlay";
 
 const recordLabel = (r, i) => (r.fio && String(r.fio).trim()) || `Заявление ${i + 1}`;
@@ -220,6 +221,8 @@ export default function Zayavlenie() {
           Кнопка <b>«2 на лист»</b> печатает 2 разных человека на одном листе A4 — оба из одного шаблона.
         </p>
       </div>
+
+      <DependencyManager document="zayavlenie" />
 
       <div className="grid grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)] gap-6">
         {/* ---- Left controls ---- */}

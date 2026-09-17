@@ -6,6 +6,7 @@ import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Generate from "@/pages/Generate";
 import History from "@/pages/History";
+import DataGrid from "@/pages/DataGrid";
 import Settings from "@/pages/Settings";
 import BlankOverlay from "@/pages/BlankOverlay";
 import FullPrint from "@/pages/FullPrint";
@@ -66,6 +67,7 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="generate" element={<Generate />} />
           <Route path="history" element={<History />} />
+          <Route path="data" element={<DataGrid />} />
           <Route path="blank" element={<BlankOverlay />} />
           <Route path="full-print" element={<FullPrint />} />
           <Route path="forma19" element={<Forma19 />} />

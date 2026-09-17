@@ -47,6 +47,7 @@ import {
   setActiveOverlayProfile,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
+import DependencyManager from "@/components/DependencyManager";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const BG_URL = `${BACKEND_URL}/api/overlay/background`;
@@ -568,6 +569,10 @@ export default function BlankOverlay() {
           </Button>
           <Button variant="outline" onClick={clearAll}>Очистить</Button>
         </div>
+      </div>
+
+      <div className="mb-6">
+        <DependencyManager document="soobshenie" />
       </div>
 
       {/* Profile bar */}

@@ -94,6 +94,26 @@ _HEADER_TO_KEY = {c["header"].strip().lower(): c["key"] for c in MASTER_COLUMNS}
 
 
 # ---------------------------------------------------------------------------
+# Зависимости: свой (или любой) столбец -> поле бланка.
+# ACTIVE_DEPS наполняется сервером из БД (при старте и при изменении):
+#   { "forma19": {"target_field": "source_master_key", ...}, "contract": {...}, ... }
+# Значение столбца из строки-«человека» подставляется в поле документа.
+# ---------------------------------------------------------------------------
+ACTIVE_DEPS: dict = {}
+
+
+def _apply_deps(doc_name: str, rec: dict, m: dict) -> dict:
+    mapping = ACTIVE_DEPS.get(doc_name) or {}
+    for target, source in mapping.items():
+        if not target or not source:
+            continue
+        val = (m or {}).get(source, "")
+        if str(val).strip():
+            rec[target] = str(val)
+    return rec
+
+
+# ---------------------------------------------------------------------------
 # Вспомогательные разборщики дат
 # ---------------------------------------------------------------------------
 def _split_dmy(s: str):
@@ -138,7 +158,7 @@ def master_to_contract(m: dict) -> dict:
     address = _join(", ", m.get("res_street"), m.get("res_house"))
     if m.get("res_apartment"):
         address = _join(", ", address, f"ком. {m['res_apartment']}")
-    return {
+    rec = {
         "contract_number": m.get("contract_number", ""),
         "sign_date": m.get("sign_date", ""),
         "order_number": m.get("order_number", ""),
@@ -157,6 +177,7 @@ def master_to_contract(m: dict) -> dict:
         "phone": m.get("phone", ""),
         "show_minor_consent": "1" if _is_minor(m.get("birth_date", "")) else "0",
     }
+    return _apply_deps("contract", rec, m)
 
 
 def master_to_forma24(m: dict) -> dict:
@@ -186,7 +207,7 @@ def master_to_forma24(m: dict) -> dict:
         "spouse_together": m.get("spouse_together", ""),
         "children_count": m.get("children_count", ""),
     }
-    return {k: v for k, v in rec.items() if str(v).strip()}
+    return _apply_deps("forma24", {k: v for k, v in rec.items() if str(v).strip()}, m)
 
 
 def master_to_forma19(m: dict) -> dict:
@@ -218,7 +239,7 @@ def master_to_forma19(m: dict) -> dict:
         "passport_series": ser, "passport_number": num,
         "passport_issued": m.get("passport_issued_by", ""),
     }
-    return {k: v for k, v in rec.items() if str(v).strip()}
+    return _apply_deps("forma19", {k: v for k, v in rec.items() if str(v).strip()}, m)
 
 
 def master_to_soobshenie(m: dict) -> dict:
@@ -248,7 +269,7 @@ def master_to_soobshenie(m: dict) -> dict:
         "to_day": td, "to_month": tm, "to_year": ty[-2:] if ty else "",
         "chief": m.get("reg_chief", ""),
     }
-    return {k: v for k, v in rec.items() if str(v).strip()}
+    return _apply_deps("soobshenie", {k: v for k, v in rec.items() if str(v).strip()}, m)
 
 
 # Общая площадь жилого помещения (общежития) — константа для всех (стр. 2).
@@ -276,7 +297,7 @@ def master_to_zayavlenie(m: dict) -> dict:
     # Год рождения из даты рождения ДД.ММ.ГГГГ
     bd = str(m.get("birth_date") or "").strip()
     birth_year = bd.split(".")[-1] if "." in bd else bd
-    return {
+    rec = {
         "fio": m.get("fio", ""),
         "birth_year": birth_year,
         "doc_name": "паспорт гражданина Республики Беларусь",
@@ -297,6 +318,7 @@ def master_to_zayavlenie(m: dict) -> dict:
         "sign_date": m.get("sign_date", ""),
         "area": ZAYAV_AREA_DEFAULT,
     }
+    return _apply_deps("zayavlenie", rec, m)
 
 
 def derive_all(m: dict) -> dict:
@@ -335,10 +357,11 @@ def contract_to_master(fields: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Excel: генерация красивого шаблона
 # ---------------------------------------------------------------------------
-def build_master_xlsx(data_rows=None) -> bytes:
+def build_master_xlsx(data_rows=None, extra_columns=None) -> bytes:
     """Единый Excel-шаблон «Данные».
     data_rows=None  -> пустой шаблон с пробной строкой (для скачивания шаблона).
-    data_rows=[...] -> тот же формат, но заполненный реальными строками (экспорт базы)."""
+    data_rows=[...] -> тот же формат, но заполненный реальными строками (экспорт базы).
+    extra_columns   -> список своих столбцов [{key,label|header,dropdown,width}]."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.worksheet.datavalidation import DataValidation
@@ -347,6 +370,18 @@ def build_master_xlsx(data_rows=None) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Данные"
+
+    # Итоговый набор колонок = встроенные + свои (в секции «Дополнительно»)
+    columns = list(MASTER_COLUMNS)
+    for ec in (extra_columns or []):
+        columns.append({
+            "key": ec.get("key"),
+            "header": ec.get("header") or ec.get("label") or ec.get("key"),
+            "sample": "",
+            "section": ec.get("section", "Дополнительно"),
+            "width": ec.get("width", 18),
+            "dropdown": ec.get("dropdown"),
+        })
 
     thin = Side(style="thin", color="D1D5DB")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -359,12 +394,12 @@ def build_master_xlsx(data_rows=None) -> bytes:
 
     # Строка 1 — секции (объединяем по группам), строка 2 — заголовки колонок.
     col = 1
-    n = len(MASTER_COLUMNS)
+    n = len(columns)
     i = 0
     while i < n:
-        sec = MASTER_COLUMNS[i]["section"]
+        sec = columns[i]["section"]
         j = i
-        while j < n and MASTER_COLUMNS[j]["section"] == sec:
+        while j < n and columns[j]["section"] == sec:
             j += 1
         span = j - i
         c1 = get_column_letter(col)
@@ -381,7 +416,7 @@ def build_master_xlsx(data_rows=None) -> bytes:
         i = j
 
     # Заголовки колонок (строка 2)
-    for idx, c in enumerate(MASTER_COLUMNS, start=1):
+    for idx, c in enumerate(columns, start=1):
         L = get_column_letter(idx)
         h = ws[f"{L}2"]
         h.value = c["header"]
@@ -397,7 +432,7 @@ def build_master_xlsx(data_rows=None) -> bytes:
         for ri, m in enumerate(data_rows):
             m = m or {}
             row = 3 + ri
-            for idx, c in enumerate(MASTER_COLUMNS, start=1):
+            for idx, c in enumerate(columns, start=1):
                 L = get_column_letter(idx)
                 cell = ws[f"{L}{row}"]
                 cell.value = _cell_str(m.get(c["key"], ""))
@@ -405,7 +440,7 @@ def build_master_xlsx(data_rows=None) -> bytes:
                 cell.alignment = left
                 cell.border = border
     else:
-        for idx, c in enumerate(MASTER_COLUMNS, start=1):
+        for idx, c in enumerate(columns, start=1):
             L = get_column_letter(idx)
             s = ws[f"{L}3"]
             s.value = c["sample"]
@@ -418,7 +453,7 @@ def build_master_xlsx(data_rows=None) -> bytes:
     ws.freeze_panes = "A3"
 
     # Выпадающие списки для кодовых колонок (строки 3..600)
-    for idx, c in enumerate(MASTER_COLUMNS, start=1):
+    for idx, c in enumerate(columns, start=1):
         if c.get("dropdown"):
             L = get_column_letter(idx)
             dv = DataValidation(type="list",
