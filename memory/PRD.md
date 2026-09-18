@@ -188,3 +188,9 @@ GET /api/printers (список принтеров Windows, supported=false в �
 - Backend: server.py (GET/POST /api/counters/base, POST /api/contracts/recompute-counters, авто-пересчёт после create/update/batch/master-bulk, инъекция в prefill/пакет/_contract_master); document_service.py (слоты adults_count/free_count + дефолт-шаблон + zayav_overlay_text); master_data.py (проброс счётчиков в master_to_zayavlenie).
 - Frontend: карточка «Счётчики проживающих (Заявление)» в Настройках (стартовые значения, вкл/выкл, «Сохранить и пересчитать всё», «Досчитать новые», сообщения о статусе). apiClient: getCountersBase/saveCountersBase/recomputeCounters.
 - Тест backend 29/29. НЕ задеплоено на VPS. ВАЖНО для VPS: пользовательский шаблон заявления (zayavlenie_template в БД) должен содержать field-элементы occupancy_count/minors_count/adults_count/free_count в местах прочерков (добавить через редактор или скриптом).
+
+## Deployed to VPS (2026-09-18) — счётчики проживающих
+- Патч наложен ТОЧЕЧНО (прод-файлы опережают локальные — grades/residents/адресные поля; перезапись запрещена).
+- Backend: server.py/document_service.py/master_data.py пропатчены на /opt/banetskaya/backend, бэкапы *.bak_counters_20260918_142156, сервис перезапущен, /api/counters/base OK.
+- Frontend: src/pages/Settings.js + src/lib/apiClient.js пропатчены (бэкапы *.bak_counters_20260918_142227), build пересобран (yarn build), старый build → build_bak_counters_20260918_142227. Карточка присутствует в main.*.js.
+- Осталось на стороне пользователя: (1) задать стартовые значения в Настройках и включить; (2) пронумеровать все договоры (в т.ч. Мороз/Казаковская/Ковзелева/Жолнерчик); (3) добавить 4 поля-данных на шаблон заявления через редактор («Поле (данные)» → Проживает/Несовершеннолетних/Совершеннолетних/Свободных мест).
