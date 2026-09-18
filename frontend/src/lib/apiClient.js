@@ -641,6 +641,20 @@ export async function saveZayavlenieRecords(records) {
   return data;
 }
 
+// ======================= Счётчики проживающих (Заявление, стр.2) =======================
+export async function getCountersBase() {
+  const { data } = await api.get("/counters/base");
+  return data;
+}
+export async function saveCountersBase(base, recompute = true) {
+  const { data } = await api.post(`/counters/base?recompute=${recompute}`, base);
+  return data;
+}
+export async function recomputeCounters(force = false) {
+  const { data } = await api.post(`/contracts/recompute-counters?force=${force}`);
+  return data;
+}
+
 
 // ======================= ЗАСЕЛЕНИЕ — распределение по этажам =======================
 export async function residentsImport(file) {

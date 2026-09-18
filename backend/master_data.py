@@ -327,6 +327,11 @@ def master_to_zayavlenie(m: dict) -> dict:
         "sign_date": m.get("sign_date", ""),
         "area": ZAYAV_AREA_DEFAULT,
     }
+    # Накопительные счётчики (Заявление, стр.2) — если посчитаны и переданы в master
+    for _ck in ("occupancy_count", "minors_count", "adults_count", "free_count"):
+        _cv = m.get(_ck)
+        if _cv not in (None, ""):
+            rec[_ck] = str(_cv)
     return _merge_custom(_apply_deps("zayavlenie", rec, m), m)
 
 

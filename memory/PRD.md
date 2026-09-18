@@ -181,3 +181,10 @@ GET /api/printers (список принтеров Windows, supported=false в �
 - Требование: в Формах 19 и 24 все вводимые значения печатаются только ЗАГЛАВНЫМИ (печатные буквы).
 - Реализация: document_service._forma_upper_rec(rec) приводит все строковые значения записи к .upper() на входе build_forma19 / build_forma24 / build_forma_combined — покрывает и шаблонный путь (_draw_forma_template_card/_forma_vals), и хардкод (_draw_forma19_front/_draw_forma24_front). Статичные подписи бланка не затрагиваются; Заявление/Сообщение/Договор НЕ изменены.
 - Тест backend: 8/8 (preview + preview-png Ф19/Ф24 из строчного ввода -> "МОРОЗ"/"ИВАН" в тексте PDF; регрессия zayavlenie/package — регистр сохранён). НЕ задеплоено на VPS (ожидает запроса пользователя).
+
+## Implemented (2026-09-18 — Заявление: накопительные счётчики проживающих)
+- Стр.2 Заявления: авто-поля «проживает»/«несовершеннолетних»/«совершеннолетних»/«свободных мест».
+- Правило: договоры по возрастанию номера; Всего +1; несовершеннолетний (is_minor из birth_date) -> Несов +1, иначе Совер +1; Свободных -1. Стартовые значения задаёт админ (app_settings zayav_counter_base). Значения замораживаются в contract.counters, force=False не трогает уже посчитанные. Пока у НЕ-черновика пустой номер — пересчёт не запускается.
+- Backend: server.py (GET/POST /api/counters/base, POST /api/contracts/recompute-counters, авто-пересчёт после create/update/batch/master-bulk, инъекция в prefill/пакет/_contract_master); document_service.py (слоты adults_count/free_count + дефолт-шаблон + zayav_overlay_text); master_data.py (проброс счётчиков в master_to_zayavlenie).
+- Frontend: карточка «Счётчики проживающих (Заявление)» в Настройках (стартовые значения, вкл/выкл, «Сохранить и пересчитать всё», «Досчитать новые», сообщения о статусе). apiClient: getCountersBase/saveCountersBase/recomputeCounters.
+- Тест backend 29/29. НЕ задеплоено на VPS. ВАЖНО для VPS: пользовательский шаблон заявления (zayavlenie_template в БД) должен содержать field-элементы occupancy_count/minors_count/adults_count/free_count в местах прочерков (добавить через редактор или скриптом).

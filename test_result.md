@@ -108,6 +108,130 @@ user_problem_statement: >
   ВАЖНО: сам .docx-шаблон договора НЕ менять — форма остаётся 1:1.
 
 backend:
+  - task: "Заявление: накопительные счётчики проживающих (occupancy/minors/adults/free)"
+    implemented: true
+    working: true
+    file: "server.py, document_service.py, master_data.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: >
+          НОВОЕ (2026-09-18). Накопительные счётчики на стр.2 Заявления. Порядок — по номеру договора;
+          Всего +1; несовершеннолетний (is_minor из birth_date) -> Несов +1, иначе Совер +1; Свободных -1.
+          База — app_settings zayav_counter_base (enabled/total/minors/adults/free). Заморозка в
+          contract.counters (не пересчитываются при force=False). Отказ, если у НЕ-черновика пустой номер.
+          Эндпоинты: GET/POST /api/counters/base (?recompute), POST /api/contracts/recompute-counters (?force).
+          Авто-пересчёт после create/update/batch/master-bulk. Новые слоты adults_count/free_count в
+          ZAYAV_OVERLAY_SLOTS + zayav_overlay_text + дефолт-шаблон (статич. строка «совершеннолетних/свободных
+          мест»). Инъекция в заявление: master_to_zayavlenie (из master), _contract_master (пакет),
+          zayavlenie/prefill (по номеру договора). Локально проверено (расчёт+заморозка+PDF), нужен прогон тест-агентом.
+        -working: true
+        -agent: "testing"
+        -comment: >
+          ✅ ВСЕ ТЕСТЫ ПРОШЛИ УСПЕШНО (29/29, 100% success rate). НАКОПИТЕЛЬНЫЕ СЧЁТЧИКИ ПОЛНОСТЬЮ РАБОТАЮТ.
+          
+          ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ:
+          
+          ✅ ТЕСТ 1: GET /api/counters/base → 200, default enabled=false ✓
+             Структура: {enabled: false, total: 0, minors: 0, adults: 0, free: 0}
+          
+          ✅ ТЕСТ 2: Создание 3 договоров (04800, 04801, 04802)
+             • 04800: birth_date=01.01.2010 (несовершеннолетний, возраст < 18) ✓
+             • 04801: birth_date=01.01.1990 (совершеннолетний) ✓
+             • 04802: birth_date=01.01.1995 (совершеннолетний) ✓
+             Все 3 договора созданы успешно (status=final)
+          
+          ✅ ТЕСТ 3: POST /api/counters/base с enabled:true, total:142, minors:99, adults:43, free:525 + recompute=true
+             → 200, saved=true, recompute.ok=true, computed=3 ✓
+             Пересчёт выполнен для всех 3 договоров
+          
+          ✅ ТЕСТ 4: ПРОВЕРКА СЧЁТЧИКОВ в договорах (GET /api/contracts)
+             • 04800 (несовершеннолетний): occupancy_count=143, minors_count=100, adults_count=43, free_count=524, minor=true ✓
+             • 04801 (совершеннолетний): occupancy_count=144, minors_count=100, adults_count=44, free_count=523, minor=false ✓
+             • 04802 (совершеннолетний): occupancy_count=145, minors_count=100, adults_count=45, free_count=522, minor=false ✓
+             ЛОГИКА РАСЧЁТА КОРРЕКТНА:
+             - Сортировка по номеру договора (04800 < 04801 < 04802) ✓
+             - Всего +1 на каждый договор (142→143→144→145) ✓
+             - Несовершеннолетних +1 для 04800 (99→100), затем без изменений (100) ✓
+             - Совершеннолетних +1 для 04801 и 04802 (43→44→45) ✓
+             - Свободных -1 на каждый договор (525→524→523→522) ✓
+          
+          ✅ ТЕСТ 5: ЗАМОРОЗКА (FREEZE) — создание 04803 и пересчёт с force=false
+             • Создан договор 04803 (birth_date=01.01.1988, совершеннолетний) ✓
+             • POST /api/contracts/recompute-counters?force=false → 200, ok=true, computed=0 ✓
+               (computed=0 означает, что старые договоры НЕ пересчитывались)
+             • ПРОВЕРКА ЗАМОРОЗКИ:
+               - 04800: счётчики НЕ изменились (143/100/43/524) ✓
+               - 04801: счётчики НЕ изменились (144/100/44/523) ✓
+               - 04802: счётчики НЕ изменились (145/100/45/522) ✓
+               - 04803: НОВЫЕ счётчики (146/100/46/521) ✓
+             ЗАМОРОЗКА РАБОТАЕТ КОРРЕКТНО: старые договоры сохраняют замороженные значения,
+             новые договоры получают счётчики от последнего замороженного значения
+          
+          ✅ ТЕСТ 6: NOT_ALL_NUMBERED — отказ пересчёта при отсутствии номера договора
+             • Создан договор БЕЗ contract_number (full_name='Безномерный Человек Тестович') ✓
+             • POST /api/contracts/recompute-counters?force=false → 200, ok=false, reason='not_all_numbered' ✓
+             • missing_count=1, missing=['Безномерный Человек Тестович'] ✓
+             • Договор удалён (DELETE /api/contracts/{id}) → 200 ✓
+             ВАЛИДАЦИЯ РАБОТАЕТ КОРРЕКТНО: пересчёт не запускается, если у НЕ-черновика пустой номер
+          
+          ✅ ТЕСТ 7: ИНЪЕКЦИЯ В ЗАЯВЛЕНИЕ — счётчики в zayavlenie/prefill и PDF
+             • POST /api/zayavlenie/prefill с contract_number='04800' → 200 ✓
+             • records[0] содержит счётчики:
+               - occupancy_count='143' ✓
+               - minors_count='100' ✓
+               - adults_count='43' ✓
+               - free_count='524' ✓
+             • POST /api/zayavlenie/preview с records и side='back' → 200, валидный PDF (102680 байт) ✓
+             • ИЗВЛЕЧЕНИЕ ТЕКСТА из PDF (страница 2, index 1) через pypdf:
+               - Найдено '143' (Всего проживающих) ✓
+               - Найдено '100' (Несовершеннолетних) ✓
+               - Найдено '43' (Совершеннолетних) ✓
+               - Найдено '524' (Свободных мест) ✓
+             ИНЪЕКЦИЯ РАБОТАЕТ КОРРЕКТНО: счётчики из contract.counters попадают в запись Заявления
+             и печатаются на странице 2 PDF
+          
+          ✅ ТЕСТ 8: РЕГРЕССИЯ — forma19/forma24/zayavlenie preview endpoints
+             • POST /api/forma19/preview → 200, валидный PDF (67089 байт) ✓
+             • POST /api/forma24/preview → 200, валидный PDF (63270 байт) ✓
+             • POST /api/zayavlenie/preview → 200, валидный PDF (102011 байт) ✓
+             РЕГРЕССИЙ НЕ ОБНАРУЖЕНО
+          
+          ✅ ТЕСТ 9: ОЧИСТКА (CLEANUP)
+             • Удалены все 4 тестовых договора (04800, 04801, 04802, 04803) ✓
+             • POST /api/counters/base с enabled:false, все счётчики=0 → 200 ✓
+             • GET /api/contracts → 200, возвращает 0 договоров (исходное состояние) ✓
+             ОЧИСТКА ВЫПОЛНЕНА ПОЛНОСТЬЮ
+          
+          ЗАКЛЮЧЕНИЕ:
+          
+          🎉 НАКОПИТЕЛЬНЫЕ СЧЁТЧИКИ ПРОЖИВАЮЩИХ ПОЛНОСТЬЮ ФУНКЦИОНАЛЬНЫ:
+          • GET /api/counters/base возвращает базовые значения (enabled/total/minors/adults/free)
+          • POST /api/counters/base сохраняет базу и запускает пересчёт (recompute=true)
+          • POST /api/contracts/recompute-counters пересчитывает счётчики (force=false/true)
+          • ЛОГИКА РАСЧЁТА работает корректно:
+            - Сортировка по номеру договора (contract_number) по возрастанию
+            - Всего +1 на каждый договор
+            - Несовершеннолетних +1 если возраст < 18 (вычисляется из birth_date формата ДД.ММ.ГГГГ)
+            - Совершеннолетних +1 если возраст >= 18
+            - Свободных -1 на каждый договор
+          • ЗАМОРОЗКА работает корректно:
+            - Счётчики сохраняются в contract.counters
+            - При force=false старые договоры НЕ пересчитываются
+            - Новые договоры получают счётчики от последнего замороженного значения
+          • ВАЛИДАЦИЯ работает корректно:
+            - Пересчёт не запускается, если у НЕ-черновика пустой номер (reason='not_all_numbered')
+          • ИНЪЕКЦИЯ В ЗАЯВЛЕНИЕ работает корректно:
+            - Счётчики из contract.counters попадают в zayavlenie/prefill
+            - Счётчики печатаются на странице 2 PDF (проверено извлечением текста)
+          • РЕГРЕССИЙ НЕ ОБНАРУЖЕНО (forma19/forma24/zayavlenie preview работают)
+          • Все backend API полностью функциональны
+          
+          Накопительные счётчики готовы к использованию.
+
   - task: "Формы 19/24: значения печатаются ЗАГЛАВНЫМИ буквами (uppercase) в PDF/PNG"
     implemented: true
     working: true
@@ -1645,18 +1769,43 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "3.4"
-  test_sequence: 19
+  version: "3.5"
+  test_sequence: 20
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Формы 19/24: значения печатаются ЗАГЛАВНЫМИ буквами (uppercase) в PDF/PNG"
+    - "Заявление: накопительные счётчики проживающих (occupancy/minors/adults/free)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "main"
+      message: >
+        (2026-09-18) НОВАЯ ФИЧА: накопительные счётчики проживающих на стр.2 Заявления.
+        Правило: договоры сортируются по номеру; каждый прибавляет Всего +1;
+        несовершеннолетний (возраст<18 из birth_date) -> Несов +1, иначе Совер +1; Свободных -1.
+        Стартовые значения задаёт админ (app_settings zayav_counter_base: enabled/total/minors/adults/free).
+        Значения замораживаются в contract.counters (occupancy_count/minors_count/adults_count/free_count/minor)
+        и НЕ пересчитываются (force=False). Если хоть у одного НЕ-черновика пустой номер — пересчёт не запускается.
+        Прошу протестировать ТОЛЬКО backend:
+        1) GET /api/counters/base (дефолт enabled:false).
+        2) POST /api/counters/base {enabled:true,total:142,minors:99,adults:43,free:525}&recompute=true.
+           Предварительно создать 3 договора POST /api/contracts с fields{contract_number, full_name, birth_date}:
+           04800 birth 01.01.2010 (minor), 04801 01.01.1990 (adult), 04802 01.01.1995 (adult).
+           Ожидание recompute.ok=true, и в GET /api/contracts counters: 04800=143/100/43/524(minor:true),
+           04801=144/100/44/523, 04802=145/100/45/522.
+        3) ЗАМОРОЗКА: создать 04803 (adult 01.01.1988), POST /api/contracts/recompute-counters (force=false):
+           04800..04802 не меняются; 04803=146/100/46/521.
+        4) NOT_ALL_NUMBERED: создать договор БЕЗ contract_number -> recompute-counters ok=false, reason "not_all_numbered".
+           Затем удалить его.
+        5) ИНЪЕКЦИЯ: POST /api/zayavlenie/prefill {students:[{contract_number:"04800",fio:"...",birth_date:"01.01.2010"}]}
+           -> record содержит occupancy_count="143",minors_count="100",adults_count="43",free_count="524".
+           И POST /api/zayavlenie/preview с этим record -> PDF валиден, на стр.2 (page index 1) в тексте есть 143/100/43/524.
+        6) РЕГРЕССИЯ: forma19/forma24/zayavlenie preview по-прежнему 200.
+        ВАЖНО: после теста удалить созданные тестовые договоры и POST /api/counters/base {enabled:false,...}, чтобы
+        оставить БД чистой. Фронтенд НЕ тестировать без разрешения пользователя.
     - agent: "main"
       message: >
         (2026-09-18) НОВОЕ ТРЕБОВАНИЕ: в Формах 19 и 24 все вводимые значения должны печататься

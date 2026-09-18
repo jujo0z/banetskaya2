@@ -9,6 +9,7 @@ import {
   listTemplates, uploadTemplate, activateTemplate, deleteTemplateById,
   getAppConfig, saveAppConfig, getRegProfile, saveRegProfile,
   getAppVersion, checkUpdates, applyUpdate,
+  getCountersBase, saveCountersBase, recomputeCounters,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
 import { PageHeader } from "@/components/Page";
@@ -28,10 +29,15 @@ export default function Settings() {
   const [updInfo, setUpdInfo] = useState(null);
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [cbase, setCbase] = useState({ enabled: false, total: 0, minors: 0, adults: 0, free: 0 });
+  const [savingCounters, setSavingCounters] = useState(false);
+  const [recomputing, setRecomputing] = useState(false);
+  const [counterMsg, setCounterMsg] = useState(null);
 
   useEffect(() => {
     getPresets().then(setPresets).catch(() => {});
     loadTemplates();
+    getCountersBase().then(setCbase).catch(() => {});
     getAppConfig().then((c) => setWinUrl(c?.windows_download_url || "")).catch(() => {});
     getRegProfile().then((p) => setProfile({
       reg_organ: p?.reg_organ || "", chief: p?.chief || "", city: p?.city || "",
@@ -64,6 +70,56 @@ export default function Settings() {
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Не удалось обновить приложение");
       setApplying(false);
+    }
+  }
+
+  async function handleSaveCounters() {
+    setSavingCounters(true);
+    try {
+      const r = await saveCountersBase({
+        enabled: !!cbase.enabled,
+        total: Number(cbase.total) || 0,
+        minors: Number(cbase.minors) || 0,
+        adults: Number(cbase.adults) || 0,
+        free: Number(cbase.free) || 0,
+      }, true);
+      const rc = r?.recompute;
+      if (rc && rc.ok === false) {
+        setCounterMsg(rc.reason === "not_all_numbered"
+          ? `Не запущено: у ${rc.missing_count} договоров нет номера — например: ${(rc.missing || []).slice(0, 5).join(", ")}. Пронумеруйте все и нажмите «Досчитать новые».`
+          : (rc.detail || "Пересчёт не выполнен"));
+        toast.warning("Сохранено, но пересчёт не выполнен");
+      } else if (rc && rc.ok) {
+        setCounterMsg(`Готово: пересчитано ${rc.computed} из ${rc.total} договоров.`);
+        toast.success("Стартовые значения сохранены, счётчики пересчитаны");
+      } else {
+        setCounterMsg(cbase.enabled ? null : "Автоподсчёт выключен.");
+        toast.success("Сохранено");
+      }
+    } catch {
+      toast.error("Не удалось сохранить");
+    } finally {
+      setSavingCounters(false);
+    }
+  }
+
+  async function handleRecompute() {
+    setRecomputing(true);
+    try {
+      const r = await recomputeCounters(false);
+      if (r && r.ok === false) {
+        setCounterMsg(r.reason === "not_all_numbered"
+          ? `Пока не у всех договоров есть номер (${r.missing_count}) — например: ${(r.missing || []).slice(0, 5).join(", ")}.`
+          : (r.detail || "Пересчёт не выполнен"));
+        toast.warning(r.detail || "Пересчёт не выполнен");
+      } else {
+        setCounterMsg(`Досчитано новых: ${r.computed} (всего ${r.total}).`);
+        toast.success("Счётчики обновлены");
+      }
+    } catch {
+      toast.error("Ошибка пересчёта");
+    } finally {
+      setRecomputing(false);
     }
   }
 
@@ -296,6 +352,76 @@ export default function Settings() {
               {savingProfile ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
               Сохранить профиль
             </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Счётчики проживающих (Заявление) */}
+      <div className="card-premium p-6" data-testid="settings-counters-card">
+        <div className="flex items-start gap-4">
+          <div className="h-10 w-10 bg-[#a855f7]/10 flex items-center justify-center shrink-0 rounded-md">
+            <Settings2 className="h-5 w-5 text-[#a855f7]" strokeWidth={2} />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-heading text-xl font-bold tracking-tight">Счётчики проживающих (Заявление)</h2>
+            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+              Автоподсчёт полей на стр. 2 заявления: «проживает», «несовершеннолетних»,
+              «совершеннолетних», «свободных мест». Задайте состояние общежития
+              <b> до первого договора</b> — далее каждый договор в порядке номера прибавляет:
+              всего +1, несовершеннолетний/совершеннолетний +1 (возраст берётся из даты рождения),
+              свободных −1. Уже посчитанные заявления не меняются. Пока номер есть не у всех
+              договоров — счёт не запускается.
+            </p>
+            <label className="flex items-center gap-2 mt-4 text-sm">
+              <input
+                type="checkbox"
+                checked={!!cbase.enabled}
+                onChange={(e) => setCbase({ ...cbase, enabled: e.target.checked })}
+                data-testid="counters-enabled"
+              />
+              Включить автоподсчёт
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 max-w-2xl">
+              {[
+                ["total", "Всего проживающих"],
+                ["minors", "Несовершеннолетних"],
+                ["adults", "Совершеннолетних"],
+                ["free", "Свободных мест"],
+              ].map(([k, label]) => (
+                <div key={k}>
+                  <label className="text-xs text-muted-foreground">{label} (старт)</label>
+                  <Input
+                    type="number"
+                    value={cbase[k]}
+                    onChange={(e) => setCbase({ ...cbase, [k]: e.target.value })}
+                    data-testid={`counters-${k}`}
+                  />
+                </div>
+              ))}
+            </div>
+            {counterMsg ? (
+              <div className="mt-3 text-sm text-amber-400" data-testid="counters-msg">{counterMsg}</div>
+            ) : null}
+            <div className="flex flex-wrap gap-2 mt-4">
+              <Button
+                onClick={handleSaveCounters}
+                disabled={savingCounters}
+                className="bg-[#a855f7] hover:bg-[#9333ea]"
+                data-testid="counters-save-btn"
+              >
+                {savingCounters ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                Сохранить и пересчитать всё
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleRecompute}
+                disabled={recomputing}
+                data-testid="counters-recompute-btn"
+              >
+                {recomputing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                Досчитать новые
+              </Button>
+            </div>
           </div>
         </div>
       </div>

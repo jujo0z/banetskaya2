@@ -107,6 +107,7 @@ class Contract(BaseModel):
     master: Dict[str, str] = {}
     status: str = "final"  # "final" | "draft"
     demo: bool = False
+    counters: Optional[Dict[str, Any]] = None  # накопит. счётчики Заявления (заморожены)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -313,6 +314,7 @@ async def _save_contract(fields: Dict[str, str], status: str = "final",
 @api_router.post("/contracts")
 async def create_contract(req: GenerateRequest):
     contract = await _save_contract(req.fields, req.status or "final")
+    await _auto_counters()
     return contract.model_dump()
 
 
@@ -399,6 +401,7 @@ async def save_master_bulk(req: MasterBulkRequest):
         res = await db.contracts.update_one({"id": r.id}, {"$set": upd})
         if res.matched_count:
             updated += 1
+    await _auto_counters()
     return {"updated": updated}
 
 
@@ -594,6 +597,7 @@ async def update_contract(contract_id: str, req: GenerateRequest):
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.contracts.update_one({"id": contract_id}, {"$set": update})
+    await _auto_counters()
     doc = await db.contracts.find_one({"id": contract_id}, {"_id": 0})
     return doc
 
@@ -605,6 +609,7 @@ async def create_contracts_batch(req: BatchGenerateRequest):
         master = req.masters[i] if i < len(req.masters) else {}
         contract = await _save_contract(fields, master=master)
         created.append(contract.model_dump())
+    await _auto_counters()
     return {"created": created, "count": len(created)}
 
 
@@ -655,8 +660,150 @@ def _contract_master(doc: dict) -> dict:
     """Полные данные человека для пакета: сохранённый master или вывод из полей договора."""
     m = doc.get("master") or {}
     if any(str(v).strip() for v in m.values()):
-        return m
-    return masterdata.contract_to_master(doc.get("fields", {}) or {})
+        m = dict(m)
+    else:
+        m = masterdata.contract_to_master(doc.get("fields", {}) or {})
+    # Проброс замороженных счётчиков (Заявление, стр.2)
+    c = doc.get("counters")
+    if isinstance(c, dict):
+        for k in ("occupancy_count", "minors_count", "adults_count", "free_count"):
+            if c.get(k) not in (None, ""):
+                m[k] = str(c.get(k))
+    return m
+
+
+# ============================================================================
+#  НАКОПИТЕЛЬНЫЕ СЧЁТЧИКИ ПРОЖИВАЮЩИХ (Заявление, стр.2)
+#  Всего +1 на договор; несовершеннолетний -> Несов +1, иначе Совер +1;
+#  Свободных -1. Порядок — по номеру договора. Значения замораживаются.
+# ============================================================================
+COUNTER_BASE_KEY = "zayav_counter_base"
+_COUNTER_KEYS = ("occupancy_count", "minors_count", "adults_count", "free_count")
+
+
+def _counter_num_key(num: str):
+    s = str(num or "").strip()
+    digits = re.sub(r"\D", "", s)
+    return (0 if digits else 1, int(digits) if digits else 0, s)
+
+
+def _doc_num(d: dict) -> str:
+    return (d.get("contract_number")
+            or (d.get("master") or {}).get("contract_number")
+            or (d.get("fields") or {}).get("contract_number") or "").strip()
+
+
+def _doc_birth(d: dict) -> str:
+    return ((d.get("master") or {}).get("birth_date")
+            or (d.get("fields") or {}).get("birth_date") or "").strip()
+
+
+class CounterBase(BaseModel):
+    enabled: bool = False
+    total: int = 0
+    minors: int = 0
+    adults: int = 0
+    free: int = 0
+
+
+async def _get_counter_base() -> dict:
+    doc = await db.app_settings.find_one({"key": COUNTER_BASE_KEY}, {"_id": 0})
+    val = (doc or {}).get("value") or {}
+    return {
+        "enabled": bool(val.get("enabled", False)),
+        "total": int(val.get("total", 0) or 0),
+        "minors": int(val.get("minors", 0) or 0),
+        "adults": int(val.get("adults", 0) or 0),
+        "free": int(val.get("free", 0) or 0),
+    }
+
+
+async def _recompute_counters(force: bool = False) -> dict:
+    """Пересчёт счётчиков по всем НЕ-черновикам в порядке номера договора.
+    force=False — считаем только новые (замороженные не трогаем).
+    force=True — пересчёт всех от базы (используется при смене стартовых значений)."""
+    base = await _get_counter_base()
+    if not base.get("enabled"):
+        return {"ok": False, "reason": "disabled",
+                "detail": "Счётчики выключены в настройках"}
+    docs = await db.contracts.find(
+        {"status": {"$ne": "draft"}, "demo": {"$ne": True}}, {"_id": 0}).to_list(100000)
+    missing = [d for d in docs if not _doc_num(d)]
+    if missing:
+        return {"ok": False, "reason": "not_all_numbered",
+                "missing_count": len(missing),
+                "missing": [d.get("full_name", "") or "(без имени)" for d in missing][:30],
+                "detail": "Пока не у всех договоров проставлен номер"}
+    docs.sort(key=lambda d: _counter_num_key(_doc_num(d)))
+    run = {"total": base["total"], "minors": base["minors"],
+           "adults": base["adults"], "free": base["free"]}
+    computed = 0
+    for d in docs:
+        c = d.get("counters")
+        has_c = isinstance(c, dict) and all(k in c for k in _COUNTER_KEYS)
+        if has_c and not force:
+            run = {"total": int(c["occupancy_count"]), "minors": int(c["minors_count"]),
+                   "adults": int(c["adults_count"]), "free": int(c["free_count"])}
+            continue
+        minor = docsvc.is_minor(_doc_birth(d))
+        run["total"] += 1
+        if minor:
+            run["minors"] += 1
+        else:
+            run["adults"] += 1
+        run["free"] -= 1
+        counters = {"occupancy_count": run["total"], "minors_count": run["minors"],
+                    "adults_count": run["adults"], "free_count": run["free"],
+                    "minor": bool(minor)}
+        await db.contracts.update_one({"id": d["id"]}, {"$set": {"counters": counters}})
+        computed += 1
+    return {"ok": True, "computed": computed, "total": len(docs), "force": bool(force)}
+
+
+async def _auto_counters():
+    """Тихая попытка досчитать новые счётчики (после создания/правки договора)."""
+    try:
+        await _recompute_counters(force=False)
+    except Exception:
+        logger.exception("auto counter recompute failed")
+
+
+async def _counters_by_number() -> dict:
+    docs = await db.contracts.find(
+        {"counters": {"$ne": None}},
+        {"_id": 0, "contract_number": 1, "master": 1, "fields": 1, "counters": 1},
+    ).to_list(100000)
+    mp = {}
+    for d in docs:
+        num = _doc_num(d)
+        if num and isinstance(d.get("counters"), dict):
+            mp[num] = d["counters"]
+    return mp
+
+
+@api_router.get("/counters/base")
+async def get_counters_base():
+    return await _get_counter_base()
+
+
+@api_router.post("/counters/base")
+async def set_counters_base(payload: CounterBase, recompute: bool = True):
+    val = {"enabled": bool(payload.enabled), "total": int(payload.total),
+           "minors": int(payload.minors), "adults": int(payload.adults),
+           "free": int(payload.free)}
+    await db.app_settings.update_one({"key": COUNTER_BASE_KEY},
+                                     {"$set": {"key": COUNTER_BASE_KEY, "value": val}},
+                                     upsert=True)
+    result = None
+    if recompute and val["enabled"]:
+        # стартовая точка изменилась -> полный пересчёт
+        result = await _recompute_counters(force=True)
+    return {"saved": True, "base": val, "recompute": result}
+
+
+@api_router.post("/contracts/recompute-counters")
+async def recompute_counters(force: bool = False):
+    return await _recompute_counters(force=force)
 
 
 @api_router.get("/contracts")
@@ -2085,7 +2232,18 @@ async def zayavlenie_save_defaults(payload: Forma19Defaults):
 @api_router.post("/zayavlenie/prefill")
 async def zayavlenie_prefill(payload: Forma19Prefill):
     """Из строк-«людей» единого шаблона -> записи Заявления."""
-    return {"records": [masterdata.master_to_zayavlenie(m) for m in payload.students]}
+    recs = [masterdata.master_to_zayavlenie(m) for m in payload.students]
+    # подставляем замороженные счётчики по номеру договора (если посчитаны)
+    mp = await _counters_by_number()
+    if mp:
+        for m, rec in zip(payload.students, recs):
+            num = str((m or {}).get("contract_number") or "").strip()
+            c = mp.get(num)
+            if isinstance(c, dict):
+                for k in _COUNTER_KEYS:
+                    if c.get(k) not in (None, ""):
+                        rec[k] = str(c[k])
+    return {"records": recs}
 
 
 @api_router.get("/zayavlenie/layout")

@@ -3082,6 +3082,11 @@ def _zayav_static_page2(H):
     text(41, 94.5, "чел., в том числе несовершеннолетних", 6.4)
     rule(112, 132, 94.5)
     text(133, 94.5, "чел.*", 6.4)
+    text(7, 99.2, "совершеннолетних", 6.4)
+    rule(45, 62, 99.2)
+    text(63, 99.2, "чел.*  свободных мест", 6.4)
+    rule(112, 132, 99.2)
+    text(133, 99.2, "чел.*", 6.4)
     text(7, 102, "Лицо, ответственное за регистрацию (при его отсутствии – должностное", 6.3)
     text(7, 105.8, "лицо органа регистрации):", 6.3)
     rule(7, 52, 118)
@@ -3127,6 +3132,8 @@ ZAYAV_OVERLAY_SLOTS = [
     {"slot": "area", "page": 2, "label": "Общая площадь, кв. м"},
     {"slot": "occupancy_count", "page": 2, "label": "Проживает, чел."},
     {"slot": "minors_count", "page": 2, "label": "Несовершеннолетних, чел."},
+    {"slot": "adults_count", "page": 2, "label": "Совершеннолетних, чел."},
+    {"slot": "free_count", "page": 2, "label": "Свободных мест, чел."},
 ]
 
 # raw: (slot, page, x_mm, y_mm, w_mm, align, size_a5_pt, bold)
@@ -3153,6 +3160,8 @@ _ZAYAV_LAYOUT_RAW = [
     ("area", 2, 63, 89.0, 21, "center", 6.4, True),
     ("occupancy_count", 2, 25, 94.5, 15, "center", 6.4, False),
     ("minors_count", 2, 112, 94.5, 20, "center", 6.4, False),
+    ("adults_count", 2, 45, 99.2, 17, "center", 6.4, False),
+    ("free_count", 2, 112, 99.2, 20, "center", 6.4, False),
 ]
 
 
@@ -3227,6 +3236,8 @@ def zayav_overlay_text(rec):
         "area": g("area"),
         "occupancy_count": g("occupancy_count"),
         "minors_count": g("minors_count"),
+        "adults_count": g("adults_count"),
+        "free_count": g("free_count"),
     }
     # свои столбцы (cc_*) — прокидываем как есть, чтобы поставленные в редакторе поля печатались
     for k, v in rec.items():
