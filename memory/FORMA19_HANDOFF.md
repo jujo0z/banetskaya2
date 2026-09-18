@@ -17,7 +17,7 @@ CORS_ORIGINS=*
 ```
 **frontend/.env:**
 ```
-REACT_APP_BACKEND_URL=https://gallant-bohr-13.preview.emergentagent.com
+REACT_APP_BACKEND_URL=https://vibrant-swartz-12.preview.emergentagent.com
 WDS_SOCKET_PORT=443
 ```
 (preview-домен берётся из `/app/.emergent/emergent.yml` → `preview_endpoint`.)

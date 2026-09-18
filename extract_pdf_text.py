@@ -3,7 +3,7 @@
 import requests
 import pymupdf
 
-BASE_URL = "https://gallant-bohr-13.preview.emergentagent.com/api"
+BASE_URL = "https://vibrant-swartz-12.preview.emergentagent.com/api"
 
 # Test overlay/generate
 print("=" * 80)

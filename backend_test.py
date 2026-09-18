@@ -8,7 +8,7 @@ import sys
 from io import BytesIO
 
 # Backend URL from frontend/.env
-BASE_URL = "https://gallant-bohr-13.preview.emergentagent.com/api"
+BASE_URL = "https://vibrant-swartz-12.preview.emergentagent.com/api"
 
 # Test results tracking
 tests_passed = 0

@@ -24,6 +24,6 @@
   "seed_data_creation": "Ephemeral: created xlsx /tmp/ui_students.xlsx and TEST_/UI_ prefixed contracts. All cleaned up post-run (backend tests delete their own, UI_ ones cleaned via curl).",
   "retest_needed": false,
   "main_agent_can_self_test": true,
-  "context_for_next_testing_agent": "Backend pytest at /app/backend/tests/test_contracts_api.py runs green in ~6s (pytest-xdist enabled). Public URL: https://gallant-bohr-13.preview.emergentagent.com. For UI file upload, use page.set_input_files on '[data-testid=\"excel-file-input\"]' (input is hidden - don't wait for visibility). PDF flow can take a few seconds due to LibreOffice.",
+  "context_for_next_testing_agent": "Backend pytest at /app/backend/tests/test_contracts_api.py runs green in ~6s (pytest-xdist enabled). Public URL: https://vibrant-swartz-12.preview.emergentagent.com. For UI file upload, use page.set_input_files on '[data-testid=\"excel-file-input\"]' (input is hidden - don't wait for visibility). PDF flow can take a few seconds due to LibreOffice.",
   "rca of the issue": "No functional issues found."
 }
