@@ -8,7 +8,7 @@ import json
 import sys
 
 # Backend URL from frontend/.env
-BASE_URL = "https://analysis-tool-42.preview.emergentagent.com/api"
+BASE_URL = "https://gallant-bohr-13.preview.emergentagent.com/api"
 
 def test_master_schema():
     """TEST 1: GET /api/master-schema -> 200 with builtin + custom columns"""

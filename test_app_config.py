@@ -6,7 +6,7 @@ import sys
 import requests
 
 # Backend URL
-BASE_URL = "https://analysis-tool-42.preview.emergentagent.com/api"
+BASE_URL = "https://gallant-bohr-13.preview.emergentagent.com/api"
 
 # Цвета для вывода
 GREEN = '\033[92m'
