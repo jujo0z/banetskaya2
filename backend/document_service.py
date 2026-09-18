@@ -1781,6 +1781,18 @@ def _draw_forma19_back(c, zw, zh, rec):
 
 
 
+def _forma_upper_rec(rec):
+    """Формы 19/24 заполняются печатными ЗАГЛАВНЫМИ буквами: приводим все
+    вводимые значения записи к верхнему регистру (Cyrillic/Latin). Ключи и
+    нестроковые значения не трогаем; статичные подписи бланка тут не участвуют."""
+    if not rec:
+        return rec
+    out = {}
+    for k, v in rec.items():
+        out[k] = v.upper() if isinstance(v, str) else v
+    return out
+
+
 def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides=True, template=None):
     """PDF Формы 19: A4-сетка 2×2. per_sheet = сколько ЧЕЛОВЕК на лист (по 2 копии).
     Порядок страниц: лист1-лицо, лист1-оборот, лист2-лицо, лист2-оборот … —
@@ -1799,6 +1811,7 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
     people = list(people or [])
     if not people:
         people = [{}]
+    people = [_forma_upper_rec(p) for p in people]  # печатные буквы → ЗАГЛАВНЫЕ
     ppl_per_sheet = 2  # фиксировано: 2 человека (2×2 = по 2 копии)
     duplex_flip = (duplex_flip or "long").lower()
     tpl_by_page = _forma_tpl_by_page(template) if template else None
@@ -2181,6 +2194,7 @@ def build_forma24(people, duplex_flip="long", draw_guides=True, template=None):
     pw, ph = 210 * MM, 297 * MM
     scale, sw, sh, side_margin, top_margin = _fit_grid(pw, ph, zw, zh, 2, 2)
     people = list(people or []) or [{}]
+    people = [_forma_upper_rec(p) for p in people]  # печатные буквы → ЗАГЛАВНЫЕ
     duplex_flip = (duplex_flip or "long").lower()
     tpl_by_page = _forma_tpl_by_page(template) if template else None
 
@@ -2234,6 +2248,8 @@ def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True,
     duplex_flip = (duplex_flip or "long").lower()
     rec19 = rec19 or {}
     rec24 = rec24 or {}
+    rec19 = _forma_upper_rec(rec19)  # печатные буквы → ЗАГЛАВНЫЕ
+    rec24 = _forma_upper_rec(rec24)
     tpl19_by = _forma_tpl_by_page(tpl19) if tpl19 else None
     tpl24_by = _forma_tpl_by_page(tpl24) if tpl24 else None
 

@@ -176,3 +176,8 @@ GET /api/printers (список принтеров Windows, supported=false в �
 - КОД (document_service._draw_zayav_element): добавлен новый тип элемента шаблона "spread" — раскладка каждого символа значения по отдельной клетке (x — левый край 1-й клетки %, cw — ширина клетки %, n — число клеток). Идент.номер Формы 19 теперь рисуется этим типом (x=28.571%, cw=4.966%, n=14, size 10pt, центрирование по полосе). Хардкод-функции _draw_forma19_front/_draw_forma24_front не менялись.
 - ВАЖНО ПРО VPS (Contabo 173.249.41.148): на сервере несколько приложений. Форма-приложение = systemd `banetskaya.service`, порт 8099, каталог /opt/banetskaya/backend, БД banetskaya_db; домен banetskaya.duckdns.org (nginx) → 8099. Порт 8001 занят ДРУГИМ проектом (/root/abitura). Бэкапы прежних шаблонов сохранены в app_settings: forma19_template_bak_bigdate / forma24_template_bak_bigdate.
 - Проверено вживую через прод-API 8099 (forma19/preview-png): дата крупная и в границах, номер ровно по клеткам, лицо/оборот сдвинуты идентично, низ не обрезан.
+
+## Implemented (2026-09-18 — Формы 19/24: печатные буквы ЗАГЛАВНЫМИ)
+- Требование: в Формах 19 и 24 все вводимые значения печатаются только ЗАГЛАВНЫМИ (печатные буквы).
+- Реализация: document_service._forma_upper_rec(rec) приводит все строковые значения записи к .upper() на входе build_forma19 / build_forma24 / build_forma_combined — покрывает и шаблонный путь (_draw_forma_template_card/_forma_vals), и хардкод (_draw_forma19_front/_draw_forma24_front). Статичные подписи бланка не затрагиваются; Заявление/Сообщение/Договор НЕ изменены.
+- Тест backend: 8/8 (preview + preview-png Ф19/Ф24 из строчного ввода -> "МОРОЗ"/"ИВАН" в тексте PDF; регрессия zayavlenie/package — регистр сохранён). НЕ задеплоено на VPS (ожидает запроса пользователя).
