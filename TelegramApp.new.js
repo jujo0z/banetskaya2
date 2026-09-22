@@ -4,11 +4,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2, AlertTriangle, ChevronLeft, Search, Star, LogIn, LogOut,
   ClipboardCheck, Users, Bed, Sofa, CalendarDays, ShieldCheck, CheckCircle2,
-  Sparkles, X, Trash2, Plus, Pencil,
+  Sparkles, X, Trash2, Plus, Pencil, LayoutDashboard, AlertOctagon, ChevronRight,
 } from "lucide-react";
 import {
   publicFloors, publicFloor, publicBlock, publicSearch,
   login, logout, authMe, getToken, saveInspectionStarosta, deleteInspectionStarosta,
+  cabinetLowGrades,
 } from "@/lib/apiClient";
 
 /* ------------------------------------------------------------------ */
@@ -48,6 +49,14 @@ function isoToDmy(s) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((s || "").trim());
   if (!m) return "";
   return `${m[3]}.${m[2]}.${m[1]}`;
+}
+
+/* russian plural: plural(n, "блок","блока","блоков") */
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
 }
 
 /* grade → color tokens */
@@ -109,6 +118,7 @@ export default function TelegramApp() {
   const [q, setQ] = useState("");
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [cabinet, setCabinet] = useState(null); // low-grades data for personal cabinet
 
   useEffect(() => {
     try {
@@ -147,7 +157,15 @@ export default function TelegramApp() {
     try { setResults(await publicSearch(text)); } catch (e) { setResults([]); }
   }, []);
 
-  const onLogout = () => { haptic("medium"); logout(); setUser(null); toast.success("Вы вышли"); };
+  const onLogout = () => { haptic("medium"); logout(); setUser(null); setCabinet(null); setView("home"); toast.success("Вы вышли"); };
+
+  const openCabinet = useCallback(async () => {
+    haptic("light");
+    setCabinet(null);
+    setView("cabinet");
+    try { setCabinet(await cabinetLowGrades()); }
+    catch (e) { setCabinet({ blocks: [], threshold: 3, total_warnings: 0 }); }
+  }, []);
 
   const backTarget = view === "block" ? (floorNum != null ? "floor" : "home") : "home";
 
@@ -191,10 +209,21 @@ export default function TelegramApp() {
               </div>
             </div>
             {user ? (
-              <button onClick={onLogout}
-                className="flex items-center gap-1.5 text-xs bg-white/15 hover:bg-white/25 active:scale-95 ring-1 ring-white/20 rounded-full px-3 py-2 font-medium transition">
-                <LogOut className="h-3.5 w-3.5" /> Выйти
-              </button>
+              <div className="flex items-center gap-2">
+                <button data-testid="tg-cabinet-open" onClick={openCabinet}
+                  className="relative flex items-center gap-1.5 text-xs bg-white text-rose-600 rounded-full px-3 py-2 font-semibold shadow-sm active:scale-95 transition">
+                  <LayoutDashboard className="h-3.5 w-3.5" /> Кабинет
+                  {cabinet?.total_warnings > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 h-4 min-w-4 px-1 rounded-full bg-amber-400 text-white text-[10px] font-extrabold grid place-items-center ring-2 ring-white">
+                      {cabinet.total_warnings}
+                    </span>
+                  )}
+                </button>
+                <button onClick={onLogout}
+                  className="flex items-center gap-1.5 text-xs bg-white/15 hover:bg-white/25 active:scale-95 ring-1 ring-white/20 rounded-full px-3 py-2 font-medium transition">
+                  <LogOut className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ) : (
               <button data-testid="tg-login-open" onClick={() => { haptic("light"); setView("login"); }}
                 className="flex items-center gap-1.5 text-xs bg-white text-rose-600 rounded-full px-3.5 py-2 font-semibold shadow-sm active:scale-95 transition">
@@ -268,6 +297,28 @@ export default function TelegramApp() {
 
                   <Legend />
 
+                  {user && (
+                    <button data-testid="tg-cabinet-card" onClick={openCabinet}
+                      className="w-full rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/70 px-4 py-3.5 flex items-center justify-between active:scale-[0.99] transition">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 grid place-items-center text-white shadow-sm shadow-rose-300/50">
+                          <LayoutDashboard className="h-5 w-5" />
+                        </div>
+                        <div className="text-left">
+                          <div className="font-bold text-sm">Мой кабинет</div>
+                          <div className="text-[11px] text-slate-400">блоки с низкими оценками</div>
+                        </div>
+                      </div>
+                      {cabinet?.total_warnings > 0 ? (
+                        <span className="flex items-center gap-1 text-xs bg-amber-50 text-amber-600 rounded-full px-3 py-1.5 font-bold ring-1 ring-amber-100">
+                          <AlertOctagon className="h-3.5 w-3.5" /> {cabinet.total_warnings}
+                        </span>
+                      ) : (
+                        <ChevronRight className="h-5 w-5 text-slate-300" />
+                      )}
+                    </button>
+                  )}
+
                   <div className="text-xs uppercase tracking-wider text-slate-400 font-semibold px-1 pt-1">Этажи</div>
 
                   {floors === null ? (
@@ -332,6 +383,12 @@ export default function TelegramApp() {
                 onBack={() => setView(floorNum != null ? "floor" : "home")}
                 onSaved={reloadFloor}
               />
+            </motion.div>
+          )}
+
+          {view === "cabinet" && (
+            <motion.div key="cabinet" {...pageMotion}>
+              <CabinetView user={user} data={cabinet} onBack={goHome} onOpenBlock={openBlock} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -613,6 +670,11 @@ function BlockView({ block, user, selectedDate, onBack, onSaved }) {
                 </div>
                 <Grade v={gradeByKey(room.grade_key)} size="lg" />
               </div>
+              {[1, 2].includes(Number(gradeByKey(room.grade_key))) && current?.reasons?.[room.grade_key] && (
+                <div className="mt-2.5 text-xs text-rose-600 bg-rose-50 ring-1 ring-rose-100 rounded-lg px-2.5 py-2 flex gap-1.5">
+                  <AlertOctagon className="h-4 w-4 shrink-0" /> {current.reasons[room.grade_key]}
+                </div>
+              )}
               {room.people.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {room.people.map((p, i) => (
@@ -657,6 +719,7 @@ function BlockView({ block, user, selectedDate, onBack, onSaved }) {
 function GradeEditor({ block, initialDate, inspections, onSaved, onDeleted }) {
   const [date, setDate] = useState(initialDate || todayStr());
   const [g, setG] = useState({ small_room: 0, big_room: 0, common: 0 });
+  const [reasons, setReasons] = useState({ small_room: "", big_room: "", common: "" });
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -670,21 +733,40 @@ function GradeEditor({ block, initialDate, inspections, onSaved, onDeleted }) {
   // inspection if it exists, otherwise start a blank NEW check
   useEffect(() => {
     const ex = (inspections || []).find((i) => i.date === date) || null;
-    if (ex) { setG({ small_room: ex.small_room, big_room: ex.big_room, common: ex.common }); setNote(ex.note || ""); }
-    else { setG({ small_room: 0, big_room: 0, common: 0 }); setNote(""); }
+    if (ex) {
+      setG({ small_room: ex.small_room, big_room: ex.big_room, common: ex.common });
+      const r = ex.reasons || {};
+      setReasons({ small_room: r.small_room || "", big_room: r.big_room || "", common: r.common || "" });
+      setNote(ex.note || "");
+    } else {
+      setG({ small_room: 0, big_room: 0, common: 0 });
+      setReasons({ small_room: "", big_room: "", common: "" });
+      setNote("");
+    }
     setConfirmDel(false);
   }, [date, inspections]);
 
-  const setGrade = (key, n) => { haptic("light"); setG((s) => ({ ...s, [key]: n })); };
+  const setGrade = (key, n) => {
+    haptic("light");
+    setG((s) => ({ ...s, [key]: n }));
+    if (n >= 3) setReasons((r) => ({ ...r, [key]: "" })); // reason only needed for 1–2
+  };
+  const setReason = (key, v) => setReasons((r) => ({ ...r, [key]: v }));
 
   const newCheck = () => { haptic("selection"); setDate(todayStr()); setConfirmDel(false); };
 
   const save = async () => {
     if (!dmyToIso(date)) { haptic("warning"); toast.error("Выберите дату проверки"); return; }
     if (!g.small_room || !g.big_room || !g.common) { haptic("warning"); toast.error("Проставьте все три оценки"); return; }
+    const missing = AREAS.filter((a) => [1, 2].includes(Number(g[a.key])) && !(reasons[a.key] || "").trim());
+    if (missing.length) {
+      haptic("warning");
+      toast.error("Для оценки 1–2 укажите причину: " + missing.map((a) => a.label).join(", "));
+      return;
+    }
     setBusy(true);
     try {
-      await saveInspectionStarosta({ block, date, ...g, note });
+      await saveInspectionStarosta({ block, date, ...g, note, reasons });
       haptic("success");
       toast.success(existing ? "Проверка обновлена" : "Новая проверка сохранена");
       onSaved?.(date);
@@ -732,25 +814,39 @@ function GradeEditor({ block, initialDate, inspections, onSaved, onDeleted }) {
         </div>
       </div>
 
-      {AREAS.map((a) => (
-        <div key={a.key}>
-          <div className="text-sm flex items-center gap-2 mb-2 font-medium">
-            <a.icon className="h-4 w-4 text-slate-400" /> {a.label}
+      {AREAS.map((a) => {
+        const low = [1, 2].includes(Number(g[a.key]));
+        return (
+          <div key={a.key}>
+            <div className="text-sm flex items-center gap-2 mb-2 font-medium">
+              <a.icon className="h-4 w-4 text-slate-400" /> {a.label}
+            </div>
+            <div className="grid grid-cols-5 gap-1.5">
+              {[1, 2, 3, 4, 5].map((n) => {
+                const active = Number(g[a.key]) === n;
+                const t = gradeTone(n);
+                return (
+                  <button key={n} onClick={() => setGrade(a.key, n)}
+                    className={`h-11 rounded-xl font-extrabold text-sm ring-2 transition active:scale-95 ${
+                      active ? `${t.bg} ${t.text} ${t.ring} shadow-md scale-105` : "bg-white text-slate-400 ring-slate-200"
+                    }`}>{n}</button>
+                );
+              })}
+            </div>
+            {low && (
+              <div className="mt-2 rounded-xl bg-rose-50 ring-1 ring-rose-200 p-2.5">
+                <div className="text-[11px] font-semibold text-rose-600 flex items-center gap-1 mb-1.5">
+                  <AlertOctagon className="h-3.5 w-3.5" /> Причина оценки {g[a.key]} — обязательно
+                </div>
+                <textarea data-testid={`tg-reason-${a.key}`} value={reasons[a.key]}
+                  onChange={(e) => setReason(a.key, e.target.value)} rows={2}
+                  placeholder="Что и почему? (например: грязный пол, немытая посуда)"
+                  className="w-full rounded-lg bg-white ring-1 ring-rose-200 px-2.5 py-2 text-sm resize-none focus:ring-2 focus:ring-rose-300 outline-none" />
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-5 gap-1.5">
-            {[1, 2, 3, 4, 5].map((n) => {
-              const active = Number(g[a.key]) === n;
-              const t = gradeTone(n);
-              return (
-                <button key={n} onClick={() => setGrade(a.key, n)}
-                  className={`h-11 rounded-xl font-extrabold text-sm ring-2 transition active:scale-95 ${
-                    active ? `${t.bg} ${t.text} ${t.ring} shadow-md scale-105` : "bg-white text-slate-400 ring-slate-200"
-                  }`}>{n}</button>
-              );
-            })}
-          </div>
-        </div>
-      ))}
+        );
+      })}
 
       <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Примечание (необязательно)"
         className="w-full rounded-xl bg-slate-50 ring-1 ring-slate-200 px-3 py-2.5 text-sm resize-none focus:ring-2 focus:ring-rose-300 outline-none" />
@@ -782,6 +878,89 @@ function GradeEditor({ block, initialDate, inspections, onSaved, onDeleted }) {
           </button>
         )
       )}
+    </div>
+  );
+}
+
+
+/* ================================================================== */
+/*  Personal cabinet — blocks with low grades (1–2) + warnings        */
+/* ================================================================== */
+function CabinetView({ user, data, onBack, onOpenBlock }) {
+  const loading = data === null;
+  const blocks = data?.blocks || [];
+  const threshold = data?.threshold || 3;
+  const warnings = data?.total_warnings || 0;
+
+  return (
+    <div>
+      <BackBtn onBack={onBack} label="Главная" />
+
+      <div className="rounded-3xl bg-gradient-to-br from-[#e11d48] via-[#d61a5c] to-[#be185d] text-white p-5 shadow-lg shadow-rose-500/25">
+        <div className="flex items-center gap-3">
+          <div className="h-12 w-12 rounded-2xl bg-white/15 ring-1 ring-white/20 grid place-items-center"><LayoutDashboard className="h-6 w-6" /></div>
+          <div>
+            <div className="font-extrabold text-xl leading-none tracking-tight">Личный кабинет</div>
+            <div className="text-xs text-white/85 mt-1.5">
+              {user?.full_name || user?.username} · этажи {(user?.floors || []).join(", ") || "—"}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {loading && <SkeletonList rows={3} />}
+
+        {!loading && warnings > 0 && (
+          <div className="rounded-2xl bg-amber-50 ring-1 ring-amber-200 p-3.5 flex items-center gap-3" data-testid="tg-cab-warning-banner">
+            <div className="h-10 w-10 rounded-xl bg-amber-400 text-white grid place-items-center shrink-0"><AlertOctagon className="h-5 w-5" /></div>
+            <div className="text-sm text-amber-800 leading-snug">
+              <span className="font-bold">ПРЕДУПРЕЖДЕНИЕ:</span> {warnings} {plural(warnings, "блок", "блока", "блоков")} с накоплением низких оценок (≥ {threshold}).
+            </div>
+          </div>
+        )}
+
+        {!loading && blocks.length === 0 && <Empty text="Нет блоков с низкими оценками — отлично!" />}
+
+        {!loading && blocks.map((b) => (
+          <div key={b.block} data-testid={`tg-cab-block-${b.block}`}
+            className={`rounded-2xl bg-white shadow-sm ring-1 p-4 ${b.warning ? "ring-amber-300" : "ring-slate-200/70"}`}>
+            <div className="flex items-center justify-between gap-2">
+              <button onClick={() => onOpenBlock(b.block)} className="flex items-center gap-2.5 active:scale-95 transition min-w-0">
+                <div className={`h-10 w-10 rounded-xl grid place-items-center shrink-0 ${b.warning ? "bg-amber-100 text-amber-600" : "bg-rose-50 text-rose-500"}`}>
+                  <Building2 className="h-5 w-5" />
+                </div>
+                <div className="text-left min-w-0">
+                  <div className="font-bold flex items-center gap-1">Блок {b.block} <ChevronRight className="h-4 w-4 text-slate-300" /></div>
+                  <div className="text-[11px] text-slate-400">{b.floor} этаж · низких оценок: {b.count}</div>
+                </div>
+              </button>
+              {b.warning && (
+                <span className="flex items-center gap-1 text-[11px] bg-amber-400 text-white rounded-full px-2.5 py-1.5 font-bold shrink-0">
+                  <AlertOctagon className="h-3.5 w-3.5" /> Предупреждение
+                </span>
+              )}
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {b.items.map((it, idx) => (
+                <div key={idx} className="rounded-xl bg-slate-50 ring-1 ring-slate-100 px-3 py-2">
+                  <div className="text-[11px] text-slate-400 font-semibold mb-1 flex items-center gap-1"><CalendarDays className="h-3 w-3" /> {it.date}</div>
+                  {it.areas.map((ar) => (
+                    <div key={ar.key} className="flex items-start gap-2 py-0.5">
+                      <Grade v={ar.grade} size="sm" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium">{ar.label}</div>
+                        {ar.reason && <div className="text-xs text-slate-500">{ar.reason}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
