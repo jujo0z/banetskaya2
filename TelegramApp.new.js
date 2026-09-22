@@ -4,11 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2, AlertTriangle, ChevronLeft, Search, Star, LogIn, LogOut,
   ClipboardCheck, Users, Bed, Sofa, CalendarDays, ShieldCheck, CheckCircle2,
-  Sparkles, X,
+  Sparkles, X, Trash2, Plus, Pencil,
 } from "lucide-react";
 import {
   publicFloors, publicFloor, publicBlock, publicSearch,
-  login, logout, authMe, getToken, saveInspectionStarosta,
+  login, logout, authMe, getToken, saveInspectionStarosta, deleteInspectionStarosta,
 } from "@/lib/apiClient";
 
 /* ------------------------------------------------------------------ */
@@ -36,6 +36,18 @@ function todayStr() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
+/* date format helpers: ДД.ММ.ГГГГ <-> YYYY-MM-DD (native date input) */
+function dmyToIso(s) {
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec((s || "").trim());
+  if (!m) return "";
+  return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+}
+function isoToDmy(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((s || "").trim());
+  if (!m) return "";
+  return `${m[3]}.${m[2]}.${m[1]}`;
 }
 
 /* grade → color tokens */
@@ -534,15 +546,28 @@ function BlockView({ block, user, selectedDate, onBack, onSaved }) {
     try {
       const d = await publicBlock(block);
       setData(d);
-      setDate((prev) => prev || d.inspections?.[0]?.date || todayStr());
-    } catch (e) { setData({ rooms: [], inspections: [] }); }
+      return d;
+    } catch (e) { const empty = { rooms: [], inspections: [] }; setData(empty); return empty; }
   }, [block]);
 
-  useEffect(() => { reload(); }, [reload]);
+  useEffect(() => {
+    reload().then((d) => setDate((prev) => prev || d.inspections?.[0]?.date || todayStr()));
+  }, [reload]);
   useEffect(() => { if (selectedDate) setDate(selectedDate); }, [selectedDate]);
 
   const current = inspFor(data?.inspections, date);
   const gradeByKey = (k) => (current ? current[k] : 0);
+
+  const handleSaved = async (savedDate) => {
+    await reload();
+    if (savedDate) setDate(savedDate);
+    onSaved?.();
+  };
+  const handleDeleted = async () => {
+    const d = await reload();
+    setDate(d.inspections?.[0]?.date || todayStr());
+    onSaved?.();
+  };
 
   return (
     <div>
@@ -607,7 +632,15 @@ function BlockView({ block, user, selectedDate, onBack, onSaved }) {
           </div>
         )}
 
-        {canGrade && <GradeEditor block={block} initialDate={date} current={current} onSaved={() => { reload(); onSaved?.(); }} />}
+        {canGrade && (
+          <GradeEditor
+            block={block}
+            initialDate={date}
+            inspections={data?.inspections || []}
+            onSaved={handleSaved}
+            onDeleted={handleDeleted}
+          />
+        )}
         {user && !canGrade && (
           <div className="text-xs text-amber-700 bg-amber-50 rounded-2xl p-3 ring-1 ring-amber-100">
             У вас нет доступа к {Math.floor(Number(block) / 100)} этажу — только просмотр.
@@ -621,39 +654,82 @@ function BlockView({ block, user, selectedDate, onBack, onSaved }) {
 /* ================================================================== */
 /*  Grade editor                                                      */
 /* ================================================================== */
-function GradeEditor({ block, initialDate, current, onSaved }) {
+function GradeEditor({ block, initialDate, inspections, onSaved, onDeleted }) {
   const [date, setDate] = useState(initialDate || todayStr());
   const [g, setG] = useState({ small_room: 0, big_room: 0, common: 0 });
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+
+  // find an existing inspection for the currently chosen date
+  const existing = (inspections || []).find((i) => i.date === date) || null;
 
   useEffect(() => { setDate(initialDate || todayStr()); }, [initialDate]);
+
+  // whenever the chosen date (or list) changes: prefill from that date's
+  // inspection if it exists, otherwise start a blank NEW check
   useEffect(() => {
-    if (current) { setG({ small_room: current.small_room, big_room: current.big_room, common: current.common }); setNote(current.note || ""); }
+    const ex = (inspections || []).find((i) => i.date === date) || null;
+    if (ex) { setG({ small_room: ex.small_room, big_room: ex.big_room, common: ex.common }); setNote(ex.note || ""); }
     else { setG({ small_room: 0, big_room: 0, common: 0 }); setNote(""); }
-  }, [current]);
+    setConfirmDel(false);
+  }, [date, inspections]);
 
   const setGrade = (key, n) => { haptic("light"); setG((s) => ({ ...s, [key]: n })); };
 
+  const newCheck = () => { haptic("selection"); setDate(todayStr()); setConfirmDel(false); };
+
   const save = async () => {
+    if (!dmyToIso(date)) { haptic("warning"); toast.error("Выберите дату проверки"); return; }
     if (!g.small_room || !g.big_room || !g.common) { haptic("warning"); toast.error("Проставьте все три оценки"); return; }
     setBusy(true);
-    try { await saveInspectionStarosta({ block, date, ...g, note }); haptic("success"); toast.success("Оценки сохранены"); onSaved(); }
-    catch (e) { haptic("error"); toast.error(e?.response?.data?.detail || "Не удалось сохранить"); }
+    try {
+      await saveInspectionStarosta({ block, date, ...g, note });
+      haptic("success");
+      toast.success(existing ? "Проверка обновлена" : "Новая проверка сохранена");
+      onSaved?.(date);
+    } catch (e) { haptic("error"); toast.error(e?.response?.data?.detail || "Не удалось сохранить"); }
+    finally { setBusy(false); }
+  };
+
+  const doDelete = async () => {
+    if (!existing) return;
+    setBusy(true);
+    try {
+      await deleteInspectionStarosta(existing.id);
+      haptic("success");
+      toast.success(`Проверка за ${date} удалена`);
+      setConfirmDel(false);
+      onDeleted?.();
+    } catch (e) { haptic("error"); toast.error(e?.response?.data?.detail || "Не удалось удалить"); }
     finally { setBusy(false); }
   };
 
   return (
     <div className="rounded-3xl bg-white shadow-sm ring-1 ring-rose-100 p-5 space-y-4" data-testid="tg-grade-editor">
-      <div className="font-bold text-sm flex items-center gap-2">
-        <span className="h-7 w-7 rounded-lg bg-rose-50 grid place-items-center text-rose-500"><ClipboardCheck className="h-4 w-4" /></span>
-        Выставить оценки
+      <div className="flex items-center justify-between">
+        <div className="font-bold text-sm flex items-center gap-2">
+          <span className="h-7 w-7 rounded-lg bg-rose-50 grid place-items-center text-rose-500">
+            {existing ? <Pencil className="h-4 w-4" /> : <ClipboardCheck className="h-4 w-4" />}
+          </span>
+          {existing ? "Редактировать проверку" : "Новая проверка"}
+        </div>
+        <button onClick={newCheck}
+          className="flex items-center gap-1 text-xs font-semibold text-rose-600 bg-rose-50 rounded-full px-3 py-1.5 ring-1 ring-rose-100 active:scale-95 transition">
+          <Plus className="h-3.5 w-3.5" /> Новая
+        </button>
       </div>
 
       <div>
         <div className="text-[11px] text-slate-400 mb-1.5 font-semibold">ДАТА ПРОВЕРКИ</div>
-        <input value={date} onChange={(e) => setDate(e.target.value)} placeholder="ДД.ММ.ГГГГ"
-          className="w-40 rounded-xl bg-slate-50 ring-1 ring-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-300 outline-none" />
+        <input type="date" data-testid="tg-grade-date" value={dmyToIso(date)}
+          onChange={(e) => setDate(isoToDmy(e.target.value) || todayStr())}
+          className="rounded-xl bg-slate-50 ring-1 ring-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-rose-300 outline-none" />
+        <div className="text-[11px] text-slate-400 mt-1.5">
+          {existing
+            ? "На эту дату уже есть проверка — сохранение обновит её."
+            : "Новая дата — создаст отдельную проверку (можно вчера/сегодня/завтра)."}
+        </div>
       </div>
 
       {AREAS.map((a) => (
@@ -681,8 +757,31 @@ function GradeEditor({ block, initialDate, current, onSaved }) {
 
       <button data-testid="tg-grade-save" onClick={save} disabled={busy}
         className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-rose-500 to-pink-600 text-white font-bold shadow-md shadow-rose-300/50 disabled:opacity-60 active:scale-[0.99] transition">
-        {busy ? "Сохранение…" : "Сохранить оценки"}
+        {busy ? "Сохранение…" : existing ? "Сохранить изменения" : "Сохранить проверку"}
       </button>
+
+      {existing && (
+        confirmDel ? (
+          <div className="rounded-2xl bg-rose-50 ring-1 ring-rose-100 p-3 space-y-2.5" data-testid="tg-grade-delete-confirm">
+            <div className="text-sm text-rose-700 font-medium text-center">Удалить проверку за {date}?</div>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => setConfirmDel(false)} disabled={busy}
+                className="py-2.5 rounded-xl bg-white ring-1 ring-slate-200 text-slate-600 font-semibold text-sm active:scale-95 transition">
+                Отмена
+              </button>
+              <button data-testid="tg-grade-delete-yes" onClick={doDelete} disabled={busy}
+                className="py-2.5 rounded-xl bg-rose-600 text-white font-semibold text-sm active:scale-95 transition disabled:opacity-60">
+                {busy ? "Удаление…" : "Удалить"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button data-testid="tg-grade-delete" onClick={() => { haptic("medium"); setConfirmDel(true); }}
+            className="w-full py-2.5 rounded-2xl bg-white ring-1 ring-rose-200 text-rose-600 font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.99] transition">
+            <Trash2 className="h-4 w-4" /> Удалить проверку за {date}
+          </button>
+        )
+      )}
     </div>
   );
 }
