@@ -6,7 +6,7 @@ import sys
 import requests
 
 # Backend URL
-BASE_URL = "https://telegram-insights-5.preview.emergentagent.com/api"
+BASE_URL = "https://ssh-monitor.preview.emergentagent.com/api"
 
 # Цвета для вывода
 GREEN = '\033[92m'

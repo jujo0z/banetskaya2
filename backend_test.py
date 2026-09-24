@@ -8,7 +8,7 @@ import sys
 from io import BytesIO
 
 # Backend URL from frontend/.env
-BASE_URL = "https://telegram-insights-5.preview.emergentagent.com/api"
+BASE_URL = "https://ssh-monitor.preview.emergentagent.com/api"
 
 # Test results tracking
 tests_passed = 0

@@ -17,7 +17,7 @@ CORS_ORIGINS=*
 ```
 **frontend/.env:**
 ```
-REACT_APP_BACKEND_URL=https://telegram-insights-5.preview.emergentagent.com
+REACT_APP_BACKEND_URL=https://ssh-monitor.preview.emergentagent.com
 WDS_SOCKET_PORT=443
 ```
 (preview-домен берётся из `/app/.emergent/emergent.yml` → `preview_endpoint`.)
