@@ -26,7 +26,7 @@ import requests
 import sys
 
 # Base URL from frontend/.env
-BASE_URL = "https://ssh-monitor.preview.emergentagent.com/api"
+BASE_URL = "https://passwords-202.preview.emergentagent.com/api"
 
 
 def test_residents_mismatches():

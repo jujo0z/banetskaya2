@@ -3,7 +3,7 @@
 import requests
 import pymupdf
 
-BASE_URL = "https://ssh-monitor.preview.emergentagent.com/api"
+BASE_URL = "https://passwords-202.preview.emergentagent.com/api"
 
 # Test overlay/generate
 print("=" * 80)
