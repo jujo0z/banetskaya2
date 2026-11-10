@@ -13,7 +13,6 @@ from docxtpl import DocxTemplate
 logger = logging.getLogger("document_service")
 
 
-
 def _resource_base() -> Path:
     """Base directory for bundled resources (works both in dev and PyInstaller onefile)."""
     if getattr(sys, "frozen", False):
@@ -173,7 +172,6 @@ def print_pdf_silent(pdf_bytes: bytes, printer_name: str = "") -> bool:
             os.unlink(pdf_path)
         except Exception:
             pass
-
 
 
 # Ordered contract fields with Russian labels + Excel column-matching keywords.
@@ -658,7 +656,6 @@ def convert_to_pdf(docx_bytes: bytes) -> bytes:
         )
 
 
-
 # ============================================================================
 #  OVERLAY PRINTING — печать данных поверх готового (пред-распечатанного) бланка
 # ============================================================================
@@ -1012,9 +1009,8 @@ def build_carrier_frame(a4_position="top-left", blank_mm=SOOBSHENIE_PAGE_MM):
     return buf.getvalue()
 
 
-
 def build_full_sheets(records, layout=None, orientation="portrait", per_sheet=0,
-                      draw_guides=True):
+                      draw_guides=True, template=None):
     """Full-document print: draw complete СООБЩЕНИЕ forms (typed form + data)
     laid out as a GRID on real A4 pages, so a normal printer prints reliably.
 
@@ -1070,13 +1066,67 @@ def build_full_sheets(records, layout=None, orientation="portrait", per_sheet=0,
                 c.setDash(2, 2)
                 c.rect(0, 0, card_w, card_h, stroke=1, fill=0)
                 c.setDash()
-            _draw_card_content(c, card_w, card_h, layout, rec, 0, 0,
-                               with_form=True, bg=None)
+            if template:
+                _draw_soobshenie_template_card(c, template, rec, card_w, card_h)
+            else:
+                _draw_card_content(c, card_w, card_h, layout, rec, 0, 0,
+                                   with_form=True, bg=None)
             c.restoreState()
         c.showPage()
     c.save()
     buf.seek(0)
     return buf.getvalue()
+
+
+# ---- Шаблонный редактор «Сообщения» (как у Форм 19/24 и Заявления) ----
+_SOOBSHENIE_TPL_DEFAULT = None
+
+
+def soobshenie_slots():
+    """Список слотов-полей «Сообщения» для выпадающего списка редактора."""
+    return [{"slot": f["key"], "label": f.get("label", f["key"])}
+            for f in SOOBSHENIE_LAYOUT]
+
+
+def get_soobshenie_default_template():
+    """Дефолтный шаблон-элементы «Сообщения»: статическая форма (записанная из
+    _draw_soobshenie_form) + поля данных из SOOBSHENIE_LAYOUT. Одна страница."""
+    global _SOOBSHENIE_TPL_DEFAULT
+    if _SOOBSHENIE_TPL_DEFAULT is None:
+        _ensure_fonts()
+        pw = SOOBSHENIE_PAGE_MM[0] * MM
+        ph = SOOBSHENIE_PAGE_MM[1] * MM
+        recorder = _RecorderCanvas(pw, ph)
+        try:
+            _draw_soobshenie_form(recorder, pw, ph, ph)
+        except Exception:
+            logger.exception("recorder failed for soobshenie form")
+        elems = []
+        for e in recorder.elems:
+            e["page"] = 1
+            elems.append(e)
+        for f in SOOBSHENIE_LAYOUT:
+            elems.append({
+                "type": "field", "field": f["key"], "page": 1,
+                "x": round(float(f.get("x_pct", 0)), 3),
+                "y": round(float(f.get("y_pct", 0)), 3),
+                "align": "left", "size": float(f.get("font_pt", 9) or 9),
+                "bold": False, "italic": False, "font": "sans", "color": "#0d0d20",
+            })
+        for i, e in enumerate(elems):
+            e["id"] = "el%03d" % i
+        _SOOBSHENIE_TPL_DEFAULT = elems
+    import copy
+    return copy.deepcopy(_SOOBSHENIE_TPL_DEFAULT)
+
+
+def _draw_soobshenie_template_card(c, tpl, rec, zw, zh):
+    """Отрисовать одну карточку «Сообщения» из шаблона-элементов (page 1)."""
+    vals = _forma_vals(rec)
+    for el in (tpl or []):
+        if int(el.get("page", 1) or 1) != 1:
+            continue
+        _draw_zayav_element(c, el, vals, zw, zh)
 
 
 def build_overlay_test_sheet(blank_mm=SOOBSHENIE_PAGE_MM, page_size="card",
@@ -1163,11 +1213,6 @@ def build_overlay_test_sheet(blank_mm=SOOBSHENIE_PAGE_MM, page_size="card",
     return buf.getvalue()
 
 
-
-# --- Clean vector form background (no data) for the "Полная печать" preview ---
-_FORM_BG_CACHE = None
-
-
 def render_pdf_first_page_png(pdf_bytes: bytes, scale: float = 2.0) -> bytes:
     """Render the FIRST page of a PDF to PNG (used for on-screen previews that
     must display reliably everywhere, even where inline PDF is blocked)."""
@@ -1182,29 +1227,6 @@ def render_pdf_page_png(pdf_bytes: bytes, index: int = 0, scale: float = 2.0) ->
     pix = doc[i].get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
     png = pix.tobytes("png")
     doc.close()
-    return png
-
-
-def render_form_background_png(scale: float = 3.0) -> bytes:
-    """Render the clean vector СООБЩЕНИЕ form (no data) as a PNG image.
-
-    Used by the "Полная печать" live preview so the operator sees exactly the
-    typed document that will be printed on plain paper — NOT the scanned photo
-    (that scan stays only in the overlay-on-blank mode).
-    """
-    global _FORM_BG_CACHE
-    if _FORM_BG_CACHE is not None:
-        return _FORM_BG_CACHE
-
-    import pymupdf
-
-    pdf_bytes = build_overlay([], layout=SOOBSHENIE_LAYOUT, page_size="card", with_form=True)
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    page = doc[0]
-    pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
-    png = pix.tobytes("png")
-    doc.close()
-    _FORM_BG_CACHE = png
     return png
 
 
@@ -1277,7 +1299,6 @@ def run_diagnostics():
         })
 
     return checks
-
 
 
 # ==========================================================================
@@ -1358,7 +1379,7 @@ FORMA19_FIELDS = [
         {"key": "passport_series", "label": "12. Паспорт: серия"},
         {"key": "passport_number", "label": "12. Паспорт: номер"},
         {"key": "passport_issued", "label": "12. Паспорт: кем выдан"},
-        {"key": "passport_valid_until", "label": "12. Паспорт: срок действия"},
+        {"key": "passport_issue_date", "label": "12. Паспорт: когда выдан (дата выдачи)"},
     ]},
 ]
 
@@ -1402,6 +1423,9 @@ def forma19_from_contract(fields: dict) -> dict:
         rec["passport_number"] = num
     if fields.get("passport_issued_by"):
         rec["passport_issued"] = str(fields["passport_issued_by"]).strip()
+    # Паспорт: когда выдан (дата выдачи) — берём из данных договора
+    if fields.get("passport_issue_date"):
+        rec["passport_issue_date"] = str(fields["passport_issue_date"]).strip()
     return {k: v for k, v in rec.items() if v}
 
 
@@ -1670,7 +1694,6 @@ def _draw_forma19_front(c, zw, zh, rec):
     val(27, cb(138.25, 143.0), G(rec, "other_reasons"), 7.0)
 
 
-
 def _draw_forma19_back(c, zw, zh, rec):
     """ОБОРОТНАЯ сторона Формы 19 (поля 10–15). Габарит идентичен лицевой."""
     X, Y, hline, vline, lbl, cap, val, cval, shade = _f19_helpers(c, zw, zh)
@@ -1780,7 +1803,6 @@ def _draw_forma19_back(c, zw, zh, rec):
     cap(78, 140.2, "подпись", 4.6)
 
 
-
 def _forma_upper_rec(rec):
     """Формы 19/24 заполняются печатными ЗАГЛАВНЫМИ буквами: приводим все
     вводимые значения записи к верхнему регистру (Cyrillic/Latin). Ключи и
@@ -1793,7 +1815,35 @@ def _forma_upper_rec(rec):
     return out
 
 
-def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides=True, template=None):
+FORMA_BACK_OFFSET_DEFAULT = {"up_mm": 1.5, "right_mm": 0.0}
+
+
+def _norm_back_offset(back_offset):
+    """{'up_mm','right_mm'} → (dx_pt, dy_pt) для оборота. up_mm>0 — оборот выше,
+    right_mm>0 — оборот правее (как смотришь на оборотную сторону листа)."""
+    bo = back_offset if isinstance(back_offset, dict) else {}
+    try:
+        up = float(bo.get("up_mm", 0) or 0)
+    except Exception:
+        up = 0.0
+    try:
+        right = float(bo.get("right_mm", 0) or 0)
+    except Exception:
+        right = 0.0
+    up = max(-1000.0, min(1000.0, up))
+    right = max(-1000.0, min(1000.0, right))
+    return right * MM, up * MM
+
+
+def _apply_back_offset(c, back_offset):
+    """Сдвинуть всё содержимое ОБОРОТА (компенсация сдвига принтера при дуплексе)."""
+    dx, dy = _norm_back_offset(back_offset)
+    if dx or dy:
+        c.translate(dx, dy)
+
+
+def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides=True, template=None,
+                  back_offset=None):
     """PDF Формы 19: A4-сетка 2×2. per_sheet = сколько ЧЕЛОВЕК на лист (по 2 копии).
     Порядок страниц: лист1-лицо, лист1-оборот, лист2-лицо, лист2-оборот … —
     для двусторонней печати каждый физический лист = 2 подряд идущие страницы PDF.
@@ -1837,6 +1887,9 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
         cell_person[CELLS[1]] = order[0]
         cell_person[CELLS[2]] = order[1]
         cell_person[CELLS[3]] = order[1]
+        c.saveState()
+        if is_back:
+            _apply_back_offset(c, back_offset)
         for (col, row), pidx in cell_person.items():
             if pidx >= len(sheet_people):
                 continue
@@ -1862,6 +1915,7 @@ def build_forma19(people, per_sheet=2, duplex_flip="long", copies=2, draw_guides
                 else:
                     _draw_forma19_front(c, zw, zh, rec)
             c.restoreState()
+        c.restoreState()
         c.showPage()
 
     buf = io.BytesIO()
@@ -1923,7 +1977,7 @@ FORMA24_FIELDS = [
         {"key": "marital", "label": "14. Семейное положение (1..4)"},
         {"key": "spouse_together", "label": "14. Прибыл с супругой(ом) (5=да, 6=нет)"},
         {"key": "children_count", "label": "15. Детей до 14 лет (сколько)"},
-        {"key": "passport_valid_until", "label": "Паспорт: срок действия"},
+        {"key": "passport_issue_date", "label": "Паспорт: когда выдан (дата выдачи)"},
     ]},
 ]
 FORMA24_FIELD_KEYS = [f["key"] for g in FORMA24_FIELDS for f in g["fields"]]
@@ -2185,7 +2239,7 @@ def _draw_forma24_back(c, zw, zh, rec):
     cap(79.5, cb(y[22], B) + 0.3, "подпись", 4.4)
 
 
-def build_forma24(people, duplex_flip="long", draw_guides=True, template=None):
+def build_forma24(people, duplex_flip="long", draw_guides=True, template=None, back_offset=None):
     """PDF Формы 24: как build_forma19, но с отрисовкой талона."""
     from reportlab.pdfgen import canvas
     _ensure_fonts()
@@ -2206,6 +2260,9 @@ def build_forma24(people, duplex_flip="long", draw_guides=True, template=None):
     def page(c, chunk, back):
         order = [1, 0] if (back and duplex_flip == "short") else [0, 1]
         cp = {CELLS[0]: order[0], CELLS[1]: order[0], CELLS[2]: order[1], CELLS[3]: order[1]}
+        c.saveState()
+        if back:
+            _apply_back_offset(c, back_offset)
         for (col, row), pidx in cp.items():
             if pidx >= len(chunk):
                 continue
@@ -2219,6 +2276,7 @@ def build_forma24(people, duplex_flip="long", draw_guides=True, template=None):
             else:
                 (_draw_forma24_back if back else _draw_forma24_front)(c, zw, zh, chunk[pidx])
             c.restoreState()
+        c.restoreState()
         c.showPage()
 
     buf = io.BytesIO()
@@ -2232,9 +2290,8 @@ def build_forma24(people, duplex_flip="long", draw_guides=True, template=None):
     return buf.getvalue()
 
 
-
 def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True,
-                         tpl19=None, tpl24=None):
+                         tpl19=None, tpl24=None, back_offset=None):
     """Один A4-лист: верхний ряд — Форма 19 (2 копии), нижний ряд — Форма 24
     (2 копии). Лицо + оборот для двусторонней печати. Один формат карты 105×145.
     Экономит бумагу: обе формы на одном листе вместо двух."""
@@ -2284,10 +2341,14 @@ def build_forma_combined(rec19, rec24, duplex_flip="long", draw_guides=True,
         top, bottom = 19, 24
         if back and duplex_flip == "short":
             top, bottom = 24, 19   # при перевороте по короткому краю ряды меняются
+        c.saveState()
+        if back:
+            _apply_back_offset(c, back_offset)
         draw_card(c, 0, 0, top, back)
         draw_card(c, 1, 0, top, back)
         draw_card(c, 0, 1, bottom, back)
         draw_card(c, 1, 1, bottom, back)
+        c.restoreState()
         c.showPage()
 
     buf = io.BytesIO()
@@ -2645,8 +2706,6 @@ def _draw_grid_element(c, el, vals, pw, ph):
         c.drawCentredString(cx0 + cw / 2.0, baseline, txt)
 
 
-
-
 # ============================================================================
 #  ЗАЯВЛЕНИЕ о регистрации по месту жительства
 #  Векторная отрисовка 1:1 по бланку. Раскладка: 2 заявления на листе A4
@@ -2954,8 +3013,6 @@ def _draw_zayavlenie_page2(c, x0, y_bottom, zw_pt, zh_pt, rec):
     text(7, 151.5, "отсутствии – должностным лицом органа регистрации).", 5.4)
 
 
-
-
 # =====================================================================
 #  НОВАЯ АРХИТЕКТУРА ЗАЯВЛЕНИЯ (по требованию пользователя):
 #  фон = чистый бланк-изображение «по месту пребывания» (A4-портрет),
@@ -3213,7 +3270,7 @@ def zayav_overlay_text(rec):
     applicant = fio + ((", %s г.р." % by) if by else "")
     sd, smon, sy = _split_ru_date(rec.get("sign_date", ""))
     sy2 = sy[-2:] if sy else ""
-    out = {
+    _out = {
         "applicant": applicant,
         "doc_name": g("doc_name"),
         "passport_series": g("passport_series"),
@@ -3239,11 +3296,11 @@ def zayav_overlay_text(rec):
         "adults_count": g("adults_count"),
         "free_count": g("free_count"),
     }
-    # свои столбцы (cc_*) — прокидываем как есть, чтобы поставленные в редакторе поля печатались
-    for k, v in rec.items():
-        if isinstance(k, str) and k.startswith("cc_") and str(v).strip():
-            out[k] = str(v)
-    return out
+    # проброс прямых колонок таблицы (поля «Таблица: …»), чтобы они печатались
+    for _k, _v in rec.items():
+        if str(_k).startswith("col:"):
+            _out[_k] = "" if _v is None else str(_v)
+    return _out
 
 
 _SQRT2 = 1.41421356237
@@ -3340,21 +3397,6 @@ def _resolve_zayav_template(template):
     if isinstance(template, list) and template:
         return template
     return get_zayav_default_template()
-
-
-_ZAYAV_BG_CACHE = {}
-
-
-def render_zayav_background_png(page=1, scale=2.1):
-    """PNG чистого бланка (без данных) — совместимость со старым эндпоинтом."""
-    page = 2 if int(page) == 2 else 1
-    key = (page, round(float(scale), 2))
-    if key in _ZAYAV_BG_CACHE:
-        return _ZAYAV_BG_CACHE[key]
-    pdf = build_zayavlenie([{}])  # пустая запись -> только бланк
-    png = render_pdf_page_png(pdf, page - 1, scale=scale)
-    _ZAYAV_BG_CACHE[key] = png
-    return png
 
 
 def _draw_zayav_element(c, el, vals, pw, ph):
@@ -3491,7 +3533,7 @@ def _zayav_pages_by_page(tpl):
     return by_page
 
 
-def _build_zayavlenie_2up(people, tpl, duplex_flip="long"):
+def _build_zayavlenie_2up(people, tpl, duplex_flip="long", per_sheet=2, back_offset=None):
     """2 заявления на ОДНОМ листе A4-АЛЬБОМ (297×210 мм): каждое уменьшено до A5-портрет
     (148.5×210 мм) и стоит рядом (левое/правое), вдвоём полностью занимая лист.
     Двусторонняя печать: лицо листа = стр.1 обоих людей, оборот = стр.2 обоих.
@@ -3507,7 +3549,9 @@ def _build_zayavlenie_2up(people, tpl, duplex_flip="long"):
     scale = half_w / src_w                 # ≈0.7071; при этом src_h*scale == sh (точно)
     by_page = _zayav_pages_by_page(_resolve_zayav_template(tpl))
     people = list(people or []) or [{}]
-    pairs = [people[i:i + 2] for i in range(0, len(people), 2)]
+    # per_sheet=1 — «одно заявление в размере как при 2 на лист» (левая половина листа)
+    per_sheet = 1 if int(per_sheet or 2) == 1 else 2
+    pairs = [people[i:i + per_sheet] for i in range(0, len(people), per_sheet)]
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(sw, sh))
@@ -3527,6 +3571,8 @@ def _build_zayavlenie_2up(people, tpl, duplex_flip="long"):
             if is_back and flip == "short":
                 slots = [(0.0, right_rec), (half_w, left_rec)]
             c.saveState()
+            if is_back:
+                _apply_back_offset(c, back_offset)   # компенсация сдвига принтера (как видим оборот)
             if rotate_back:
                 c.translate(sw, sh)
                 c.rotate(180)
@@ -3554,7 +3600,8 @@ def _build_zayavlenie_2up(people, tpl, duplex_flip="long"):
     return buf.getvalue()
 
 
-def build_zayavlenie(people, template=None, layout=None, duplex_flip="long", draw_guides=False, two_up=False):
+def build_zayavlenie(people, template=None, layout=None, duplex_flip="long", draw_guides=False, two_up=False,
+                     single_small=False, back_offset=None):
     """PDF «Заявлений» из РЕДАКТИРУЕМОГО ШАБЛОНА (список элементов).
     two_up=False: A4-портрет, по 2 страницы на человека (1 заявление = 1 лист).
     two_up=True: 2 заявления рядом на A4-альбом (см. _build_zayavlenie_2up).
@@ -3565,8 +3612,9 @@ def build_zayavlenie(people, template=None, layout=None, duplex_flip="long", dra
     _ensure_fonts()
     pw, ph = 210 * MM, 297 * MM
     tpl = _resolve_zayav_template(template)
-    if two_up:
-        return _build_zayavlenie_2up(people, tpl, duplex_flip=duplex_flip)
+    if two_up or single_small:
+        return _build_zayavlenie_2up(people, tpl, duplex_flip=duplex_flip,
+                                     per_sheet=1 if single_small else 2, back_offset=back_offset)
     people = list(people or []) or [{}]
     by_page = _zayav_pages_by_page(tpl)
 
@@ -3627,9 +3675,112 @@ def build_zayavlenie(people, template=None, layout=None, duplex_flip="long", dra
     for rec in people:
         vals = zayav_overlay_text(rec)
         for page in (1, 2):
+            c.saveState()
+            if page == 2:
+                _apply_back_offset(c, back_offset)   # компенсация сдвига принтера
             for el in by_page[page]:
                 draw_element(el, vals)
+            c.restoreState()
             c.showPage()
     c.save()
     buf.seek(0)
     return buf.getvalue()
+
+
+# ==========================================================================
+#  ЛИСТ КАЛИБРОВКИ ДВУСТОРОННЕЙ ПЕЧАТИ (Формы 19/24)
+#  Лицо: тонкие опорные линии (горизонтальные и вертикальные) в симметричных
+#  местах листа. Оборот: на тех же местах — шкалы ±6 мм с шагом 0,5 мм.
+#  Смотрим лист на просвет: линия лица ложится на деление шкалы оборота —
+#  подпись деления = значение, которое надо ВПИСАТЬ в настройку.
+#  Позиции симметричны → работает и при перевороте по длинному, и по короткому краю.
+# ==========================================================================
+def build_forma_calibration(back_offset=None, apply_offset=False, landscape=False, doc_label="Формы 19/24"):
+    from reportlab.pdfgen import canvas
+    _ensure_fonts()
+    pw, ph = (297 * MM, 210 * MM) if landscape else (210 * MM, 297 * MM)
+    ys = [40 * MM, ph / 2.0, ph - 40 * MM]      # от верха листа
+    xs = [35 * MM, pw / 2.0, pw - 35 * MM]      # от левого края
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(pw, ph))
+
+    def title(txt, y_from_top, size=11):
+        c.setFont("AppSans-Bold" if "AppSans-Bold" in _registered_font_names() else "AppSans", size)
+        c.drawCentredString(pw / 2.0, ph - y_from_top, txt)
+
+    # ---------------- ЛИЦО ----------------
+    c.setFillColorRGB(0, 0, 0)
+    title("ЛИСТ КАЛИБРОВКИ — ЛИЦО", 14 * MM, 12)
+    c.setFont("AppSans", 8)
+    c.drawCentredString(pw / 2.0, ph - 20 * MM,
+                        "Печатайте двусторонне так же, как " + doc_label + " (масштаб 100%, без «по размеру страницы»).")
+    c.setStrokeColorRGB(0.85, 0.05, 0.2)
+    c.setLineWidth(0.35)
+    for y in ys:
+        c.line(8 * MM, ph - y, pw - 8 * MM, ph - y)
+    for x in xs:
+        c.line(x, 26 * MM, x, ph - 26 * MM)
+    c.showPage()
+
+    # ---------------- ОБОРОТ ----------------
+    c.saveState()
+    if apply_offset:
+        _apply_back_offset(c, back_offset)
+    c.setFillColorRGB(0, 0, 0)
+    title("ЛИСТ КАЛИБРОВКИ — ОБОРОТ" + (" (с текущим сдвигом)" if apply_offset else ""), 14 * MM, 12)
+    c.setFont("AppSans", 7.5)
+    lines = [
+        "Посмотрите лист на просвет. Красная линия лица ляжет на одно из делений шкал.",
+        "Горизонтальные шкалы (числа слева/справа): это «Поднять оборот, мм».",
+        "Вертикальные шкалы (числа сверху/снизу): это «Сдвинуть оборот вправо, мм».",
+        ("Лист напечатан С ТЕКУЩИМ сдвигом: прибавьте прочитанное число к текущему значению."
+         if apply_offset else "Впишите прочитанное число в настройку «Сдвиг оборота» как есть."),
+    ]
+    for i, t in enumerate(lines):
+        c.drawCentredString(pw / 2.0, ph - (20 + i * 3.6) * MM, t)
+    c.setStrokeColorRGB(0, 0, 0)
+    step = 0.5 * MM
+    rng = range(-12, 13)  # ±6 мм
+    # горизонтальные шкалы вокруг каждой y: деление на y+k (вниз), подпись = -k
+    for y in ys:
+        for i in rng:
+            k = i * step
+            yy = ph - (y + k)
+            major = (i % 2 == 0)
+            ln = (6 if i == 0 else (4 if major else 2.2)) * MM
+            c.setLineWidth(0.5 if i == 0 else 0.25)
+            for x0 in (10 * MM, pw - 10 * MM - ln, pw / 2.0 - 30 * MM, pw / 2.0 + 30 * MM - ln):
+                c.line(x0, yy, x0 + ln, yy)
+            if i % 4 == 0:
+                c.setFont("AppSans", 4.5)
+                lbl = ("%+g" % (-i * 0.5)) if i else "0"
+                c.drawString(10 * MM + ln + 0.8 * MM, yy - 1.8, lbl)
+                c.drawRightString(pw - 10 * MM - ln - 0.8 * MM, yy - 1.8, lbl)
+    # вертикальные шкалы вокруг каждой x: деление на x+k (вправо), подпись = +k
+    for x in xs:
+        for i in rng:
+            k = i * step
+            xx = x + k
+            major = (i % 2 == 0)
+            ln = (6 if i == 0 else (4 if major else 2.2)) * MM
+            c.setLineWidth(0.5 if i == 0 else 0.25)
+            for y0 in (ph - 50 * MM - ln, 50 * MM):
+                c.line(xx, y0, xx, y0 + ln)
+            if major and i % 4 == 0:
+                c.setFont("AppSans", 4.5)
+                lbl = ("%+g" % (i * 0.5)) if i else "0"
+                c.drawCentredString(xx, ph - 50 * MM - ln - 2.6 * MM, lbl)
+                c.drawCentredString(xx, 50 * MM + ln + 1.2 * MM, lbl)
+    c.restoreState()
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _registered_font_names():
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        return set(pdfmetrics.getRegisteredFontNames())
+    except Exception:
+        return set()

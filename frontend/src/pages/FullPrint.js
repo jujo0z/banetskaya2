@@ -15,6 +15,7 @@ import {
   Trash2,
   RefreshCw,
   ChevronDown,
+  Users,
 } from "lucide-react";
 import {
   getOverlayLayout,
@@ -25,9 +26,13 @@ import {
   printOverlaySilent,
   getRegProfile,
   listOverlayProfiles,
+  getSoobshenieFromHistory,
+  soobshenieForContracts,
+  contractToOverlay,
 } from "@/lib/apiClient";
 import { IS_DESKTOP } from "@/lib/env";
 import { randomRecord, REQUIRED_KEYS } from "@/pages/BlankOverlay";
+import ResidentPicker from "@/components/ResidentPicker";
 
 const recordLabel = (r, i) => (r && (r.fio || "").toString().trim()) || `Запись ${i + 1}`;
 
@@ -49,6 +54,27 @@ export default function FullPrint() {
   const [printers, setPrinters] = useState([]);
   const [selectedPrinter, setSelectedPrinter] = useState("");
   const [printing, setPrinting] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const onPickFromBase = async (picked) => {
+    const base = {};
+    if (profileRef.current?.reg_organ) base.reg_organ = profileRef.current.reg_organ;
+    if (profileRef.current?.chief) base.chief = profileRef.current.chief;
+    // Единый master-путь (номер договора + ФИО + зависимости) — как в Заявлении/Ф-19/Ф-24.
+    let list;
+    try {
+      const ids = picked.map((c) => c.id).filter(Boolean);
+      const { records: recs = [] } = await soobshenieForContracts(ids);
+      list = recs.length
+        ? recs.map((r) => ({ ...base, ...r }))
+        : picked.map((c) => ({ ...base, ...contractToOverlay(c) }));
+    } catch (e) {
+      list = picked.map((c) => ({ ...base, ...contractToOverlay(c) }));
+    }
+    setRecords(list);
+    setActiveIdx(0);
+    toast.success(`Подставлено из базы: ${list.length}`);
+  };
 
   const location = useLocation();
   const profileRef = useRef({});
@@ -208,6 +234,29 @@ export default function FullPrint() {
   const clearRecordAt = (idx) =>
     setRecords((rs) => rs.map((r, i) => (i === idx ? {} : r)));
 
+  // ---- Единый источник данных: загрузить ВСЕ договоры из истории ----
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const loadAllFromHistory = async () => {
+    setLoadingHistory(true);
+    try {
+      const { records: recs = [] } = await getSoobshenieFromHistory();
+      if (!recs.length) {
+        toast.info("В истории нет договоров");
+        return;
+      }
+      const base = { ...profileConstants };
+      if (profileRef.current?.reg_organ && !base.reg_organ) base.reg_organ = profileRef.current.reg_organ;
+      if (profileRef.current?.chief && !base.chief) base.chief = profileRef.current.chief;
+      setRecords(recs.map((r) => ({ ...base, ...r })));
+      setActiveIdx(0);
+      toast.success(`Загружено из истории: ${recs.length}`);
+    } catch (e) {
+      toast.error("Не удалось загрузить из истории");
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
   // ---- validation ----
   const validate = () => {
     for (let i = 0; i < records.length; i++) {
@@ -322,39 +371,15 @@ export default function FullPrint() {
             <div className="text-sm font-semibold flex items-center gap-2">
               <Printer className="h-4 w-4 text-[#EC4899]" /> Раскладка на листе
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setOrientation("portrait")}
-                className={`rounded-md border px-3 py-2 text-sm text-left transition ${
-                  orientation === "portrait" ? "border-[#EC4899] bg-[#EC4899]/10" : "border-pink-100 hover:border-pink-200"
-                }`}
-                data-testid="orient-portrait"
-              >
-                <div className="font-semibold">A4 книжная</div>
-                <div className="text-[11px] text-muted-foreground">до 2 бланков</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setOrientation("landscape")}
-                className={`rounded-md border px-3 py-2 text-sm text-left transition ${
-                  orientation === "landscape" ? "border-[#EC4899] bg-[#EC4899]/10" : "border-pink-100 hover:border-pink-200"
-                }`}
-                data-testid="orient-landscape"
-              >
-                <div className="font-semibold">A4 альбомная</div>
-                <div className="text-[11px] text-muted-foreground">до 4 бланков (2×2)</div>
-              </button>
-            </div>
             <div>
-              <Label className="text-xs text-muted-foreground">Бланков на лист (макс. {maxPerSheet})</Label>
+              <Label className="text-xs text-muted-foreground">Сообщений на лист</Label>
               <div className="flex gap-2 mt-1">
-                {Array.from({ length: maxPerSheet }, (_, i) => i + 1).map((n) => (
+                {[1, 2, 3, 4].map((n) => (
                   <button
                     key={n}
                     type="button"
-                    onClick={() => setPerSheet(n)}
-                    className={`flex-1 rounded-md border px-2 py-1.5 text-sm transition ${
+                    onClick={() => { setPerSheet(n); setOrientation(n >= 3 ? "landscape" : "portrait"); }}
+                    className={`flex-1 rounded-md border px-2 py-2 text-base transition ${
                       perSheet === n ? "border-[#EC4899] bg-[#EC4899]/10 font-semibold" : "border-pink-100 hover:border-pink-200"
                     }`}
                     data-testid={`persheet-${n}`}
@@ -362,6 +387,10 @@ export default function FullPrint() {
                     {n}
                   </button>
                 ))}
+              </div>
+              <div className="text-[11px] text-muted-foreground mt-1">
+                Лист A4: <b className="text-slate-700">{orientation === "landscape" ? "альбомная (2×2)" : "книжная"}</b>
+                {" "}— выбирается автоматически (1–2 книжная, 3–4 альбомная)
               </div>
             </div>
             <div className="text-[12px] text-muted-foreground bg-white/80 rounded-md px-3 py-2">
@@ -410,13 +439,25 @@ export default function FullPrint() {
             </Button>
           </div>
 
+          <ResidentPicker
+            open={pickerOpen}
+            onClose={() => setPickerOpen(false)}
+            onPick={onPickFromBase}
+            title="Выбрать проживающих для «Сообщения»"
+          />
+
           {/* Records manager */}
           <div className="rounded-lg border border-pink-100 bg-white/80 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold">Записи ({records.length})</div>
-              <Button size="sm" variant="outline" onClick={addRecord} data-testid="btn-add-record">
-                <Plus className="h-4 w-4 mr-1" /> Добавить
-              </Button>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold">Проживающие ({records.length})</div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)} data-testid="btn-pick-base" title="Выбрать конкретных проживающих из единой базы">
+                  <Users className="h-4 w-4 mr-1" /> Из базы
+                </Button>
+                <Button size="sm" variant="outline" onClick={loadAllFromHistory} disabled={loadingHistory} data-testid="btn-load-history" title="Загрузить все договоры из истории — единый источник данных">
+                  <RefreshCw className={`h-4 w-4 mr-1 ${loadingHistory ? "animate-spin" : ""}`} /> Из базы (все)
+                </Button>
+              </div>
             </div>
             <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
               {records.map((r, idx) => {
@@ -432,18 +473,6 @@ export default function FullPrint() {
                       >
                         <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
                         <span className="truncate">{recordLabel(r, idx)}</span>
-                      </button>
-                      <button type="button" title="Случайные" onClick={() => fillRandomAt(idx)} className="p-1.5 text-muted-foreground hover:text-slate-900" data-testid={`record-random-${idx}`}>
-                        <Shuffle className="h-3.5 w-3.5" />
-                      </button>
-                      <button type="button" title="Дублировать" onClick={() => duplicateRecord(idx)} className="p-1.5 text-muted-foreground hover:text-slate-900" data-testid={`record-dup-${idx}`}>
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
-                      <button type="button" title="Очистить" onClick={() => clearRecordAt(idx)} className="p-1.5 text-muted-foreground hover:text-slate-900">
-                        <Eraser className="h-3.5 w-3.5" />
-                      </button>
-                      <button type="button" title="Удалить" onClick={() => removeRecord(idx)} className="p-1.5 text-muted-foreground hover:text-[#EC4899]" data-testid={`record-del-${idx}`}>
-                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
                     {open && (

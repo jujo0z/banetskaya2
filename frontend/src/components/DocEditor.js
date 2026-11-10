@@ -4,12 +4,12 @@ import {
   Type, Minus, Database, Table2, Bold, Italic, Underline,
   AlignLeft, AlignCenter, AlignRight, Copy, Trash2, Save, RotateCcw, Plus,
 } from "lucide-react";
-import { getFormaTemplate, saveFormaTemplate, resetFormaTemplate, getCustomColumns } from "@/lib/apiClient";
+import { getFormaTemplate, saveFormaTemplate, resetFormaTemplate } from "@/lib/apiClient";
 import ZayavPreview from "@/components/ZayavPreview";
 
 const uid = () => "u" + Math.random().toString(36).slice(2, 9);
 
-export default function DocEditor({ which, values = {}, side = "front", setSide = () => {} }) {
+export default function DocEditor({ which, values = {}, side = "front", setSide = () => {}, singlePage = false }) {
   const page = side === "back" ? 2 : 1;
   const [template, setTemplate] = useState([]);
   const [slots, setSlots] = useState([]);
@@ -26,13 +26,7 @@ export default function DocEditor({ which, values = {}, side = "front", setSide 
       try {
         const data = await getFormaTemplate(which);
         setTemplate((data.template || []).map((e) => ({ ...e, id: e.id || uid() })));
-        let slots = data.slots || [];
-        try {
-          const cc = await getCustomColumns();
-          const extra = (cc.columns || []).map((c) => ({ slot: c.key, label: `★ ${c.label}` }));
-          slots = [...slots, ...extra];
-        } catch (e) { /* нет своих столбцов */ }
-        setSlots(slots);
+        setSlots(data.slots || []);
         if (data.page_w_mm) setPageWmm(data.page_w_mm);
         if (data.page_h_mm) setPageHmm(data.page_h_mm);
       } catch (e) {
@@ -127,7 +121,7 @@ export default function DocEditor({ which, values = {}, side = "front", setSide 
     <div className="space-y-2">
       {/* лента-тулбар */}
       <div className="rounded-md border border-amber-400/40 bg-[#FDECF5] px-2 py-1.5 flex flex-wrap items-center gap-1.5 sticky top-0 z-20" data-testid="doc-ribbon">
-        <div className="flex rounded-md border border-pink-100 overflow-hidden mr-1">
+        <div className={`flex rounded-md border border-pink-100 overflow-hidden mr-1 ${singlePage ? "hidden" : ""}`}>
           <button type="button" onClick={() => setSide("front")} className={`px-2.5 py-1 text-xs ${side === "front" ? "bg-[#EC4899] text-white font-semibold" : "hover:bg-white"}`} data-testid="doc-side-front">Лицо</button>
           <button type="button" onClick={() => setSide("back")} className={`px-2.5 py-1 text-xs ${side === "back" ? "bg-[#EC4899] text-white font-semibold" : "hover:bg-white"}`} data-testid="doc-side-back">Оборот</button>
         </div>

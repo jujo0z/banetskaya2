@@ -21,10 +21,6 @@ ArchitecturesInstallIn64BitMode=x64
 ArchitecturesAllowed=x64
 PrivilegesRequired=admin
 WizardStyle=modern
-; При обновлении поверх работающего приложения — корректно закрыть его,
-; чтобы заменить файлы (кнопка «Обновить приложение» скачивает и запускает этот же установщик).
-CloseApplications=yes
-RestartApplications=no
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
@@ -41,7 +37,4 @@ Name: "{group}\Banetskaya.by"; Filename: "{app}\Banetskaya.exe"; IconFilename: "
 Name: "{commondesktop}\Banetskaya.by"; Filename: "{app}\Banetskaya.exe"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [Run]
-; Microsoft Edge WebView2 не обязателен (окно открывается через установленный Edge в режиме --app),
-; но если bootstrapper есть — тихо доустановим рантайм, не блокируя установку.
-Filename: "{app}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Проверка компонента WebView2..."; Flags: nowait skipifdoesntexist
 Filename: "{app}\Banetskaya.exe"; Description: "Запустить Banetskaya.by"; Flags: nowait postinstall skipifsilent

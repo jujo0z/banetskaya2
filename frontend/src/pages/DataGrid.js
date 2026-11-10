@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useDeferredValue, memo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/Page";
@@ -17,10 +17,66 @@ import {
   getMasterSchema,
   getContractsGrid,
   saveMasterBulk,
+  residentsOccupancyBulk,
   addCustomColumn,
   deleteCustomColumn,
   exportBase,
 } from "@/lib/apiClient";
+
+const OCC_KEYS = ["occ:block", "occ:room", "occ:study_group", "occ:benefit", "occ:status", "occ:note"];
+
+const PAGE = 50;
+
+const GridRow = memo(function GridRow({ r, ri, columns, onCell }) {
+  return (
+    <tr className="hover:bg-rose-50/40">
+    <td className="sticky left-0 z-10 bg-white border border-slate-200 px-3 py-1.5 min-w-[220px]">
+      <div className="font-medium text-slate-800 truncate max-w-[200px]">
+        {r.master?.fio || r.full_name || "—"}
+      </div>
+      <div className="text-[11px] text-muted-foreground truncate max-w-[200px]">
+        № {r.master?.contract_number || r.contract_number || "—"}
+        {r.status === "draft" && (
+          <span className="ml-1 text-amber-600">(черновик)</span>
+        )}
+      </div>
+    </td>
+    {columns.map((c) => {
+      const val = r.master?.[c.key] ?? "";
+      const cellId = `cell-${ri}-${c.key}`;
+      if (c.dropdown && c.dropdown.length) {
+        return (
+          <td key={c.key} className="border border-slate-200 p-0">
+            <select
+              className="w-full h-9 px-2 bg-transparent outline-none focus:bg-rose-50 focus:ring-1 focus:ring-rose-300 text-sm"
+              value={val}
+              onChange={(e) => onCell(r.id, c.key, e.target.value)}
+              data-testid={cellId}
+            >
+              <option value=""></option>
+              {c.dropdown.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </td>
+        );
+      }
+      return (
+        <td key={c.key} className="border border-slate-200 p-0">
+          <input
+            className="w-full h-9 px-2 bg-transparent outline-none focus:bg-rose-50 focus:ring-1 focus:ring-rose-300 text-sm"
+            value={val}
+            onChange={(e) => onCell(r.id, c.key, e.target.value)}
+            data-testid={cellId}
+          />
+        </td>
+      );
+    })}
+  </tr>
+  );
+});
 
 export default function DataGrid() {
   const [columns, setColumns] = useState([]);
@@ -64,24 +120,28 @@ export default function DataGrid() {
     return out;
   }, [columns]);
 
+  const deferredSearch = useDeferredValue(search);
+  const [shown, setShown] = useState(PAGE);
+  useEffect(() => setShown(PAGE), [deferredSearch]);
+
   const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) => {
       const fio = (r.master?.fio || r.full_name || "").toLowerCase();
       const num = (r.master?.contract_number || r.contract_number || "").toLowerCase();
       return fio.includes(q) || num.includes(q);
     });
-  }, [rows, search]);
+  }, [rows, deferredSearch]);
 
-  function setCell(rowId, key, value) {
+  const setCell = useCallback((rowId, key, value) => {
     setRows((prev) =>
       prev.map((r) =>
         r.id === rowId ? { ...r, master: { ...r.master, [key]: value } } : r
       )
     );
-    setDirty((prev) => new Set(prev).add(rowId));
-  }
+    setDirty((prev) => (prev.has(rowId) ? prev : new Set(prev).add(rowId)));
+  }, []);
 
   async function handleSave() {
     if (dirty.size === 0) {
@@ -90,11 +150,35 @@ export default function DataGrid() {
     }
     setSaving(true);
     try {
-      const changed = rows
-        .filter((r) => dirty.has(r.id))
-        .map((r) => ({ id: r.id, master: r.master }));
-      const res = await saveMasterBulk(changed);
-      toast.success(`Сохранено строк: ${res.updated ?? changed.length}`);
+      const dirtyRows = rows.filter((r) => dirty.has(r.id));
+      // Поля договора (в contracts) — только для строк с реальным договором
+      const masterRows = dirtyRows
+        .filter((r) => r.id && !String(r.id).startsWith("res:"))
+        .map((r) => ({
+          id: r.id,
+          master: Object.fromEntries(
+            Object.entries(r.master || {}).filter(([k]) => !k.startsWith("occ:"))
+          ),
+        }));
+      // Поля заселения (в residents) — для строк, связанных с жильцом
+      const occRows = dirtyRows
+        .filter((r) => r.res_id)
+        .map((r) => {
+          const row = { res_id: r.res_id };
+          OCC_KEYS.forEach((k) => {
+            row[k.slice(4)] = (r.master || {})[k] ?? "";
+          });
+          return row;
+        });
+      let saved = 0;
+      if (masterRows.length) {
+        const res = await saveMasterBulk(masterRows);
+        saved += res.updated ?? masterRows.length;
+      }
+      if (occRows.length) {
+        await residentsOccupancyBulk(occRows);
+      }
+      toast.success(`Сохранено строк: ${dirtyRows.length}`);
       setDirty(new Set());
     } catch (e) {
       toast.error("Ошибка сохранения");
@@ -284,56 +368,22 @@ export default function DataGrid() {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((r, ri) => (
-                  <tr key={r.id} className="hover:bg-rose-50/40">
-                    <td className="sticky left-0 z-10 bg-white border border-slate-200 px-3 py-1.5 min-w-[220px]">
-                      <div className="font-medium text-slate-800 truncate max-w-[200px]">
-                        {r.master?.fio || r.full_name || "—"}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground truncate max-w-[200px]">
-                        № {r.master?.contract_number || r.contract_number || "—"}
-                        {r.status === "draft" && (
-                          <span className="ml-1 text-amber-600">(черновик)</span>
-                        )}
-                      </div>
-                    </td>
-                    {columns.map((c) => {
-                      const val = r.master?.[c.key] ?? "";
-                      const cellId = `cell-${ri}-${c.key}`;
-                      if (c.dropdown && c.dropdown.length) {
-                        return (
-                          <td key={c.key} className="border border-slate-200 p-0">
-                            <select
-                              className="w-full h-9 px-2 bg-transparent outline-none focus:bg-rose-50 focus:ring-1 focus:ring-rose-300 text-sm"
-                              value={val}
-                              onChange={(e) => setCell(r.id, c.key, e.target.value)}
-                              data-testid={cellId}
-                            >
-                              <option value=""></option>
-                              {c.dropdown.map((opt) => (
-                                <option key={opt} value={opt}>
-                                  {opt}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                        );
-                      }
-                      return (
-                        <td key={c.key} className="border border-slate-200 p-0">
-                          <input
-                            className="w-full h-9 px-2 bg-transparent outline-none focus:bg-rose-50 focus:ring-1 focus:ring-rose-300 text-sm"
-                            value={val}
-                            onChange={(e) => setCell(r.id, c.key, e.target.value)}
-                            data-testid={cellId}
-                          />
-                        </td>
-                      );
-                    })}
-                  </tr>
+                {filteredRows.slice(0, shown).map((r, ri) => (
+                  <GridRow key={r.id} r={r} ri={ri} columns={columns} onCell={setCell} />
                 ))}
               </tbody>
             </table>
+            {filteredRows.length > shown && (
+              <div className="sticky left-0 flex items-center gap-3 p-4 text-sm text-muted-foreground" data-testid="datagrid-pager">
+                Показано {shown} из {filteredRows.length}
+                <Button variant="outline" onClick={() => setShown((n) => n + PAGE)} data-testid="datagrid-show-more">
+                  Показать ещё {Math.min(PAGE, filteredRows.length - shown)}
+                </Button>
+                <Button variant="ghost" onClick={() => setShown(filteredRows.length)} data-testid="datagrid-show-all">
+                  Показать все
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

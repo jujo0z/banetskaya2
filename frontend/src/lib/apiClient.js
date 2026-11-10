@@ -5,10 +5,18 @@ export const API = `${BACKEND_URL}/api`;
 
 export const api = axios.create({ baseURL: API });
 
-export async function fetchFields() {
-  const { data } = await api.get("/fields");
-  return data.fields;
-}
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err?.response?.status === 401 && err.response.data?.code === "gate_required"
+        && !window.location.pathname.startsWith("/tg")) {
+      let had = false;
+      try { had = sessionStorage.getItem("bnk_gate_ok") === "1"; sessionStorage.removeItem("bnk_gate_ok"); } catch (e) { /* ignore */ }
+      if (had) window.location.reload();
+    }
+    return Promise.reject(err);
+  }
+);
 
 export async function getStats() {
   const { data } = await api.get("/stats");
@@ -18,15 +26,6 @@ export async function getStats() {
 export async function downloadSampleTemplate() {
   const res = await api.get("/sample-template", { responseType: "blob" });
   downloadBlob(res.data, "sample_students.xlsx");
-}
-
-export async function uploadExcel(file) {
-  const form = new FormData();
-  form.append("file", file);
-  const { data } = await api.post("/upload", form, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
-  return data;
 }
 
 // ---- Единый Excel-шаблон «Данные» (все документы) ----
@@ -74,17 +73,9 @@ export async function openContractPackage(id, duplexFlip = "long", include = {})
   const res = await api.post(`/contracts/${id}/package`, { duplex_flip: duplexFlip, include }, { responseType: "blob" });
   window.open(window.URL.createObjectURL(res.data), "_blank");
 }
-export async function downloadContractPackage(id, duplexFlip = "long", include = {}) {
-  const res = await api.post(`/contracts/${id}/package`, { duplex_flip: duplexFlip, include }, { responseType: "blob" });
-  downloadBlob(res.data, "paket_dokumentov.pdf");
-}
 export async function openContractsPackage(ids, duplexFlip = "long", include = {}) {
   const res = await api.post("/contracts/package", { ids, duplex_flip: duplexFlip, include }, { responseType: "blob" });
   window.open(window.URL.createObjectURL(res.data), "_blank");
-}
-export async function downloadContractsPackage(ids, duplexFlip = "long", include = {}) {
-  const res = await api.post("/contracts/package", { ids, duplex_flip: duplexFlip, include }, { responseType: "blob" });
-  downloadBlob(res.data, "paket_dokumentov.pdf");
 }
 
 export async function listContracts(q = "", status = "") {
@@ -255,11 +246,6 @@ export async function saveAppConfig(windows_download_url) {
   return data;
 }
 
-export async function saveOverlayLayout(layout, dx_mm, dy_mm, rotate = 0) {
-  const { data } = await api.post("/overlay/layout", { layout, dx_mm, dy_mm, rotate });
-  return data;
-}
-
 // ---------- Overlay placement PROFILES ----------
 export async function listOverlayProfiles() {
   const { data } = await api.get("/overlay/profiles");
@@ -376,6 +362,11 @@ export async function exportBase(q = "", status = "") {
   downloadBlob(res.data, parseFilename(res.headers, "База_данные.xlsx"));
 }
 
+export async function exportBaseSelected(ids) {
+  const res = await api.post("/contracts/export-base-selected", { ids }, { responseType: "blob" });
+  downloadBlob(res.data, parseFilename(res.headers, "База_выбранные.xlsx"));
+}
+
 // ---------- Встроенная таблица данных (Excel в приложении) ----------
 export async function getMasterSchema() {
   const { data } = await api.get("/master-schema");
@@ -387,15 +378,22 @@ export async function getContractsGrid() {
   return data; // { rows: [{id,status,created_at,contract_number,full_name,master}] }
 }
 
+export async function patchContractMaster(id, patch) {
+  // Щадящее сохранение правок в базу: меняем только переданные поля master.
+  const { data } = await api.patch(`/contracts/${id}/master`, { patch });
+  return data;
+}
+
 export async function saveMasterBulk(rows) {
   // rows: [{ id, master }]
   const { data } = await api.put("/contracts/master-bulk", { rows });
   return data; // { updated }
 }
 
-export async function getCustomColumns() {
-  const { data } = await api.get("/custom-columns");
-  return data; // { columns: [...] }
+export async function residentsOccupancyBulk(rows) {
+  // rows: [{ res_id, block, room, study_group, benefit, status, note }]
+  const { data } = await api.put("/residents/occupancy-bulk", { rows });
+  return data; // { updated }
 }
 
 export async function addCustomColumn(label, section = "Дополнительно", dropdown = null) {
@@ -429,7 +427,6 @@ export async function deleteDependency(id) {
   const { data } = await api.delete(`/dependencies/${id}`);
   return data;
 }
-
 
 // ---------- System diagnostics ----------
 export async function getDiagnostics() {
@@ -479,7 +476,6 @@ export function contractToOverlay(c = {}) {
   return out;
 }
 
-
 // ======================= ФОРМА 19 — Адресный листок прибытия =======================
 export async function forma19Fields() {
   const { data } = await api.get("/forma19/fields");
@@ -503,10 +499,6 @@ export async function forma19Prefill(students) {
 }
 
 // Apply an Excel column mapping to raw rows -> field-keyed student dicts.
-export async function mapStudents(rows, mapping) {
-  const { data } = await api.post("/students/map", { rows, mapping });
-  return data.students || [];
-}
 
 export async function forma19PreviewPngUrl(records, duplexFlip = "long", side = "front") {
   const res = await api.post(
@@ -566,18 +558,31 @@ export async function downloadForma24Pdf(records, duplexFlip = "long") {
   downloadBlob(res.data, "forma24.pdf");
 }
 
-// ---- Редактируемые шаблоны Форм 19/24 (как в «Заявлении») ----
+// ---- Редактируемые шаблоны Форм 19/24 и «Сообщения» (как в «Заявлении») ----
+function _tplBase(which) {
+  return which === "soobshenie" ? `/soobshenie` : `/forma${which}`;
+}
 export async function getFormaTemplate(which) {
-  const { data } = await api.get(`/forma${which}/template`);
+  const { data } = await api.get(`${_tplBase(which)}/template`);
   return data; // {template, slots, is_custom, page_count, page_w_mm, page_h_mm}
 }
 export async function saveFormaTemplate(which, template) {
-  const { data } = await api.post(`/forma${which}/template`, { template });
+  const { data } = await api.post(`${_tplBase(which)}/template`, { template });
   return data;
 }
 export async function resetFormaTemplate(which) {
-  const { data } = await api.post(`/forma${which}/template/reset`);
+  const { data } = await api.post(`${_tplBase(which)}/template/reset`);
   return data;
+}
+// Единый источник данных: записи «Сообщения» для всех договоров из истории
+export async function soobshenieForContracts(ids) {
+  const { data } = await api.post(`/soobshenie/for-contracts`, { ids });
+  return data; // { records, count }
+}
+
+export async function getSoobshenieFromHistory() {
+  const { data } = await api.get(`/soobshenie/from-history`);
+  return data; // {records, count}
 }
 
 // ---- Заявление о регистрации по месту жительства ----
@@ -597,28 +602,13 @@ export async function zayavleniePrefill(students) {
   const { data } = await api.post("/zayavlenie/prefill", { students });
   return data.records || [];
 }
-export async function zayavleniePreviewPngUrl(records, duplexFlip = "long", side = "front") {
-  const res = await api.post("/zayavlenie/preview-png", { records, duplex_flip: duplexFlip, side }, { responseType: "blob" });
-  return window.URL.createObjectURL(res.data);
-}
-export async function openZayavleniePdf(records, duplexFlip = "long", twoUp = false) {
-  const res = await api.post("/zayavlenie/preview", { records, duplex_flip: duplexFlip, two_up: twoUp }, { responseType: "blob" });
+export async function openZayavleniePdf(records, duplexFlip = "long", twoUp = false, singleSmall = false) {
+  const res = await api.post("/zayavlenie/preview", { records, duplex_flip: duplexFlip, two_up: twoUp, single_small: singleSmall }, { responseType: "blob" });
   window.open(window.URL.createObjectURL(res.data), "_blank");
 }
-export async function downloadZayavleniePdf(records, duplexFlip = "long", twoUp = false) {
-  const res = await api.post("/zayavlenie/preview", { records, duplex_flip: duplexFlip, two_up: twoUp }, { responseType: "blob" });
+export async function downloadZayavleniePdf(records, duplexFlip = "long", twoUp = false, singleSmall = false) {
+  const res = await api.post("/zayavlenie/preview", { records, duplex_flip: duplexFlip, two_up: twoUp, single_small: singleSmall }, { responseType: "blob" });
   downloadBlob(res.data, "zayavlenie.pdf");
-}
-export function zayavlenieBackgroundUrl(page = 1) {
-  return `${API}/zayavlenie/background?page=${page}`;
-}
-export async function getZayavlenieLayout() {
-  const { data } = await api.get("/zayavlenie/layout");
-  return data; // {layout, slots, page_count}
-}
-export async function saveZayavlenieLayout(layout) {
-  const { data } = await api.post("/zayavlenie/layout", { layout });
-  return data;
 }
 export async function getZayavlenieTemplate() {
   const { data } = await api.get("/zayavlenie/template");
@@ -654,7 +644,6 @@ export async function recomputeCounters(force = false) {
   const { data } = await api.post(`/contracts/recompute-counters?force=${force}`);
   return data;
 }
-
 
 // ======================= ЗАСЕЛЕНИЕ — распределение по этажам =======================
 export async function residentsImport(file) {
@@ -726,4 +715,184 @@ export async function openPackagePdf(people, duplexFlip = "long", include = {}) 
 export async function downloadPackagePdf(people, duplexFlip = "long", include = {}) {
   const res = await api.post("/package", { people, duplex_flip: duplexFlip, include }, { responseType: "blob" });
   downloadBlob(res.data, "paket_dokumentov.pdf");
+}
+
+// ======================= ОЦЕНКИ ЗА ЧИСТОТУ + учётки старост =======================
+const TOKEN_KEY = "bnk_starosta_token";
+export function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; }
+}
+export function setToken(t) {
+  try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+}
+function authHeaders() {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+// --- Аутентификация старост ---
+export async function login(username, password) {
+  const { data } = await api.post("/auth/login", { username, password });
+  if (data.token) setToken(data.token);
+  return data; // { token, user }
+}
+export function logout() { setToken(""); }
+export async function authMe() {
+  const { data } = await api.get("/auth/me", { headers: authHeaders() });
+  return data; // { id, username, role, floors, full_name }
+}
+
+// --- Учётки (кабинет заведующей) ---
+export async function listAccounts() {
+  const { data } = await api.get("/accounts");
+  return data.accounts || [];
+}
+export async function createAccount(payload) {
+  const { data } = await api.post("/accounts", payload);
+  return data;
+}
+export async function updateAccount(id, payload) {
+  const { data } = await api.put(`/accounts/${id}`, payload);
+  return data;
+}
+export async function deleteAccount(id) {
+  const { data } = await api.delete(`/accounts/${id}`);
+  return data;
+}
+
+// --- Инспекции ---
+export async function listInspections({ floor, block, date } = {}) {
+  const params = {};
+  if (floor != null) params.floor = floor;
+  if (block) params.block = block;
+  if (date) params.date = date;
+  const { data } = await api.get("/inspections", { params });
+  return data; // { inspections, total }
+}
+// Староста выставляет (нужен токен)
+export async function saveInspectionStarosta(payload) {
+  const { data } = await api.post("/inspections", payload, { headers: authHeaders() });
+  return data;
+}
+// Заведующая (кабинет, без токена)
+export async function saveInspectionAdmin(payload) {
+  const { data } = await api.post("/inspections/save", payload);
+  return data;
+}
+export async function deleteInspection(id) {
+  const { data } = await api.delete(`/inspections/${id}`);
+  return data;
+}
+
+export async function deleteInspectionStarosta(id) {
+  const { data } = await api.delete(`/inspections/starosta/${id}`, { headers: authHeaders() });
+  return data;
+}
+// --- Староста блока ---
+export async function setBlockElder(block, full_name) {
+  const { data } = await api.post(`/blocks/${block}/elder`, { full_name });
+  return data;
+}
+
+export async function cabinetLowGrades() {
+  const { data } = await api.get("/cabinet/low-grades", { headers: authHeaders() });
+  return data;
+}
+export async function publicKitchens() {
+  const { data } = await api.get("/public/kitchens");
+  return data;
+}
+export async function publicKitchen(k) {
+  const { data } = await api.get(`/public/kitchen/${k}`);
+  return data;
+}
+export async function saveKitchenSchedule(k, rows, title) {
+  const { data } = await api.post(`/kitchens/${k}/schedule`, { rows, title }, { headers: authHeaders() });
+  return data;
+}
+export async function uploadKitchenSchedule(k, file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  const { data } = await api.post(`/kitchens/${k}/upload`, fd, { headers: authHeaders() });
+  return data;
+}
+export async function saveKitchenInspection(payload) {
+  const { data } = await api.post("/kitchen-inspections", payload, { headers: authHeaders() });
+  return data;
+}
+export async function deleteKitchenInspection(id) {
+  const { data } = await api.delete(`/kitchen-inspections/starosta/${id}`, { headers: authHeaders() });
+  return data;
+}
+export async function cabinetKitchenLowGrades() {
+  const { data } = await api.get("/cabinet/kitchen-low-grades", { headers: authHeaders() });
+  return data;
+}
+export async function kitchenDuty(k, date) {
+  const { data } = await api.get(`/kitchens/${k}/duty`, { params: { date }, headers: authHeaders() });
+  return data;
+}
+export async function siteGate(login, password) {
+  const { data } = await api.post("/site-gate", { login, password });
+  return data;
+}
+export async function siteGateCheck() {
+  const { data } = await api.get("/site-gate/check");
+  return data;
+}
+// --- Публичные (Mini App / учащийся) ---
+export async function publicFloors() {
+  const { data } = await api.get("/public/floors");
+  return data.floors || [];
+}
+export async function publicFloor(floor) {
+  const { data } = await api.get(`/public/floor/${floor}`);
+  return data; // { floor, blocks:[{block,latest,problem,elder}] }
+}
+export async function publicBlock(block) {
+  const { data } = await api.get(`/public/block/${block}`);
+  return data; // { block, floor, elder, inspections:[...] }
+}
+export async function publicSearch(q) {
+  const { data } = await api.get("/public/search", { params: { q } });
+  return data.results || [];
+}
+
+// --- Telegram ---
+export async function telegramInfo() {
+  const { data } = await api.get("/telegram/info");
+  return data;
+}
+export async function telegramSetupMenu(url) {
+  const { data } = await api.post("/telegram/setup-menu", { url });
+  return data;
+}
+
+// ---- Сдвиг оборота Форм 19/24 (компенсация дуплекса принтера) ----
+export async function getFormaBackOffset() {
+  const { data } = await api.get("/forma/back-offset");
+  return data;
+}
+export async function saveFormaBackOffset(upMm, rightMm = 0) {
+  const { data } = await api.post("/forma/back-offset", { up_mm: upMm, right_mm: rightMm });
+  return data;
+}
+export async function openFormaCalibration(applyOffset = false) {
+  const res = await api.get(`/forma/calibration?apply_offset=${applyOffset}`, { responseType: "blob" });
+  const url = window.URL.createObjectURL(res.data);
+  window.open(url, "_blank");
+}
+
+// ---- Сдвиг оборота Заявления (layout: "a4" | "land") ----
+export async function getZayavBackOffset(layout = "a4") {
+  const { data } = await api.get(`/zayavlenie/back-offset?layout=${layout}`);
+  return data;
+}
+export async function saveZayavBackOffset(layout, upMm, rightMm = 0) {
+  const { data } = await api.post(`/zayavlenie/back-offset?layout=${layout}`, { up_mm: upMm, right_mm: rightMm });
+  return data;
+}
+export async function openZayavCalibration(layout = "a4", applyOffset = false) {
+  const res = await api.get(`/zayavlenie/calibration?layout=${layout}&apply_offset=${applyOffset}`, { responseType: "blob" });
+  window.open(window.URL.createObjectURL(res.data), "_blank");
 }
