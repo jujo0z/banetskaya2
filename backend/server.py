@@ -5,11 +5,14 @@ import sys
 import uuid
 import zipfile
 import logging
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict, Annotated, Any
 
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
+import jwt
+import bcrypt
+import httpx
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Header, Depends, Request
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -68,7 +71,7 @@ async def _active_tpl():
 async def _render(fields):
     return docsvc.render_docx(fields, await _active_tpl())
 
-app = FastAPI()
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -274,12 +277,6 @@ async def upload_excel(file: UploadFile = File(...)):
     return dataset.model_dump()
 
 
-@api_router.get("/datasets/latest")
-async def latest_dataset():
-    doc = await db.datasets.find_one({}, {"_id": 0}, sort=[("created_at", -1)])
-    return doc
-
-
 def _apply_mapping(rows, mapping):
     """Convert raw rows to field-keyed student dicts using column mapping."""
     students = []
@@ -341,6 +338,22 @@ async def _custom_columns() -> list:
     return await _get_setting("custom_columns", []) or []
 
 
+OCC_MAP = [("occ:block", "block"), ("occ:room", "room"), ("occ:study_group", "study_group"), ("occ:benefit", "benefit"), ("occ:status", "status"), ("occ:note", "note")]
+OCC_COLUMNS = [
+    {"key": "occ:block", "label": "Блок (заселение)"},
+    {"key": "occ:room", "label": "Комната (заселение)"},
+    {"key": "occ:study_group", "label": "Группа"},
+    {"key": "occ:benefit", "label": "Льгота"},
+    {"key": "occ:status", "label": "Статус (заселение)"},
+    {"key": "occ:note", "label": "Примечание"},
+]
+
+
+def _inject_occ(m: dict, r: dict):
+    for okey, rkey in OCC_MAP:
+        m[okey] = str((r or {}).get(rkey, "") or "")
+
+
 # ---------- Схема таблицы (встроенные + свои колонки) ----------
 @api_router.get("/master-schema")
 async def get_master_schema():
@@ -352,24 +365,58 @@ async def get_master_schema():
                     "section": c.get("section", "Дополнительно"),
                     "dropdown": c.get("dropdown"), "builtin": False}
                    for c in custom]
-    return {"columns": builtin + custom_cols}
+    occ_cols = [{"key": c["key"], "label": c["label"],
+                 "section": "Заселение (База проживающих)",
+                 "dropdown": None, "builtin": True, "source": "resident"}
+                for c in OCC_COLUMNS]
+    return {"columns": builtin + occ_cols + custom_cols}
 
 
 # ---------- Вся база строками для таблицы-Excel ----------
 @api_router.get("/contracts/grid")
 async def contracts_grid():
     docs = await db.contracts.find({}, {"_id": 0}).sort("created_at", -1).to_list(100000)
+    residents = await db.residents.find({}, {"_id": 0}).to_list(100000)
+    res_index = {}
+    for r in residents:
+        n = ressvc.normalize_name(r.get("full_name", ""))
+        if n and n not in res_index:
+            res_index[n] = r
+    used = set()
     rows = []
     for d in docs:
         m = dict(d.get("master") or {})
         if not any(str(v).strip() for v in m.values()):
             m = masterdata.contract_to_master(d.get("fields", {}) or {})
+        n = ressvc.normalize_name(d.get("full_name", "") or m.get("fio", ""))
+        r = res_index.get(n)
+        res_id = None
+        if r:
+            used.add(n)
+            res_id = r.get("id")
+        _inject_occ(m, r or {})
         rows.append({
             "id": d.get("id"),
+            "res_id": res_id,
             "status": d.get("status", "final"),
             "created_at": d.get("created_at", ""),
             "contract_number": d.get("contract_number", ""),
             "full_name": d.get("full_name", ""),
+            "master": m,
+        })
+    for r in residents:
+        n = ressvc.normalize_name(r.get("full_name", ""))
+        if not n or n in used:
+            continue
+        m = {"fio": r.get("full_name", "")}
+        _inject_occ(m, r)
+        rows.append({
+            "id": "res:" + str(r.get("id")),
+            "res_id": r.get("id"),
+            "status": "no-contract",
+            "created_at": "",
+            "contract_number": r.get("contract_number", ""),
+            "full_name": r.get("full_name", ""),
             "master": m,
         })
     return {"rows": rows}
@@ -402,6 +449,73 @@ async def save_master_bulk(req: MasterBulkRequest):
         if res.matched_count:
             updated += 1
     await _auto_counters()
+    return {"updated": updated}
+
+
+class MasterPatchRequest(BaseModel):
+    patch: Dict[str, Any] = {}
+
+
+@api_router.patch("/contracts/{cid}/master")
+async def patch_contract_master(cid: str, req: MasterPatchRequest):
+    """Щадящее обновление: меняем только переданные поля master, пересобираем
+    поля документов, но НЕ теряем номер договора (если он был только в fields)."""
+    existing = await db.contracts.find_one({"id": cid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="\u0414\u043e\u0433\u043e\u0432\u043e\u0440 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d")
+    old_master = existing.get("master") or {}
+    patch = {k: ("" if v is None else str(v)) for k, v in (req.patch or {}).items()}
+    master = {**old_master, **patch}
+    keep_num = (str(existing.get("contract_number") or "").strip()
+                or str((existing.get("fields") or {}).get("contract_number") or "").strip()
+                or str(old_master.get("contract_number") or "").strip())
+    if keep_num and not str(master.get("contract_number") or "").strip():
+        master["contract_number"] = keep_num
+    fields = masterdata.master_to_contract(master)
+    if keep_num and not str(fields.get("contract_number") or "").strip():
+        fields["contract_number"] = keep_num
+    upd = {
+        "master": master,
+        "fields": fields,
+        "full_name": fields.get("full_name", "") or master.get("fio", ""),
+        "contract_number": str(fields.get("contract_number") or "") or keep_num,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.contracts.update_one({"id": cid}, {"$set": upd})
+    return {"ok": True, "master": master}
+
+
+class OccUpdateRow(BaseModel):
+    res_id: str
+    block: Optional[str] = None
+    room: Optional[str] = None
+    study_group: Optional[str] = None
+    benefit: Optional[str] = None
+    status: Optional[str] = None
+    note: Optional[str] = None
+
+
+class OccBulkRequest(BaseModel):
+    rows: List[OccUpdateRow]
+
+
+@api_router.put("/residents/occupancy-bulk")
+async def residents_occupancy_bulk(req: OccBulkRequest):
+    """Сохранить поля заселения из Таблицы данных → в Базу проживающих."""
+    updated = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for row in req.rows:
+        data = row.model_dump()
+        rid = data.pop("res_id", None)
+        if not rid:
+            continue
+        upd = {k: ("" if v is None else v) for k, v in data.items() if v is not None}
+        if "block" in upd:
+            upd["floor"] = ressvc._floor_of(upd.get("block", ""))
+        upd["updated_at"] = now
+        res = await db.residents.update_one({"id": rid}, {"$set": upd})
+        if res.matched_count:
+            updated += 1
     return {"updated": updated}
 
 
@@ -589,8 +703,13 @@ async def update_contract(contract_id: str, req: GenerateRequest):
     existing = await db.contracts.find_one({"id": contract_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Договор не найден")
+    # Держим master (данные для таблицы-базы) в синхроне с fields (данные документа),
+    # чтобы правки из редактора не «пропадали» в таблице. Свои (custom) поля master сохраняем.
+    existing_master = existing.get("master") or {}
+    synced_master = {**existing_master, **masterdata.contract_to_master(req.fields)}
     update = {
         "fields": req.fields,
+        "master": synced_master,
         "contract_number": req.fields.get("contract_number", ""),
         "full_name": req.fields.get("full_name", ""),
         "status": (req.status or existing.get("status", "final")),
@@ -663,19 +782,17 @@ def _contract_master(doc: dict) -> dict:
         m = dict(m)
     else:
         m = masterdata.contract_to_master(doc.get("fields", {}) or {})
-    # Проброс замороженных счётчиков (Заявление, стр.2)
     c = doc.get("counters")
     if isinstance(c, dict):
         for k in ("occupancy_count", "minors_count", "adults_count", "free_count"):
             if c.get(k) not in (None, ""):
+                m[k] = str(c.get(k))
                 m[k] = str(c.get(k))
     return m
 
 
 # ============================================================================
 #  НАКОПИТЕЛЬНЫЕ СЧЁТЧИКИ ПРОЖИВАЮЩИХ (Заявление, стр.2)
-#  Всего +1 на договор; несовершеннолетний -> Несов +1, иначе Совер +1;
-#  Свободных -1. Порядок — по номеру договора. Значения замораживаются.
 # ============================================================================
 COUNTER_BASE_KEY = "zayav_counter_base"
 _COUNTER_KEYS = ("occupancy_count", "minors_count", "adults_count", "free_count")
@@ -719,9 +836,6 @@ async def _get_counter_base() -> dict:
 
 
 async def _recompute_counters(force: bool = False) -> dict:
-    """Пересчёт счётчиков по всем НЕ-черновикам в порядке номера договора.
-    force=False — считаем только новые (замороженные не трогаем).
-    force=True — пересчёт всех от базы (используется при смене стартовых значений)."""
     base = await _get_counter_base()
     if not base.get("enabled"):
         return {"ok": False, "reason": "disabled",
@@ -735,8 +849,9 @@ async def _recompute_counters(force: bool = False) -> dict:
                 "missing": [d.get("full_name", "") or "(без имени)" for d in missing][:30],
                 "detail": "Пока не у всех договоров проставлен номер"}
     docs.sort(key=lambda d: _counter_num_key(_doc_num(d)))
-    run = {"total": base["total"], "minors": base["minors"],
-           "adults": base["adults"], "free": base["free"]}
+    # run=None: первый договор (по номеру) получает базу КАК ЕСТЬ (введённые значения),
+    # каждый следующий прибавляет своего человека.
+    run = None
     computed = 0
     for d in docs:
         c = d.get("counters")
@@ -746,12 +861,15 @@ async def _recompute_counters(force: bool = False) -> dict:
                    "adults": int(c["adults_count"]), "free": int(c["free_count"])}
             continue
         minor = docsvc.is_minor(_doc_birth(d))
-        run["total"] += 1
-        if minor:
-            run["minors"] += 1
+        if run is None:
+            # первый по номеру договора — ровно то, что ввели в настройках
+            run = {"total": base["total"], "minors": base["minors"],
+                   "adults": base["adults"], "free": base["free"]}
         else:
-            run["adults"] += 1
-        run["free"] -= 1
+            run = {"total": run["total"] + 1,
+                   "minors": run["minors"] + (1 if minor else 0),
+                   "adults": run["adults"] + (0 if minor else 1),
+                   "free": run["free"] - 1}
         counters = {"occupancy_count": run["total"], "minors_count": run["minors"],
                     "adults_count": run["adults"], "free_count": run["free"],
                     "minor": bool(minor)}
@@ -761,7 +879,6 @@ async def _recompute_counters(force: bool = False) -> dict:
 
 
 async def _auto_counters():
-    """Тихая попытка досчитать новые счётчики (после создания/правки договора)."""
     try:
         await _recompute_counters(force=False)
     except Exception:
@@ -781,6 +898,34 @@ async def _counters_by_number() -> dict:
     return mp
 
 
+_RE_CONTRACT_NUM = re.compile(r"№\s*([0-9A-Za-zА-Яа-я\-/]+)")
+
+
+async def _enrich_zayav_counters(records):
+    """Подставить в записи заявления актуальные счётчики по номеру договора.
+    Номер берём из поля contract_number записи, либо вытаскиваем из «Договор найма № …»."""
+    try:
+        mp = await _counters_by_number()
+    except Exception:
+        mp = {}
+    if not mp or not records:
+        return records
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        num = str(rec.get("contract_number") or "").strip()
+        if not num:
+            mobj = _RE_CONTRACT_NUM.search(str(rec.get("basis") or ""))
+            if mobj:
+                num = mobj.group(1).strip()
+        c = mp.get(num)
+        if isinstance(c, dict):
+            for k in _COUNTER_KEYS:
+                if c.get(k) not in (None, ""):
+                    rec[k] = str(c[k])
+    return records
+
+
 @api_router.get("/counters/base")
 async def get_counters_base():
     return await _get_counter_base()
@@ -796,7 +941,6 @@ async def set_counters_base(payload: CounterBase, recompute: bool = True):
                                      upsert=True)
     result = None
     if recompute and val["enabled"]:
-        # стартовая точка изменилась -> полный пересчёт
         result = await _recompute_counters(force=True)
     return {"saved": True, "base": val, "recompute": result}
 
@@ -816,7 +960,7 @@ async def list_contracts(q: Optional[str] = None, status: Optional[str] = None):
             {"full_name": {"$regex": re.escape(q), "$options": "i"}},
             {"contract_number": {"$regex": re.escape(q), "$options": "i"}},
         ]
-    docs = await db.contracts.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    docs = await db.contracts.find(query, {"_id": 0}).sort("created_at", -1).to_list(100000)
     return docs
 
 
@@ -928,6 +1072,46 @@ async def export_contracts_base(q: Optional[str] = None, status: Optional[str] =
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
     )
 
+
+@api_router.post("/contracts/export-base-selected")
+async def export_contracts_base_selected(req: BatchDownloadRequest):
+    """Скачать в формате шаблона «Данные» ТОЛЬКО выбранные (по галочкам) записи.
+    Такой файл можно снова загрузить через «Генерация из Excel»."""
+    ids = req.ids or []
+    if not ids:
+        raise HTTPException(status_code=400, detail="Не выбрано ни одной записи")
+    docs = await db.contracts.find({"id": {"$in": ids}}, {"_id": 0}).to_list(100000)
+    # сохранить порядок выбора пользователем
+    order = {cid: i for i, cid in enumerate(ids)}
+    docs.sort(key=lambda d: order.get(d.get("id"), 10 ** 9))
+
+    rows = []
+    for d in docs:
+        m = dict(d.get("master") or {})
+        if not m:
+            f = d.get("fields") or {}
+            m = {
+                "fio": d.get("full_name", "") or f.get("full_name", ""),
+                "contract_number": d.get("contract_number", "") or f.get("contract_number", ""),
+                "phone": f.get("phone", ""),
+                "room_number": f.get("room_number", ""),
+                "id_number": f.get("id_number", ""),
+                "order_number": f.get("order_number", ""),
+            }
+        rows.append(m)
+
+    custom = await _custom_columns()
+    extra = [{"key": c["key"], "header": c["label"],
+              "dropdown": c.get("dropdown")} for c in custom]
+    data = masterdata.build_master_xlsx(data_rows=rows, extra_columns=extra)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    fname = f"База_выбранные_{len(rows)}_{stamp}.xlsx"
+    from urllib.parse import quote
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
 
 
 @api_router.get("/contracts/{contract_id}")
@@ -1349,7 +1533,7 @@ class OverlayGenerateRequest(BaseModel):
     per_sheet: int = 0            # full mode: cards per sheet (0 = max)
 
 
-def _build_overlay_pdf(req: "OverlayGenerateRequest") -> bytes:
+def _build_overlay_pdf(req: "OverlayGenerateRequest", full_template=None) -> bytes:
     """Route an overlay request to the right builder (overlay-on-blank or full)."""
     if str(getattr(req, "mode", "overlay")).lower() == "full":
         return docsvc.build_full_sheets(
@@ -1357,6 +1541,7 @@ def _build_overlay_pdf(req: "OverlayGenerateRequest") -> bytes:
             layout=req.layout,
             orientation=req.orientation,
             per_sheet=req.per_sheet,
+            template=full_template,
         )
     return docsvc.build_overlay(
         records=req.records,
@@ -1559,7 +1744,8 @@ async def generate_overlay(req: OverlayGenerateRequest):
     """PDF of the СООБЩЕНИЕ. mode="overlay" -> data sized to the physical blank
     (147×103, optional rotation); mode="full" -> complete forms as an A4 grid."""
     try:
-        data = _build_overlay_pdf(req)
+        tpl = await _soobshenie_template_overrides() if str(getattr(req, "mode", "overlay")).lower() == "full" else None
+        data = _build_overlay_pdf(req, full_template=tpl)
     except Exception as e:
         logger.exception("overlay generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -1575,7 +1761,8 @@ async def overlay_preview_png(req: OverlayGenerateRequest):
     """Render the first sheet of the overlay/full-print output as a PNG image,
     so the on-screen preview shows reliably even where inline PDF is blocked."""
     try:
-        pdf = _build_overlay_pdf(req)
+        tpl = await _soobshenie_template_overrides() if str(getattr(req, "mode", "overlay")).lower() == "full" else None
+        pdf = _build_overlay_pdf(req, full_template=tpl)
         png = docsvc.render_pdf_first_page_png(pdf, scale=2.0)
     except Exception as e:
         logger.exception("overlay preview failed")
@@ -1630,7 +1817,8 @@ async def overlay_print_silent(req: OverlayPrintRequest):
     if not req.records:
         raise HTTPException(status_code=400, detail="Нет данных для печати")
     try:
-        data = _build_overlay_pdf(req)
+        tpl = await _soobshenie_template_overrides() if str(getattr(req, "mode", "overlay")).lower() == "full" else None
+        data = _build_overlay_pdf(req, full_template=tpl)
         docsvc.print_pdf_silent(data, req.printer_name)
     except HTTPException:
         raise
@@ -1669,21 +1857,6 @@ async def overlay_background():
     if not p.exists():
         raise HTTPException(status_code=404, detail="Фон не найден")
     return FileResponse(str(p), media_type="image/png")
-
-
-@api_router.get("/overlay/form-background")
-async def overlay_form_background():
-    """Clean vector СООБЩЕНИЕ form (no data) — used by «Полная печать» preview.
-
-    Unlike /overlay/background (a scanned photo, used only in the overlay-on-blank
-    mode), this returns the typed document exactly as it will be printed on plain
-    paper, so the full-print preview no longer relies on the scanned photo."""
-    try:
-        png = docsvc.render_form_background_png()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Не удалось отрисовать бланк: {e}")
-    return Response(content=png, media_type="image/png",
-                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ---------- App config (e.g. Windows installer download link) ----------
@@ -1996,15 +2169,27 @@ class Forma19Prefill(BaseModel):
 async def forma19_prefill(payload: Forma19Prefill):
     """Пред-заполнение полей Формы 19 из данных студентов (поля договора):
     разбивает ФИО/дату рождения/паспорт на компоненты."""
-    out = [docsvc.forma19_from_contract(s) for s in payload.students]
+    out = []
+    for s in payload.students:
+        s = dict(s or {})
+        _prov = s.pop("_master", None) or {}
+        _base = masterdata.contract_to_master(s)
+        mrow = dict(_base)
+        for _k, _v in _prov.items():
+            if str(_v).strip() != "" or _k not in mrow:
+                mrow[_k] = _v
+        rec = masterdata.master_to_forma19(mrow)
+        _inject_table_cols(rec, mrow)
+        out.append(rec)
     return {"records": out}
 
 
-def _build_forma19_pdf(req: "Forma19Request", template=None) -> bytes:
+def _build_forma19_pdf(req: "Forma19Request", template=None, back_offset=None) -> bytes:
     return docsvc.build_forma19(
         people=req.records,
         duplex_flip=req.duplex_flip,
         template=template,
+        back_offset=back_offset,
     )
 
 
@@ -2012,7 +2197,7 @@ def _build_forma19_pdf(req: "Forma19Request", template=None) -> bytes:
 async def forma19_preview(req: Forma19Request):
     try:
         tpl = await _forma_template_overrides(19)
-        data = _build_forma19_pdf(req, template=tpl)
+        data = _build_forma19_pdf(req, template=tpl, back_offset=await _forma_back_offset())
     except Exception as e:
         logger.exception("forma19 generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -2029,7 +2214,7 @@ async def forma19_preview_png(req: Forma19Request):
     side='back' → стр.2 (оборот)."""
     try:
         tpl = await _forma_template_overrides(19)
-        pdf = _build_forma19_pdf(req, template=tpl)
+        pdf = _build_forma19_pdf(req, template=tpl, back_offset=await _forma_back_offset())
         page_index = 1 if str(req.side or "front").lower() == "back" else 0
         png = docsvc.render_pdf_page_png(pdf, page_index, scale=2.0)
     except Exception as e:
@@ -2070,19 +2255,31 @@ async def forma24_save_defaults(payload: Forma19Defaults):
 
 @api_router.post("/forma24/prefill")
 async def forma24_prefill(payload: Forma19Prefill):
-    return {"records": [docsvc.forma24_from_contract(s) for s in payload.students]}
+    out = []
+    for s in payload.students:
+        s = dict(s or {})
+        _prov = s.pop("_master", None) or {}
+        _base = masterdata.contract_to_master(s)
+        mrow = dict(_base)
+        for _k, _v in _prov.items():
+            if str(_v).strip() != "" or _k not in mrow:
+                mrow[_k] = _v
+        rec = masterdata.master_to_forma24(mrow)
+        _inject_table_cols(rec, mrow)
+        out.append(rec)
+    return {"records": out}
 
 
-def _build_forma24_pdf(req: "Forma24Request", template=None) -> bytes:
+def _build_forma24_pdf(req: "Forma24Request", template=None, back_offset=None) -> bytes:
     return docsvc.build_forma24(people=req.records, duplex_flip=req.duplex_flip,
-                                template=template)
+                                template=template, back_offset=back_offset)
 
 
 @api_router.post("/forma24/preview")
 async def forma24_preview(req: Forma24Request):
     try:
         tpl = await _forma_template_overrides(24)
-        data = _build_forma24_pdf(req, template=tpl)
+        data = _build_forma24_pdf(req, template=tpl, back_offset=await _forma_back_offset())
     except Exception as e:
         logger.exception("forma24 generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -2094,7 +2291,7 @@ async def forma24_preview(req: Forma24Request):
 async def forma24_preview_png(req: Forma24Request):
     try:
         tpl = await _forma_template_overrides(24)
-        pdf = _build_forma24_pdf(req, template=tpl)
+        pdf = _build_forma24_pdf(req, template=tpl, back_offset=await _forma_back_offset())
         idx = 1 if str(req.side or "front").lower() == "back" else 0
         png = docsvc.render_pdf_page_png(pdf, idx, scale=2.0)
     except Exception as e:
@@ -2109,12 +2306,34 @@ class FormaTemplate(BaseModel):
     template: List[Dict[str, Any]] = []
 
 
+def _table_col_slots(custom_cols):
+    """Слоты-поля из колонок «Таблицы данных» (прямая подстановка из базы)."""
+    out = [{"slot": "col:" + c["key"], "label": "Таблица: " + c["header"]}
+           for c in masterdata.MASTER_COLUMNS]
+    out += [{"slot": "col:" + c["key"], "label": "Таблица: " + c.get("label", c["key"])}
+            for c in (custom_cols or [])]
+    return out
+
+
+def _inject_table_cols(rec, master_row):
+    """Записать прямые значения колонок таблицы в rec под ключами col:<key>."""
+    m = master_row or {}
+    for c in masterdata.MASTER_COLUMNS:
+        v = m.get(c["key"])
+        rec["col:" + c["key"]] = "" if v is None else str(v)
+    for k, v in m.items():
+        if str(k).startswith("cc_"):
+            rec["col:" + k] = "" if v is None else str(v)
+    return rec
+
+
 @api_router.get("/forma19/template")
 async def forma19_get_template():
     ov = await _forma_template_overrides(19)
+    _custom = await _custom_columns()
     return {
         "template": ov if ov is not None else docsvc.get_forma19_default_template(),
-        "slots": docsvc.forma_slots(19),
+        "slots": docsvc.forma_slots(19) + _table_col_slots(_custom),
         "is_custom": ov is not None,
         "page_count": 2,
         "page_w_mm": docsvc.FORMA19_MM[0],
@@ -2141,9 +2360,10 @@ async def forma19_reset_template():
 @api_router.get("/forma24/template")
 async def forma24_get_template():
     ov = await _forma_template_overrides(24)
+    _custom = await _custom_columns()
     return {
         "template": ov if ov is not None else docsvc.get_forma24_default_template(),
-        "slots": docsvc.forma_slots(24),
+        "slots": docsvc.forma_slots(24) + _table_col_slots(_custom),
         "is_custom": ov is not None,
         "page_count": 2,
         "page_w_mm": docsvc.FORMA19_MM[0],
@@ -2174,6 +2394,7 @@ class ZayavlenieRequest(BaseModel):
     duplex_flip: str = "long"
     side: str = "front"
     two_up: bool = False
+    single_small: bool = False   # одно заявление в размере как при «2 на лист»
 
 
 class ZayavlenieLayout(BaseModel):
@@ -2207,6 +2428,211 @@ async def _forma_template_overrides(which: int):
     return val if isinstance(val, list) and val else None
 
 
+FORMA_BACK_OFFSET_KEY = "forma_back_offset"
+
+
+async def _forma_back_offset() -> dict:
+    """Сдвиг ОБОРОТА Форм 19/24 (компенсация дуплекса принтера), мм."""
+    doc = await db.app_settings.find_one({"key": FORMA_BACK_OFFSET_KEY}, {"_id": 0})
+    val = (doc or {}).get("value")
+    if not isinstance(val, dict):
+        return dict(docsvc.FORMA_BACK_OFFSET_DEFAULT)
+    out = dict(docsvc.FORMA_BACK_OFFSET_DEFAULT)
+    for k in ("up_mm", "right_mm"):
+        try:
+            out[k] = float(val.get(k, out[k]))
+        except Exception:
+            pass
+    return out
+
+
+class FormaBackOffsetRequest(BaseModel):
+    up_mm: float = 0.0
+    right_mm: float = 0.0
+
+
+@api_router.get("/forma/back-offset")
+async def get_forma_back_offset():
+    val = await _forma_back_offset()
+    return {**val, "default": docsvc.FORMA_BACK_OFFSET_DEFAULT}
+
+
+@api_router.post("/forma/back-offset")
+async def save_forma_back_offset(req: FormaBackOffsetRequest):
+    up = max(-1000.0, min(1000.0, round(float(req.up_mm), 2)))
+    right = max(-1000.0, min(1000.0, round(float(req.right_mm), 2)))
+    val = {"up_mm": up, "right_mm": right}
+    await db.app_settings.update_one(
+        {"key": FORMA_BACK_OFFSET_KEY},
+        {"$set": {"key": FORMA_BACK_OFFSET_KEY, "value": val}}, upsert=True)
+    return val
+
+
+@api_router.get("/forma/calibration")
+async def forma_calibration(apply_offset: bool = False):
+    """Лист калибровки дуплекса (PDF, 2 стр.: лицо + оборот)."""
+    try:
+        data = docsvc.build_forma_calibration(await _forma_back_offset(), apply_offset=apply_offset)
+    except Exception as e:
+        logger.exception("calibration failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": "inline; filename=calibration.pdf",
+                             "Cache-Control": "no-store"})
+
+
+ZAYAV_BACK_OFFSET_KEY = "zayav_back_offset"
+ZAYAV_BACK_OFFSET_DEFAULT = {"a4": {"up_mm": 1.5, "right_mm": 0.0},
+                             "land": {"up_mm": 0.0, "right_mm": 0.0}}
+
+
+async def _zayav_back_offsets() -> dict:
+    """Сдвиг ОБОРОТА Заявления, мм. Два профиля: a4 — «1 на лист» (A4-портрет, и в пакете);
+    land — альбомный лист («2 на лист» и «1 уменьшенное»)."""
+    doc = await db.app_settings.find_one({"key": ZAYAV_BACK_OFFSET_KEY}, {"_id": 0})
+    val = (doc or {}).get("value") if doc else None
+    out = {k: dict(v) for k, v in ZAYAV_BACK_OFFSET_DEFAULT.items()}
+    if isinstance(val, dict):
+        for lay in ("a4", "land"):
+            sub = val.get(lay)
+            if isinstance(sub, dict):
+                for k in ("up_mm", "right_mm"):
+                    try:
+                        out[lay][k] = float(sub.get(k, out[lay][k]))
+                    except Exception:
+                        pass
+    return out
+
+
+def _zayav_layout_key(layout: str) -> str:
+    return "land" if str(layout or "").lower() in ("land", "landscape", "2up", "small") else "a4"
+
+
+@api_router.get("/zayavlenie/back-offset")
+async def get_zayav_back_offset(layout: str = "a4"):
+    lay = _zayav_layout_key(layout)
+    allv = await _zayav_back_offsets()
+    return {**allv[lay], "layout": lay, "default": ZAYAV_BACK_OFFSET_DEFAULT[lay], "all": allv}
+
+
+@api_router.post("/zayavlenie/back-offset")
+async def save_zayav_back_offset(req: FormaBackOffsetRequest, layout: str = "a4"):
+    lay = _zayav_layout_key(layout)
+    allv = await _zayav_back_offsets()
+    allv[lay] = {"up_mm": max(-1000.0, min(1000.0, round(float(req.up_mm), 2))),
+                 "right_mm": max(-1000.0, min(1000.0, round(float(req.right_mm), 2)))}
+    await db.app_settings.update_one(
+        {"key": ZAYAV_BACK_OFFSET_KEY},
+        {"$set": {"key": ZAYAV_BACK_OFFSET_KEY, "value": allv}}, upsert=True)
+    return {**allv[lay], "layout": lay}
+
+
+@api_router.get("/zayavlenie/calibration")
+async def zayav_calibration(layout: str = "a4", apply_offset: bool = False):
+    lay = _zayav_layout_key(layout)
+    allv = await _zayav_back_offsets()
+    try:
+        data = docsvc.build_forma_calibration(allv[lay], apply_offset=apply_offset,
+                                              landscape=(lay == "land"),
+                                              doc_label=("Заявление «2 на лист»" if lay == "land" else "Заявление"))
+    except Exception as e:
+        logger.exception("zayav calibration failed")
+        raise HTTPException(status_code=500, detail=f"Ошибка: {e}")
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": "inline; filename=calibration_zayav.pdf",
+                             "Cache-Control": "no-store"})
+
+
+async def _soobshenie_template_overrides():
+    """Кастомный шаблон «Сообщения» из БД (или None → дефолт)."""
+    doc = await db.app_settings.find_one({"key": "soobshenie_template"}, {"_id": 0})
+    val = (doc or {}).get("value")
+    return val if isinstance(val, list) and val else None
+
+
+@api_router.get("/soobshenie/template")
+async def soobshenie_get_template():
+    ov = await _soobshenie_template_overrides()
+    _custom = await _custom_columns()
+    return {
+        "template": ov if ov is not None else docsvc.get_soobshenie_default_template(),
+        "slots": docsvc.soobshenie_slots() + _table_col_slots(_custom),
+        "is_custom": ov is not None,
+        "page_count": 1,
+        "page_w_mm": docsvc.SOOBSHENIE_PAGE_MM[0],
+        "page_h_mm": docsvc.SOOBSHENIE_PAGE_MM[1],
+    }
+
+
+@api_router.post("/soobshenie/template")
+async def soobshenie_save_template(payload: FormaTemplate):
+    await db.app_settings.update_one(
+        {"key": "soobshenie_template"},
+        {"$set": {"key": "soobshenie_template", "value": payload.template}},
+        upsert=True,
+    )
+    return {"saved": True, "count": len(payload.template)}
+
+
+@api_router.post("/soobshenie/template/reset")
+async def soobshenie_reset_template():
+    await db.app_settings.delete_one({"key": "soobshenie_template"})
+    return {"reset": True, "template": docsvc.get_soobshenie_default_template()}
+
+
+@api_router.get("/soobshenie/from-history")
+async def soobshenie_from_history():
+    """Записи «Сообщения» для ВСЕХ договоров из истории (кроме черновиков) —
+    единый источник данных: не нужно отдельно грузить Excel."""
+    docs = await db.contracts.find(
+        {"status": {"$ne": "draft"}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(20000)
+    out = []
+    for c in docs:
+        m = _merge_master(c)
+        rec = masterdata.master_to_soobshenie(m)
+        if rec:
+            _inject_table_cols(rec, m)
+            out.append(rec)
+    return {"records": out, "count": len(out)}
+
+
+class SoobIdsRequest(BaseModel):
+    ids: List[str] = []
+
+
+def _merge_master(c: dict) -> dict:
+    """Единый master: fields как база, непустые значения master перекрывают."""
+    prov = c.get("master") or {}
+    base = masterdata.contract_to_master(c.get("fields", {}) or {})
+    m = dict(base)
+    for k, v in (prov if isinstance(prov, dict) else {}).items():
+        if str(v).strip() != "" or k not in m:
+            m[k] = v
+    return m
+
+
+@api_router.post("/soobshenie/for-contracts")
+async def soobshenie_for_contracts(req: SoobIdsRequest):
+    """Записи «Сообщения» для выбранных договоров (master-путь, как формы)."""
+    ids = list(req.ids or [])
+    docs = await db.contracts.find({"id": {"$in": ids}}, {"_id": 0}).to_list(20000)
+    by_id = {d.get("id"): d for d in docs}
+    out = []
+    for cid in ids:
+        c = by_id.get(cid)
+        if not c:
+            continue
+        m = _merge_master(c)
+        rec = masterdata.master_to_soobshenie(m)
+        if rec:
+            _inject_table_cols(rec, m)
+            out.append(rec)
+    return {"records": out, "count": len(out)}
+
+
+
+
 
 @api_router.get("/zayavlenie/fields")
 async def zayavlenie_fields():
@@ -2232,26 +2658,27 @@ async def zayavlenie_save_defaults(payload: Forma19Defaults):
 @api_router.post("/zayavlenie/prefill")
 async def zayavlenie_prefill(payload: Forma19Prefill):
     """Из строк-«людей» единого шаблона -> записи Заявления."""
-    recs = [masterdata.master_to_zayavlenie(m) for m in payload.students]
-    # подставляем замороженные счётчики по номеру договора (если посчитаны)
-    mp = await _counters_by_number()
-    if mp:
-        for m, rec in zip(payload.students, recs):
-            num = str((m or {}).get("contract_number") or "").strip()
-            c = mp.get(num)
-            if isinstance(c, dict):
-                for k in _COUNTER_KEYS:
-                    if c.get(k) not in (None, ""):
-                        rec[k] = str(c[k])
+    recs = []
+    for m in payload.students:
+        m = dict(m or {})
+        mrow = m.pop("_master", None) or masterdata.contract_to_master(m)
+        rec = masterdata.master_to_zayavlenie(mrow)
+        num = str((mrow or {}).get("contract_number") or (m or {}).get("contract_number") or "").strip()
+        if num:
+            rec["contract_number"] = num
+        _inject_table_cols(rec, mrow)
+        recs.append(rec)
+    await _enrich_zayav_counters(recs)
     return {"records": recs}
 
 
 @api_router.get("/zayavlenie/layout")
 async def zayavlenie_get_layout():
     ov = await _zayav_layout_overrides()
+    _custom = await _custom_columns()
     return {
         "layout": docsvc._merge_zayav_layout(ov),
-        "slots": docsvc.ZAYAV_OVERLAY_SLOTS,
+        "slots": docsvc.ZAYAV_OVERLAY_SLOTS + _table_col_slots(_custom),
         "page_count": 2,
     }
 
@@ -2269,9 +2696,10 @@ async def zayavlenie_save_layout(payload: ZayavlenieLayout):
 @api_router.get("/zayavlenie/template")
 async def zayavlenie_get_template():
     ov = await _zayav_template_overrides()
+    _custom = await _custom_columns()
     return {
         "template": docsvc._resolve_zayav_template(ov),
-        "slots": docsvc.ZAYAV_OVERLAY_SLOTS,
+        "slots": docsvc.ZAYAV_OVERLAY_SLOTS + _table_col_slots(_custom),
         "is_custom": ov is not None,
         "page_count": 2,
     }
@@ -2309,23 +2737,21 @@ async def zayavlenie_save_records(payload: ZayavlenieRecords):
     return {"saved": True, "count": len(payload.records)}
 
 
-@api_router.get("/zayavlenie/background")
-async def zayavlenie_background(page: int = 1):
-    png = docsvc.render_zayav_background_png(page)
-    return Response(content=png, media_type="image/png",
-                    headers={"Cache-Control": "public, max-age=60"})
-
-
-def _build_zayavlenie_pdf(req: "ZayavlenieRequest", template=None) -> bytes:
+def _build_zayavlenie_pdf(req: "ZayavlenieRequest", template=None, back_offsets=None) -> bytes:
+    small = bool(req.single_small)
+    land = bool(req.two_up) or small
+    bo = (back_offsets or {}).get("land" if land else "a4")
     return docsvc.build_zayavlenie(people=req.records, template=template,
-                                   duplex_flip=req.duplex_flip, two_up=bool(req.two_up))
+                                   duplex_flip=req.duplex_flip, two_up=bool(req.two_up) and not small,
+                                   single_small=small, back_offset=bo)
 
 
 @api_router.post("/zayavlenie/preview")
 async def zayavlenie_preview(req: ZayavlenieRequest):
     try:
+        await _enrich_zayav_counters(req.records)
         tpl = await _zayav_template_overrides()
-        data = _build_zayavlenie_pdf(req, template=tpl)
+        data = _build_zayavlenie_pdf(req, template=tpl, back_offsets=await _zayav_back_offsets())
     except Exception as e:
         logger.exception("zayavlenie generation failed")
         raise HTTPException(status_code=500, detail=f"Ошибка формирования: {e}")
@@ -2336,8 +2762,9 @@ async def zayavlenie_preview(req: ZayavlenieRequest):
 @api_router.post("/zayavlenie/preview-png")
 async def zayavlenie_preview_png(req: ZayavlenieRequest):
     try:
+        await _enrich_zayav_counters(req.records)
         tpl = await _zayav_template_overrides()
-        pdf = _build_zayavlenie_pdf(req, template=tpl)
+        pdf = _build_zayavlenie_pdf(req, template=tpl, back_offsets=await _zayav_back_offsets())
         idx = 1 if str(req.side or "front").lower() == "back" else 0
         png = docsvc.render_pdf_page_png(pdf, idx, scale=2.0)
     except Exception as e:
@@ -2394,29 +2821,15 @@ def _pkg_on(include: Dict[str, bool], key: str) -> bool:
     return bool(include.get(key, True))
 
 
-async def _soobshenie_pkg_layout():
-    """Стандартный layout Сообщения + свои поля-столбцы (cc_*) из активного профиля наложения.
-    Стандартные поля и их позиции не меняются — только добавляются пользовательские столбцы."""
-    layout = list(docsvc.SOOBSHENIE_LAYOUT)
-    try:
-        act = await db.app_settings.find_one({"key": "overlay_active_profile"})
-        pid = (act or {}).get("value")
-        prof = await db.overlay_profiles.find_one({"id": pid}) if pid else None
-        for f in ((prof or {}).get("layout") or []):
-            if f.get("custom") and str(f.get("key", "")).startswith("cc_"):
-                layout.append(f)
-    except Exception:
-        logger.exception("soobshenie custom layout build failed")
-    return layout
-
-
 async def _build_package_pdf(req: "PackageRequest") -> bytes:
     tpl = await _active_tpl()
     inc = req.include or {}
     _zayav_tpl = await _zayav_template_overrides()
     _tpl19 = await _forma_template_overrides(19)
     _tpl24 = await _forma_template_overrides(24)
-    _soob_layout = await _soobshenie_pkg_layout()
+    _back_off = await _forma_back_offset()
+    _zayav_bo = await _zayav_back_offsets()
+    _soob_tpl = await _soobshenie_template_overrides() or docsvc.get_soobshenie_default_template()
     parts: List[bytes] = []
     for m in (req.people or []):
         if _pkg_on(inc, "contract"):
@@ -2429,23 +2842,24 @@ async def _build_package_pdf(req: "PackageRequest") -> bytes:
             # обе формы на одном листе (верх — Ф-19, низ — Ф-24), лицо+оборот
             parts.append(docsvc.build_forma_combined(
                 masterdata.master_to_forma19(m), masterdata.master_to_forma24(m),
-                duplex_flip=req.duplex_flip, tpl19=_tpl19, tpl24=_tpl24))
+                duplex_flip=req.duplex_flip, tpl19=_tpl19, tpl24=_tpl24,
+                back_offset=_back_off))
         elif want19:
             parts.append(docsvc.build_forma19(
                 [masterdata.master_to_forma19(m)], duplex_flip=req.duplex_flip,
-                template=_tpl19))
+                template=_tpl19, back_offset=_back_off))
         elif want24:
             parts.append(docsvc.build_forma24(
                 [masterdata.master_to_forma24(m)], duplex_flip=req.duplex_flip,
-                template=_tpl24))
+                template=_tpl24, back_offset=_back_off))
         if _pkg_on(inc, "soobshenie"):
-            parts.append(docsvc.build_overlay(
-                [masterdata.master_to_soobshenie(m)],
-                layout=_soob_layout, page_size="a4", with_form=True))
+            parts.append(docsvc.build_full_sheets(
+                [masterdata.master_to_soobshenie(m)], per_sheet=1,
+                orientation="portrait", template=_soob_tpl, draw_guides=False))
         if _pkg_on(inc, "zayavlenie"):
             parts.append(docsvc.build_zayavlenie(
                 [masterdata.master_to_zayavlenie(m)], template=_zayav_tpl,
-                duplex_flip=req.duplex_flip))
+                duplex_flip=req.duplex_flip, back_offset=_zayav_bo.get("a4")))
     if not parts:
         raise HTTPException(status_code=400, detail="Нет документов для пакета")
     return docsvc.merge_pdfs(parts)
@@ -2607,6 +3021,32 @@ async def _resident_checks(res: dict) -> dict:
     return checks
 
 
+async def _resident_kitchen_grades(res: dict):
+    """Оценки учащегося за уборку на кухне (по дням дежурства)."""
+    rid = res.get("id", "")
+    docs = []
+    if rid:
+        docs = await db.kitchen_inspections.find({"resident_id": rid}, {"_id": 0}).to_list(2000)
+    if not docs:
+        try:
+            norm = ressvc.normalize_name(res.get("full_name", ""))
+        except Exception:
+            norm = " ".join((res.get("full_name", "") or "").lower().split())
+        if norm:
+            allk = await db.kitchen_inspections.find(
+                {"student_name": {"$nin": ["", None]}}, {"_id": 0}).to_list(100000)
+            for i in allk:
+                try:
+                    if ressvc.normalize_name(i.get("student_name", "")) == norm:
+                        docs.append(i)
+                except Exception:
+                    pass
+    docs.sort(key=lambda d: _date_key(d.get("date", "")), reverse=True)
+    return [{"date": d.get("date", ""), "grade": int(d.get("grade", 0) or 0),
+             "kitchen": d.get("kitchen"), "pos": d.get("pos", ""),
+             "reason": d.get("reason", ""), "note": d.get("note", "")} for d in docs]
+
+
 @api_router.post("/residents/import")
 async def residents_import(file: UploadFile = File(...)):
     """Импорт Excel заселения. Сохраняет уже введённые вручную ЛЬГОТА/Группа."""
@@ -2619,24 +3059,34 @@ async def residents_import(file: UploadFile = File(...)):
     if not parsed:
         raise HTTPException(status_code=400,
                             detail="В файле не найдено ни одного жильца (проверьте лист с колонками «Блок», «Ф.И.О»).")
-    # сохраняем ручные правки по совпадению ФИО
+    # НЕразрушительный импорт: обновляем совпавших по ФИО (сохраняя ВСЕ ручные поля),
+    # добавляем новых, НЕ удаляем отсутствующих в файле (чтобы не терять данные).
     existing = await db.residents.find({}, {"_id": 0}).to_list(100000)
     prev = {}
     for e in existing:
         prev[ressvc.normalize_name(e.get("full_name", ""))] = e
-    docs = []
+    now = datetime.now(timezone.utc).isoformat()
+    updated = 0
+    created = 0
     for p in parsed:
-        old = prev.get(ressvc.normalize_name(p["full_name"]))
+        n = ressvc.normalize_name(p.get("full_name", ""))
+        old = prev.get(n)
         if old:
-            if not p.get("benefit"):
-                p["benefit"] = old.get("benefit", "")
-            if not p.get("study_group"):
-                p["study_group"] = old.get("study_group", "")
-        docs.append(Resident(**p).model_dump())
-    await db.residents.delete_many({})
-    if docs:
-        await db.residents.insert_many(docs)
-    return {"imported": len(docs)}
+            merged = dict(old)
+            for k, v in p.items():
+                if str(v).strip():
+                    merged[k] = v
+            merged["floor"] = ressvc._floor_of(merged.get("block", ""))
+            merged["updated_at"] = now
+            await db.residents.update_one({"id": old.get("id")}, {"$set": merged})
+            updated += 1
+        else:
+            r = Resident(**p)
+            r.floor = ressvc._floor_of(r.block)
+            await db.residents.insert_one(r.model_dump())
+            created += 1
+    return {"imported": updated + created, "updated": updated,
+            "created": created, "kept": max(0, len(existing) - updated)}
 
 
 @api_router.post("/residents/import-groups")
@@ -2728,9 +3178,12 @@ async def residents_floor(floor: int):
         capacity = ressvc.block_capacity(rooms)
         free = max(0, capacity - len(ppl))
         gender = ressvc.block_gender([p.get("full_name", "") for p in ppl])
+        latest = await _latest_inspection(block)
         blocks.append({"block": block, "index": i, "people": len(ppl),
                        "rooms": rooms, "capacity": capacity, "free": free,
-                       "gender": gender})
+                       "gender": gender, "latest": latest,
+                       "problem": _is_problem(latest),
+                       "elder": await _block_elder(block)})
     return {"floor": floor, "blocks": blocks, "total": len(docs)}
 
 
@@ -2860,6 +3313,7 @@ async def residents_get(res_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Жилец не найден")
     doc["checks"] = await _resident_checks(doc)
+    doc["kitchen_grades"] = await _resident_kitchen_grades(doc)
     return doc
 
 
@@ -2899,6 +3353,1025 @@ async def residents_delete(res_id: str):
     return {"deleted": True}
 
 
+# ===========================================================================
+# Модуль ОЦЕНОК за чистоту + учётки старост + Telegram Mini App
+# ===========================================================================
+JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-me")
+JWT_ALG = "HS256"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+SITE_GATE_USER = os.environ.get("SITE_GATE_USER", "")
+SITE_GATE_PASS = os.environ.get("SITE_GATE_PASS", "")
+
+
+class SiteGateRequest(BaseModel):
+    login: str = ""
+    password: str = ""
+
+
+GATE_COOKIE = "bnk_gate"
+GATE_TTL_HOURS = 12
+GATE_MAX_FAILS = 5
+GATE_LOCK_MIN = 15
+
+
+def _gate_enabled() -> bool:
+    return bool(SITE_GATE_USER or SITE_GATE_PASS)
+
+
+def _gate_token_ok(token: str) -> bool:
+    try:
+        return jwt.decode(token or "", JWT_SECRET, algorithms=[JWT_ALG]).get("type") == "gate"
+    except Exception:
+        return False
+
+
+def _client_ip(request: Request) -> str:
+    return (request.headers.get("x-real-ip") or (request.client.host if request.client else "") or "?").strip()
+
+
+@api_router.get("/site-gate/check")
+async def site_gate_check(request: Request):
+    if not _gate_enabled():
+        return {"ok": True, "enabled": False}
+    return {"ok": _gate_token_ok(request.cookies.get(GATE_COOKIE)), "enabled": True}
+
+
+@api_router.post("/site-gate")
+async def site_gate(req: SiteGateRequest, request: Request, response: Response):
+    """Вход в браузерную часть сайта: выдаёт сессионную cookie для доступа к /api."""
+    if not _gate_enabled():
+        return {"ok": True, "enabled": False}
+    login, pw = (req.login or "").strip(), (req.password or "")
+    if not login and not pw:
+        raise HTTPException(status_code=401, detail="Введите логин и пароль")
+    ident = f"gate:{_client_ip(request)}"
+    now = datetime.now(timezone.utc)
+    rec = await db.login_attempts.find_one({"identifier": ident}) or {}
+    locked = rec.get("locked_until")
+    if locked and datetime.fromisoformat(locked) > now:
+        raise HTTPException(status_code=429, detail=f"Слишком много попыток. Попробуйте через {GATE_LOCK_MIN} минут")
+    if not (login == SITE_GATE_USER and pw == SITE_GATE_PASS):
+        rec = await db.login_attempts.find_one_and_update(
+            {"identifier": ident}, {"$inc": {"fails": 1}}, upsert=True, return_document=True)
+        if int(rec.get("fails", 0)) >= GATE_MAX_FAILS:
+            await db.login_attempts.update_one({"identifier": ident}, {"$set": {
+                "fails": 0, "locked_until": (now + timedelta(minutes=GATE_LOCK_MIN)).isoformat()}})
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    await db.login_attempts.delete_one({"identifier": ident})
+    token = jwt.encode({"type": "gate", "exp": now + timedelta(hours=GATE_TTL_HOURS)}, JWT_SECRET, algorithm=JWT_ALG)
+    response.set_cookie(GATE_COOKIE, token, httponly=True, secure=True, samesite="lax", path="/")
+    return {"ok": True, "enabled": True}
+
+
+@api_router.post("/site-gate/logout")
+async def site_gate_logout(response: Response):
+    response.delete_cookie(GATE_COOKIE, path="/")
+    return {"ok": True}
+
+
+_GATE_OPEN = ("/api/site-gate/", "/api/auth/login", "/api/telegram/webhook", "/api/public/", "/api/_ping",
+              "/api/app-version")
+_GATE_STAROSTA = (("POST", "/api/inspections"), ("DELETE", "/api/inspections/starosta/"), ("GET", "/api/auth/me"),
+                  ("GET", "/api/cabinet/"), ("*", "/api/kitchens/"), ("POST", "/api/kitchen-inspections"),
+                  ("DELETE", "/api/kitchen-inspections/starosta/"))
+
+
+def _starosta_path(method: str, path: str) -> bool:
+    for m, p in _GATE_STAROSTA:
+        if m not in ("*", method):
+            continue
+        if path == p or (p.endswith("/") and path.startswith(p)):
+            return True
+    return False
+
+
+def _bearer_role(request: Request):
+    h = request.headers.get("authorization") or ""
+    if not h.lower().startswith("bearer "):
+        return None
+    try:
+        return jwt.decode(h.split(" ", 1)[1].strip(), JWT_SECRET, algorithms=[JWT_ALG]).get("role", "starosta")
+    except Exception:
+        return None
+
+
+@app.middleware("http")
+async def gate_guard(request: Request, call_next):
+    path = request.url.path
+    if (not path.startswith("/api/") or request.method == "OPTIONS" or not _gate_enabled()
+            or path.startswith(_GATE_OPEN) or path == "/api/site-gate"
+            or (path == "/api/app-config" and request.method == "GET")):
+        return await call_next(request)
+    if _gate_token_ok(request.cookies.get(GATE_COOKIE)):
+        return await call_next(request)
+    role = _bearer_role(request)
+    if role == "admin":
+        return await call_next(request)
+    if role and _starosta_path(request.method, path):
+        return await call_next(request)
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"detail": "Требуется вход на сайт", "code": "gate_required"}, status_code=401)
+
+
+def _hash_password(pw: str) -> str:
+    return bcrypt.hashpw((pw or "").encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw((pw or "").encode("utf-8"), (hashed or "").encode("utf-8"))
+    except Exception:
+        return False
+
+
+def _make_token(user: dict) -> str:
+    payload = {
+        "uid": user["id"],
+        "username": user.get("username", ""),
+        "role": user.get("role", "starosta"),
+        "exp": datetime.now(timezone.utc) + timedelta(days=60),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+
+async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Требуется вход")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        data = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Сессия истекла — войдите заново")
+    user = await db.users.find_one({"id": data.get("uid")}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Пользователь не найден")
+    return user
+
+
+def _public_user(u: dict) -> dict:
+    return {"id": u.get("id"), "username": u.get("username", ""),
+            "role": u.get("role", "starosta"), "floors": u.get("floors", []),
+            "full_name": u.get("full_name", "")}
+
+
+# ---------- Models ----------
+class Account(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    username: str
+    password_hash: str = ""
+    role: str = "starosta"          # "starosta" | "admin"
+    floors: List[int] = []
+    full_name: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class AccountCreateRequest(BaseModel):
+    username: str
+    password: str
+    full_name: Optional[str] = ""
+    floors: List[int] = []
+    role: Optional[str] = "starosta"
+
+
+class AccountUpdateRequest(BaseModel):
+    password: Optional[str] = None
+    full_name: Optional[str] = None
+    floors: Optional[List[int]] = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class Inspection(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    floor: int = 0
+    block: str = ""
+    date: str = ""                  # ДД.ММ.ГГГГ
+    small_room: int = 0             # 1..5, 0 = не оценено
+    big_room: int = 0
+    common: int = 0
+    note: str = ""
+    reasons: dict = Field(default_factory=dict)
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class InspectionRequest(BaseModel):
+    block: str
+    date: str
+    small_room: int = 0
+    big_room: int = 0
+    common: int = 0
+    note: Optional[str] = ""
+    reasons: Optional[dict] = None
+
+
+class ElderRequest(BaseModel):
+    full_name: str = ""
+
+
+class TelegramSetupRequest(BaseModel):
+    url: str
+
+
+def _grades_of(insp: Optional[dict]) -> list:
+    if not insp:
+        return []
+    return [insp.get("small_room", 0), insp.get("big_room", 0), insp.get("common", 0)]
+
+
+def _is_problem(insp: Optional[dict]) -> bool:
+    """Блок проблемный, если любая выставленная оценка < 3."""
+    return any(1 <= int(g) < 3 for g in _grades_of(insp))
+
+
+async def _latest_inspection(block: str) -> Optional[dict]:
+    docs = await db.inspections.find({"block": block}, {"_id": 0}).to_list(1000)
+    if not docs:
+        return None
+    docs.sort(key=lambda d: (_date_key(d.get("date", "")), d.get("created_at", "")),
+              reverse=True)
+    return docs[0]
+
+
+def _date_key(s: str):
+    """ДД.ММ.ГГГГ -> сортируемый ключ (ГГГГММДД)."""
+    m = re.match(r"^\s*(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})", s or "")
+    if m:
+        return f"{m.group(3)}{int(m.group(2)):02d}{int(m.group(1)):02d}"
+    return s or ""
+
+
+async def _block_elder(block: str) -> str:
+    doc = await db.block_meta.find_one({"block": block}, {"_id": 0})
+    return (doc or {}).get("elder", "")
+
+
+async def _block_rooms(block: str) -> list:
+    """Разбивка блока на малую комнату (/2), большую (/4) и общее пространство.
+    Жильцы берутся из базы проживающих (db.residents). Возвращаем ТОЛЬКО ФИО."""
+    docs = await db.residents.find(
+        {"block": block}, {"_id": 0, "full_name": 1, "room": 1}).to_list(1000)
+    by_room = {}
+    for d in docs:
+        by_room.setdefault(str(d.get("room", "") or ""), []).append(d.get("full_name", ""))
+    rooms_present = sorted([r for r in by_room.keys() if r])
+    layout = ressvc.block_layout(rooms_present)  # [(room, capacity)] — /2 малая, /4 большая
+    out = []
+    for idx, (room, cap) in enumerate(layout):
+        names = sorted([n for n in by_room.get(room, []) if n])
+        typ = "small" if idx == 0 else "big"
+        label = "Малая комната" if typ == "small" else "Большая комната"
+        out.append({"room": room, "type": typ, "grade_key": "small_room" if typ == "small" else "big_room",
+                    "label": label, "capacity": cap,
+                    "occupied": len(names),
+                    "people": [{"full_name": n} for n in names]})
+    # общее пространство — без жильцов
+    out.append({"room": "", "type": "common", "grade_key": "common",
+                "label": "Общее пространство", "capacity": 0, "occupied": 0, "people": []})
+    return out
+
+
+async def _floor_dates(floor: int) -> list:
+    docs = await db.inspections.find({"floor": floor}, {"_id": 0, "date": 1}).to_list(100000)
+    return sorted({d.get("date", "") for d in docs if d.get("date")},
+                  key=_date_key, reverse=True)
+
+
+async def _upsert_inspection(block: str, dt: str, small: int, big: int,
+                             common: int, note: str, by: str,
+                             reasons: dict = None) -> dict:
+    block = (block or "").strip()
+    dt = (dt or "").strip()
+    if not block or not dt:
+        raise HTTPException(status_code=400, detail="Нужны блок и дата проверки")
+
+    def _clamp(v):
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            return 0
+        return v if 0 <= v <= 5 else 0
+
+    now = datetime.now(timezone.utc).isoformat()
+    floor = ressvc._floor_of(block)
+    _grades = {"small_room": _clamp(small), "big_room": _clamp(big),
+               "common": _clamp(common)}
+    _reasons = {k: str((reasons or {}).get(k, "") or "").strip() for k in _grades}
+    _missing = [k for k, v in _grades.items() if 1 <= v <= 2 and not _reasons.get(k)]
+    if _missing:
+        raise HTTPException(status_code=400,
+                            detail="Для оценки 1–2 укажите причину (что и почему)")
+    _reasons = {k: v for k, v in _reasons.items() if v}
+    payload = {"small_room": _grades["small_room"], "big_room": _grades["big_room"],
+               "common": _grades["common"], "note": note or "", "reasons": _reasons,
+               "created_by": by, "updated_at": now, "floor": floor}
+    existing = await db.inspections.find_one({"block": block, "date": dt})
+    if existing:
+        await db.inspections.update_one({"id": existing["id"]}, {"$set": payload})
+        return await db.inspections.find_one({"id": existing["id"]}, {"_id": 0})
+    doc = Inspection(block=block, date=dt, floor=floor,
+                     small_room=payload["small_room"], big_room=payload["big_room"],
+                     common=payload["common"], note=payload["note"],
+                     reasons=payload["reasons"], created_by=by).model_dump()
+    await db.inspections.insert_one(doc)
+    return await db.inspections.find_one({"id": doc["id"]}, {"_id": 0})
+
+
+# ---------- Auth routes ----------
+@api_router.post("/auth/login")
+async def auth_login(req: LoginRequest):
+    uname = (req.username or "").strip().lower()
+    user = await db.users.find_one({"username": uname}, {"_id": 0})
+    if not user or not _verify_password(req.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    return {"token": _make_token(user), "user": _public_user(user)}
+
+
+@api_router.get("/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    return _public_user(user)
+
+
+# ---------- Accounts (кабинет заведующей — открыто) ----------
+@api_router.get("/accounts")
+async def accounts_list():
+    docs = await db.users.find({}, {"_id": 0}).to_list(1000)
+    docs.sort(key=lambda d: (d.get("role", ""), d.get("username", "")))
+    return {"accounts": [_public_user(d) for d in docs]}
+
+
+@api_router.post("/accounts")
+async def accounts_create(req: AccountCreateRequest):
+    uname = (req.username or "").strip().lower()
+    if not uname or not req.password:
+        raise HTTPException(status_code=400, detail="Укажите логин и пароль")
+    if await db.users.find_one({"username": uname}):
+        raise HTTPException(status_code=409, detail="Такой логин уже существует")
+    acc = Account(username=uname, password_hash=_hash_password(req.password),
+                  role=(req.role or "starosta"), floors=sorted(set(req.floors or [])),
+                  full_name=req.full_name or "")
+    await db.users.insert_one(acc.model_dump())
+    return _public_user(acc.model_dump())
+
+
+@api_router.put("/accounts/{acc_id}")
+async def accounts_update(acc_id: str, req: AccountUpdateRequest):
+    existing = await db.users.find_one({"id": acc_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Учётка не найдена")
+    upd = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if req.full_name is not None:
+        upd["full_name"] = req.full_name
+    if req.floors is not None:
+        upd["floors"] = sorted(set(req.floors))
+    if req.password:
+        upd["password_hash"] = _hash_password(req.password)
+    await db.users.update_one({"id": acc_id}, {"$set": upd})
+    doc = await db.users.find_one({"id": acc_id}, {"_id": 0})
+    return _public_user(doc)
+
+
+@api_router.delete("/accounts/{acc_id}")
+async def accounts_delete(acc_id: str):
+    res = await db.users.delete_one({"id": acc_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Учётка не найдена")
+    return {"deleted": True}
+
+
+# ---------- Inspections (оценки) ----------
+@api_router.get("/inspections")
+async def inspections_list(floor: Optional[int] = None, block: Optional[str] = None,
+                           date: Optional[str] = None):
+    query = {}
+    if floor is not None:
+        query["floor"] = floor
+    if block:
+        query["block"] = block
+    if date:
+        query["date"] = date
+    docs = await db.inspections.find(query, {"_id": 0}).to_list(10000)
+    docs.sort(key=lambda d: (_date_key(d.get("date", "")), d.get("block", "")),
+              reverse=True)
+    for d in docs:
+        d["problem"] = _is_problem(d)
+    return {"inspections": docs, "total": len(docs)}
+
+
+@api_router.get("/inspections/dates")
+async def inspections_dates(block: str):
+    docs = await db.inspections.find({"block": block}, {"_id": 0, "date": 1}).to_list(10000)
+    dates = sorted({d.get("date", "") for d in docs if d.get("date")},
+                   key=_date_key, reverse=True)
+    return {"dates": dates}
+
+
+@api_router.post("/inspections")
+async def inspections_create_starosta(req: InspectionRequest,
+                                      user: dict = Depends(get_current_user)):
+    """Староста выставляет оценки. Доступ только к своим этажам."""
+    floor = ressvc._floor_of(req.block)
+    if user.get("role") != "admin" and floor not in (user.get("floors") or []):
+        raise HTTPException(status_code=403,
+                            detail="Нет доступа к этому этажу")
+    by = user.get("full_name") or user.get("username") or "староста"
+    return await _upsert_inspection(req.block, req.date, req.small_room,
+                                    req.big_room, req.common, req.note or "", by,
+                                    req.reasons)
+
+
+@api_router.post("/inspections/save")
+async def inspections_save_admin(req: InspectionRequest):
+    """Заведующая создаёт/редактирует оценки любого блока (кабинет — открыто)."""
+    return await _upsert_inspection(req.block, req.date, req.small_room,
+                                    req.big_room, req.common, req.note or "",
+                                    "Заведующая", req.reasons)
+
+
+@api_router.put("/inspections/{insp_id}")
+async def inspections_update(insp_id: str, req: InspectionRequest):
+    existing = await db.inspections.find_one({"id": insp_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Проверка не найдена")
+    return await _upsert_inspection(req.block or existing["block"],
+                                    req.date or existing["date"],
+                                    req.small_room, req.big_room, req.common,
+                                    req.note or "", existing.get("created_by", "Заведующая"),
+                                    req.reasons)
+
+
+@api_router.delete("/inspections/{insp_id}")
+async def inspections_delete(insp_id: str):
+    res = await db.inspections.delete_one({"id": insp_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Проверка не найдена")
+    return {"deleted": True}
+
+
+@api_router.delete("/inspections/starosta/{insp_id}")
+async def inspections_delete_starosta(insp_id: str, user: dict = Depends(get_current_user)):
+    """Староста удаляет проверку. Доступ только к своим этажам."""
+    doc = await db.inspections.find_one({"id": insp_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Проверка не найдена")
+    floor = doc.get("floor") or ressvc._floor_of(doc.get("block", ""))
+    if user.get("role") != "admin" and floor not in (user.get("floors") or []):
+        raise HTTPException(status_code=403, detail="Нет доступа к этому этажу")
+    await db.inspections.delete_one({"id": insp_id})
+    return {"deleted": True}
+
+
+@api_router.get("/cabinet/low-grades")
+async def cabinet_low_grades(user: dict = Depends(get_current_user)):
+    """Личный кабинет: блоки с низкими оценками (1–2)."""
+    labels = {"small_room": "Малая комната",
+              "big_room": "Большая комната",
+              "common": "Общее пространство"}
+    query = {}
+    if user.get("role") != "admin":
+        query["floor"] = {"$in": user.get("floors") or []}
+    docs = await db.inspections.find(query, {"_id": 0}).to_list(100000)
+    by_block = {}
+    for i in docs:
+        low = []
+        for k, lab in labels.items():
+            g = int(i.get(k, 0) or 0)
+            if 1 <= g <= 2:
+                low.append({"key": k, "label": lab, "grade": g,
+                            "reason": (i.get("reasons") or {}).get(k, "")})
+        if not low:
+            continue
+        b = i.get("block", "")
+        e = by_block.setdefault(b, {"block": b, "floor": i.get("floor", 0),
+                                    "count": 0, "dates": 0, "items": []})
+        e["count"] += len(low)
+        e["dates"] += 1
+        e["items"].append({"date": i.get("date", ""), "areas": low,
+                           "note": i.get("note", "")})
+    blocks = list(by_block.values())
+    for e in blocks:
+        e["warning"] = e["count"] >= 3
+        e["items"].sort(key=lambda x: _date_key(x["date"]), reverse=True)
+    blocks.sort(key=lambda e: (not e["warning"], -e["count"], e["block"]))
+    return {"blocks": blocks, "threshold": 3,
+            "total_warnings": sum(1 for e in blocks if e["warning"])}
+
+
+# ---------- Блок: староста блока ----------
+@api_router.post("/blocks/{block}/elder")
+async def block_set_elder(block: str, req: ElderRequest):
+    now = datetime.now(timezone.utc).isoformat()
+    await db.block_meta.update_one(
+        {"block": block},
+        {"$set": {"block": block, "elder": req.full_name or "", "updated_at": now}},
+        upsert=True)
+    return {"block": block, "elder": req.full_name or ""}
+
+
+@api_router.get("/blocks/{block}/elder")
+async def block_get_elder(block: str):
+    return {"block": block, "elder": await _block_elder(block)}
+
+
+# ---------- Публичный просмотр (Mini App / учащийся) ----------
+# ---------- Лёгкий TTL-кэш для публичных экранов (нагрузка) ----------
+import time as _time
+_PUBLIC_CACHE = {}
+_PUBLIC_CACHE_TTL = float(os.environ.get("PUBLIC_CACHE_TTL", "20"))
+
+def _pub_cache_get(key):
+    v = _PUBLIC_CACHE.get(key)
+    if v and (_time.time() - v[0]) < _PUBLIC_CACHE_TTL:
+        return v[1]
+    return None
+
+def _pub_cache_set(key, val):
+    _PUBLIC_CACHE[key] = (_time.time(), val)
+    return val
+
+
+@api_router.get("/public/floors")
+async def public_floors():
+    """Этажи с числом блоков и проблемных блоков (по последней проверке)."""
+    _c = _pub_cache_get("floors")
+    if _c is not None:
+        return _c
+    docs = await db.residents.find({}, {"_id": 0, "floor": 1, "block": 1}).to_list(100000)
+    floors = {}
+    for d in docs:
+        f = d.get("floor", 0)
+        floors.setdefault(f, set())
+        if d.get("block"):
+            floors[f].add(d["block"])
+    insp = await db.inspections.find({}, {"_id": 0}).to_list(100000)
+    latest = {}
+    for i in insp:
+        b = i.get("block", "")
+        cur = latest.get(b)
+        if cur is None or _date_key(i.get("date", "")) > _date_key(cur.get("date", "")):
+            latest[b] = i
+    out = []
+    for f, blocks in sorted(floors.items()):
+        problems = sum(1 for b in blocks if _is_problem(latest.get(b)))
+        out.append({"floor": f, "blocks": len(blocks), "problems": problems})
+    return _pub_cache_set("floors", {"floors": out})
+
+
+@api_router.get("/public/floor/{floor}")
+async def public_floor(floor: int):
+    """Блоки этажа: жильцы, все проверки и общий список дат этажа (для фильтра)."""
+    docs = await db.residents.find({"floor": floor}, {"_id": 0, "block": 1}).to_list(100000)
+    present = sorted({d.get("block", "") for d in docs if d.get("block")})
+    all_insp = await db.inspections.find({"floor": floor}, {"_id": 0}).to_list(100000)
+    by_block = {}
+    for i in all_insp:
+        i["problem"] = _is_problem(i)
+        by_block.setdefault(i.get("block", ""), []).append(i)
+    out = []
+    for block in present:
+        insp = sorted(by_block.get(block, []),
+                      key=lambda d: _date_key(d.get("date", "")), reverse=True)
+        people = sum(len(r["people"]) for r in await _block_rooms(block) if r["type"] != "common")
+        out.append({"block": block, "floor": floor,
+                    "elder": await _block_elder(block),
+                    "people": people, "inspections": insp,
+                    "latest": insp[0] if insp else None})
+    return {"floor": floor, "dates": await _floor_dates(floor), "blocks": out}
+
+
+@api_router.get("/public/block/{block}")
+async def public_block(block: str):
+    """Блок для учащегося: комнаты с жильцами (только ФИО) + история проверок + староста."""
+    floor = ressvc._floor_of(block)
+    docs = await db.inspections.find({"block": block}, {"_id": 0}).to_list(10000)
+    docs.sort(key=lambda d: _date_key(d.get("date", "")), reverse=True)
+    for d in docs:
+        d["problem"] = _is_problem(d)
+    return {"block": block, "floor": floor, "elder": await _block_elder(block),
+            "rooms": await _block_rooms(block), "inspections": docs}
+
+
+@api_router.get("/public/search")
+async def public_search(q: str = ""):
+    """Поиск учащегося по ФИО или блоку. В ответе ТОЛЬКО ФИО (+ адрес блока)."""
+    q = (q or "").strip()
+    if not q:
+        return {"results": []}
+    query = {"$or": [
+        {"full_name": {"$regex": re.escape(q), "$options": "i"}},
+        {"block": {"$regex": re.escape(q), "$options": "i"}},
+    ]}
+    docs = await db.residents.find(
+        query, {"_id": 0, "full_name": 1, "floor": 1, "block": 1, "room": 1}
+    ).to_list(200)
+    docs.sort(key=lambda d: (d.get("floor", 0), d.get("block", ""),
+                             d.get("full_name", "")))
+    results = [{"full_name": d.get("full_name", ""), "floor": d.get("floor", 0),
+                "block": d.get("block", ""), "room": d.get("room", "")} for d in docs]
+    return {"results": results}
+
+
+# ==================== КУХНИ (дежурства + оценки) ====================
+KITCHEN_POS = {1: "боковая", 3: "центральная", 4: "центральная"}
+KITCHEN_POS[4] = "боковая"
+
+
+def _kitchen_of(block: str):
+    """'901' -> (floor=9, kitchen=91, pos). 01-05->k1, 06-10->k3, 11-15->k4."""
+    try:
+        b = int(re.sub(r"\D", "", str(block)))
+    except Exception:
+        return 0, 0, ""
+    floor, d = b // 100, b % 100
+    if 1 <= d <= 5:
+        k = 1
+    elif 6 <= d <= 10:
+        k = 3
+    elif 11 <= d <= 15:
+        k = 4
+    else:
+        return floor, 0, ""
+    return floor, floor * 10 + k, KITCHEN_POS[k]
+
+
+def _kitchen_cell(c):
+    if c is None:
+        return ""
+    if isinstance(c, (datetime, date)):
+        return c.strftime("%d.%m")
+    return str(c).strip()
+
+
+def _parse_kitchen_xlsx(content: bytes):
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    rows, title = [], ""
+    for r in ws.iter_rows(values_only=True):
+        cells = [_kitchen_cell(c) for c in r]
+        if not any(cells):
+            continue
+        first = (cells[0] or "").strip()
+        if not title and "график" in first.lower():
+            title = first
+            continue
+        if first in ("№ блока", "No блока", "№блока") or (len(cells) > 1 and (cells[1] or "").strip() == "Ф.И."):
+            continue
+        unit = (cells[0] or "").strip()
+        name = (cells[1] or "").strip() if len(cells) > 1 else ""
+        dates = [c.strip() for c in cells[2:] if c and c.strip()]
+        if not unit and not name:
+            continue
+        rows.append({"unit": unit, "name": name, "dates": dates})
+    return title, rows
+
+
+def _kitchen_guard(user, kitchen):
+    fl = int(kitchen) // 10
+    if user.get("role") != "admin" and fl not in (user.get("floors") or []):
+        raise HTTPException(status_code=403, detail="Нет доступа к этому этажу")
+
+
+class KitchenScheduleRequest(BaseModel):
+    rows: List[dict] = []
+    title: Optional[str] = ""
+
+
+class KitchenInspectionRequest(BaseModel):
+    kitchen: int
+    date: str
+    grade: int = 0
+    reason: Optional[str] = ""
+    note: Optional[str] = ""
+    # Оценка ставится конкретному дежурному учащемуся за его день уборки.
+    student_name: Optional[str] = ""
+    student_unit: Optional[str] = ""
+
+
+async def _kitchen_upsert_schedule(kitchen, title, rows, user):
+    now = datetime.now(timezone.utc).isoformat()
+    clean = []
+    for r in (rows or []):
+        clean.append({"unit": str(r.get("unit", "")).strip(),
+                      "name": str(r.get("name", "")).strip(),
+                      "dates": [str(x).strip() for x in (r.get("dates") or []) if str(x).strip()]})
+    await db.kitchens.update_one(
+        {"kitchen": kitchen},
+        {"$set": {"kitchen": kitchen, "floor": kitchen // 10,
+                  "pos": KITCHEN_POS.get(kitchen % 10, ""),
+                  "title": title or "График дежурства по кухне", "rows": clean,
+                  "updated_at": now, "updated_by": user.get("username", "")},
+         "$setOnInsert": {"id": str(uuid.uuid4())}}, upsert=True)
+    return clean
+
+
+def _dm(date_str: str) -> str:
+    """'15.09.2026' -> '15.09' — в графике дежурств день записан без года."""
+    m = re.match(r"^(\d{1,2})\.(\d{1,2})", (date_str or "").strip())
+    return f"{int(m.group(1)):02d}.{int(m.group(2)):02d}" if m else ""
+
+
+async def _duty_students(kitchen: int, date_str: str):
+    """Кто дежурит на кухне в конкретный день — из загруженного графика."""
+    dm = _dm(date_str)
+    if not dm:
+        return []
+    sched = await db.kitchens.find_one({"kitchen": kitchen}, {"_id": 0}) or {}
+    out = []
+    for r in (sched.get("rows") or []):
+        if dm in {_dm(x) for x in (r.get("dates") or [])}:
+            out.append({"unit": str(r.get("unit", "")).strip(),
+                        "name": str(r.get("name", "")).strip()})
+    return out
+
+
+async def _match_resident(name: str, unit: str):
+    """Сопоставить учащегося из графика с записью в базе проживающих.
+    В графике ФИО часто без отчества («Кислякова Доминика»), а в базе — полное
+    («Кислякова Доминика Дмитриевна»), поэтому имя из графика ищем как префикс.
+    unit вида «901/2» → блок «901»."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    try:
+        norm = ressvc.normalize_name(name)
+    except Exception:
+        norm = " ".join(name.lower().replace("ё", "е").split())
+    unit_block = re.sub(r"\D", "", str(unit or "").split("/")[0])
+    cands = await db.residents.find(
+        {}, {"_id": 0, "id": 1, "full_name": 1, "block": 1}).to_list(20000)
+
+    def _blk(d):
+        return re.sub(r"\D", "", str(d.get("block", "")))
+
+    def _n(d):
+        try:
+            return ressvc.normalize_name(d.get("full_name", ""))
+        except Exception:
+            return " ".join((d.get("full_name", "") or "").lower().replace("ё", "е").split())
+
+    # точное совпадение или имя из графика — префикс полного ФИО
+    named = [d for d in cands
+             if _n(d) == norm or (norm and _n(d).startswith(norm + " "))]
+    if unit_block:
+        for d in named:
+            if _blk(d) == unit_block:
+                return d
+    if named:
+        return named[0]
+    # запасной: фамилия + блок
+    surname = norm.split()[0] if norm.split() else norm
+    for d in cands:
+        if surname and _n(d).startswith(surname) and (not unit_block or _blk(d) == unit_block):
+            return d
+    return None
+
+
+@api_router.get("/kitchens/{kitchen}/duty")
+async def kitchen_duty(kitchen: int, date: str, user: dict = Depends(get_current_user)):
+    """Список дежурных учащихся на кухне за дату + уже выставленные им оценки."""
+    _kitchen_guard(user, kitchen)
+    students = await _duty_students(kitchen, date)
+    ins = await db.kitchen_inspections.find(
+        {"kitchen": kitchen, "date": date}, {"_id": 0}).to_list(1000)
+    by_name = {(i.get("student_name") or "").strip().lower(): i for i in ins}
+    out = []
+    for s in students:
+        ex = by_name.get((s["name"] or "").strip().lower())
+        out.append({"unit": s["unit"], "name": s["name"],
+                    "existing": ex or None})
+    return {"kitchen": kitchen, "date": date, "students": out,
+            "has_schedule": bool(students)}
+
+
+@api_router.get("/public/kitchens")
+async def public_kitchens():
+    docs = await db.residents.find({}, {"_id": 0, "floor": 1}).to_list(100000)
+    floors = sorted({d.get("floor", 0) for d in docs if d.get("floor")})
+    scheds = {s["kitchen"]: s for s in await db.kitchens.find({}, {"_id": 0}).to_list(1000)}
+    kins = await db.kitchen_inspections.find({}, {"_id": 0}).to_list(100000)
+    latest = {}
+    for i in kins:
+        k = i.get("kitchen")
+        cur = latest.get(k)
+        if cur is None or _date_key(i.get("date", "")) > _date_key(cur.get("date", "")):
+            latest[k] = i
+    out = []
+    for f in floors:
+        ks = []
+        for add in (1, 3, 4):
+            kc = f * 10 + add
+            lg = latest.get(kc) or {}
+            g = int(lg.get("grade", 0) or 0)
+            ks.append({"kitchen": kc, "pos": KITCHEN_POS[add],
+                       "has_schedule": kc in scheds and len(scheds[kc].get("rows", [])) > 0,
+                       "latest_grade": g, "problem": 1 <= g <= 2, "date": lg.get("date", "")})
+        out.append({"floor": f, "kitchens": ks})
+    return {"floors": out}
+
+
+@api_router.get("/public/kitchen/{kitchen}")
+async def public_kitchen(kitchen: int):
+    sched = await db.kitchens.find_one({"kitchen": kitchen}, {"_id": 0}) or {}
+    ins = await db.kitchen_inspections.find({"kitchen": kitchen}, {"_id": 0}).to_list(10000)
+    ins.sort(key=lambda d: _date_key(d.get("date", "")), reverse=True)
+    return {"kitchen": kitchen, "floor": kitchen // 10,
+            "pos": KITCHEN_POS.get(kitchen % 10, ""),
+            "title": sched.get("title", ""), "rows": sched.get("rows", []),
+            "inspections": ins}
+
+
+@api_router.post("/kitchens/{kitchen}/schedule")
+async def kitchen_schedule_save(kitchen: int, req: KitchenScheduleRequest,
+                                user: dict = Depends(get_current_user)):
+    _kitchen_guard(user, kitchen)
+    rows = await _kitchen_upsert_schedule(kitchen, req.title, req.rows, user)
+    return {"ok": True, "count": len(rows), "rows": rows}
+
+
+@api_router.post("/kitchens/{kitchen}/upload")
+async def kitchen_upload(kitchen: int, file: UploadFile = File(...),
+                         user: dict = Depends(get_current_user)):
+    _kitchen_guard(user, kitchen)
+    content = await file.read()
+    try:
+        title, rows = _parse_kitchen_xlsx(content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Не удалось разобрать файл: {e}")
+    if not rows:
+        raise HTTPException(status_code=400, detail="В файле не найдено строк графика")
+    rows = await _kitchen_upsert_schedule(kitchen, title, rows, user)
+    return {"ok": True, "count": len(rows), "title": title, "rows": rows}
+
+
+@api_router.post("/kitchen-inspections")
+async def kitchen_insp_save(req: KitchenInspectionRequest,
+                            user: dict = Depends(get_current_user)):
+    _kitchen_guard(user, req.kitchen)
+    student_name = (req.student_name or "").strip()
+    if not student_name:
+        raise HTTPException(status_code=400,
+                            detail="Укажите учащегося (дежурного), которому ставится оценка")
+    g = max(0, min(5, int(req.grade or 0)))
+    reason = (req.reason or "").strip()
+    if 1 <= g <= 2 and not reason:
+        raise HTTPException(status_code=400, detail="Для оценки 1–2 укажите причину (что и почему)")
+    student_unit = (req.student_unit or "").strip()
+    matched = await _match_resident(student_name, student_unit)
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {"kitchen": req.kitchen, "floor": req.kitchen // 10,
+           "pos": KITCHEN_POS.get(req.kitchen % 10, ""), "date": req.date, "grade": g,
+           "reason": reason if 1 <= g <= 2 else "", "note": req.note or "",
+           "student_name": student_name, "student_unit": student_unit,
+           "resident_id": (matched or {}).get("id", ""),
+           "resident_full_name": (matched or {}).get("full_name", ""),
+           "created_by": user.get("username", ""), "updated_at": now}
+    existing = await db.kitchen_inspections.find_one(
+        {"kitchen": req.kitchen, "date": req.date, "student_name": student_name})
+    if existing:
+        await db.kitchen_inspections.update_one({"id": existing["id"]}, {"$set": doc})
+        doc["id"] = existing["id"]
+    else:
+        doc["id"] = str(uuid.uuid4())
+        doc["created_at"] = now
+        await db.kitchen_inspections.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/kitchen-inspections/starosta/{insp_id}")
+async def kitchen_insp_delete(insp_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.kitchen_inspections.find_one({"id": insp_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Проверка не найдена")
+    _kitchen_guard(user, doc.get("kitchen", 0))
+    await db.kitchen_inspections.delete_one({"id": insp_id})
+    return {"deleted": True}
+
+
+@api_router.get("/cabinet/kitchen-low-grades")
+async def cabinet_kitchen_low(user: dict = Depends(get_current_user)):
+    q = {}
+    if user.get("role") != "admin":
+        q["floor"] = {"$in": user.get("floors") or []}
+    docs = await db.kitchen_inspections.find(q, {"_id": 0}).to_list(100000)
+    by = {}
+    for i in docs:
+        g = int(i.get("grade", 0) or 0)
+        if not (1 <= g <= 2):
+            continue
+        name = (i.get("student_name") or "").strip()
+        unit = (i.get("student_unit") or "").strip()
+        if name:
+            key = f"{name.lower()}|{unit.lower()}"
+            label = name
+        else:
+            # исторические оценки «за день» без дежурного — по кухне
+            key = f"kitchen:{i.get('kitchen')}"
+            label = f"Кухня {i.get('kitchen')}"
+        e = by.setdefault(key, {"name": label, "unit": unit,
+                                "resident_id": i.get("resident_id", ""),
+                                "kitchen": i.get("kitchen"), "floor": i.get("floor", 0),
+                                "pos": i.get("pos", ""), "count": 0, "items": []})
+        e["count"] += 1
+        e["items"].append({"date": i.get("date", ""), "grade": g,
+                           "kitchen": i.get("kitchen"), "pos": i.get("pos", ""),
+                           "reason": i.get("reason", ""), "note": i.get("note", "")})
+    students = list(by.values())
+    for e in students:
+        e["warning"] = e["count"] >= 3
+        e["items"].sort(key=lambda x: _date_key(x["date"]), reverse=True)
+    students.sort(key=lambda e: (not e["warning"], -e["count"], e["name"]))
+    return {"students": students, "kitchens": students, "threshold": 3,
+            "total_warnings": sum(1 for e in students if e["warning"])}
+
+
+# ---------- Telegram Mini App ----------
+@api_router.get("/telegram/info")
+async def telegram_info():
+    if not TELEGRAM_BOT_TOKEN:
+        raise HTTPException(status_code=400, detail="Токен бота не задан")
+    async with httpx.AsyncClient(timeout=15) as cli:
+        r = await cli.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe")
+    return r.json()
+
+
+@api_router.post("/telegram/setup-menu")
+async def telegram_setup_menu(req: TelegramSetupRequest):
+    """Ставит кнопку-меню бота, открывающую Mini App по указанному URL."""
+    if not TELEGRAM_BOT_TOKEN:
+        raise HTTPException(status_code=400, detail="Токен бота не задан")
+    url = (req.url or "").strip()
+    if not url.startswith("https://"):
+        raise HTTPException(status_code=400,
+                            detail="URL Mini App должен начинаться с https://")
+    payload = {"menu_button": {"type": "web_app", "text": "Оценки",
+                               "web_app": {"url": url}}}
+    async with httpx.AsyncClient(timeout=15) as cli:
+        r = await cli.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setChatMenuButton",
+            json=payload)
+    data = r.json()
+    if not data.get("ok"):
+        raise HTTPException(status_code=400,
+                            detail=f"Telegram: {data.get('description', 'ошибка')}")
+    return {"ok": True, "url": url}
+
+
+
+# ---------- Telegram bot: приветствие через вебхук ----------
+TG_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+TG_MINIAPP_URL = os.environ.get("TG_MINIAPP_URL", "https://banetskaya.duckdns.org/tg")
+
+WELCOME_TEXT = (
+    "👋 Здравствуйте! Это бот «Общежитие сан.контроль».\n"
+    "Нажмите кнопку ниже, чтобы открыть приложение с оценками за чистоту.\n\n"
+    "⚠️ При возникновении ошибок пишите @fighull"
+)
+
+
+async def _tg_send_welcome(chat_id):
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    payload = {
+        "chat_id": chat_id,
+        "text": WELCOME_TEXT,
+        "reply_markup": {
+            "inline_keyboard": [[
+                {"text": "🧾 Открыть приложение",
+                 "web_app": {"url": TG_MINIAPP_URL}}
+            ]]
+        },
+    }
+    async with httpx.AsyncClient(timeout=15) as cli:
+        await cli.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json=payload)
+
+
+@api_router.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    if TG_WEBHOOK_SECRET:
+        hdr = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if hdr != TG_WEBHOOK_SECRET:
+            raise HTTPException(status_code=403, detail="forbidden")
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": True}
+    msg = update.get("message") or update.get("edited_message") or {}
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
+    if chat_id and (chat.get("type") == "private"):
+        import asyncio
+        asyncio.create_task(_tg_send_welcome(chat_id))
+    return {"ok": True}
 
 
 app.include_router(api_router)
@@ -2952,6 +4425,19 @@ if (FRONTEND_BUILD / "index.html").exists():
         ):
             return FileResponse(str(candidate))
         return _index_html()
+
+
+@app.on_event("startup")
+async def _ensure_indexes():
+    try:
+        await db.residents.create_index("floor")
+        await db.residents.create_index("block")
+        await db.inspections.create_index("block")
+        await db.inspections.create_index("floor")
+        await db.inspections.create_index("date")
+        logger.info("indexes ensured")
+    except Exception:
+        logger.exception("index creation failed")
 
 
 @app.on_event("shutdown")

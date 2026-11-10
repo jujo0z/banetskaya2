@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import DuplexOffset from "@/components/DuplexOffset";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -230,6 +231,8 @@ export default function Package() {
               </button>
             </div>
           </div>
+
+          <DuplexOffset testidPrefix="package" />
 
           {/* Step 3 — actions */}
           <div className="glass rounded-2xl border border-[#EC4899]/30 p-6 space-y-3">

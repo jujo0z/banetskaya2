@@ -48,12 +48,9 @@ export function zayavOverlayText(rec) {
     occupancy_count: g("occupancy_count"),
     minors_count: g("minors_count"),
   };
-  // свои столбцы (cc_*) — прокидываем как есть
-  Object.keys(rec).forEach((k) => {
-    if (k.indexOf("cc_") === 0 && rec[k] != null && String(rec[k]).trim() !== "") {
-      out[k] = String(rec[k]);
-    }
-  });
+  for (const k of Object.keys(rec)) {
+    if (k.indexOf("col:") === 0) out[k] = rec[k] == null ? "" : String(rec[k]);
+  }
   return out;
 }
 

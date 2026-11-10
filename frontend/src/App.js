@@ -10,13 +10,18 @@ import DataGrid from "@/pages/DataGrid";
 import Settings from "@/pages/Settings";
 import BlankOverlay from "@/pages/BlankOverlay";
 import FullPrint from "@/pages/FullPrint";
+import SoobshenieEditor from "@/pages/SoobshenieEditor";
 import Diagnostics from "@/pages/Diagnostics";
 import Forma19 from "@/pages/Forma19";
 import Forma24 from "@/pages/Forma24";
 import Zayavlenie from "@/pages/Zayavlenie";
 import Package from "@/pages/Package";
 import Residents from "@/pages/Residents";
+import Grades from "@/pages/Grades";
+import Accounts from "@/pages/Accounts";
+import TelegramApp from "@/pages/TelegramApp";
 import Landing from "@/pages/Landing";
+import SiteGate from "@/components/SiteGate";
 import { IS_WEB, IS_DESKTOP } from "@/lib/env";
 
 // Desktop build only: ping the local backend so it stays alive while the app
@@ -62,19 +67,23 @@ function App() {
     <BrowserRouter>
       <EntryGate />
       <Routes>
-        <Route path="/welcome" element={<Landing />} />
-        <Route path="/" element={<Layout />}>
+        <Route path="/welcome" element={<SiteGate><Landing /></SiteGate>} />
+        <Route path="/tg" element={<TelegramApp />} />
+        <Route path="/" element={<SiteGate><Layout /></SiteGate>}>
           <Route index element={<Dashboard />} />
           <Route path="generate" element={<Generate />} />
           <Route path="history" element={<History />} />
           <Route path="data" element={<DataGrid />} />
           <Route path="blank" element={<BlankOverlay />} />
           <Route path="full-print" element={<FullPrint />} />
+          <Route path="soobshenie-editor" element={<SoobshenieEditor />} />
           <Route path="forma19" element={<Forma19 />} />
           <Route path="forma24" element={<Forma24 />} />
           <Route path="zayavlenie" element={<Zayavlenie />} />
           <Route path="package" element={<Package />} />
           <Route path="residents" element={<Residents />} />
+          <Route path="grades" element={<Grades />} />
+          <Route path="accounts" element={<Accounts />} />
           <Route path="diagnostics" element={<Diagnostics />} />
           <Route path="settings" element={<Settings />} />
         </Route>

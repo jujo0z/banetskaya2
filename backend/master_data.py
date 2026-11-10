@@ -79,7 +79,7 @@ MASTER_COLUMNS = [
     {"key": "reg_from_date", "header": "Зарегистрирован с", "sample": "01.09.2024", "section": "Регистрация / Сообщение", "width": 17},
     {"key": "reg_to_date", "header": "Зарегистрирован по", "sample": "30.06.2028", "section": "Регистрация / Сообщение", "width": 17},
     # --- Формы 19 / 24 — дополнительно ---
-    {"key": "purpose", "header": "Цель приезда (текст, Ф.19)", "sample": "на обучение", "section": "Формы 19 / 24 — дополнительно", "width": 20},
+    {"key": "purpose", "header": "Цель приезда (текст, Ф.19)", "sample": "на учёбу", "section": "Формы 19 / 24 — дополнительно", "width": 20},
     {"key": "purpose_choice", "header": "Цель приезда Ф.24 (1-работа, 2-обучение)", "sample": "2", "section": "Формы 19 / 24 — дополнительно", "width": 22, "dropdown": ["1", "2"]},
     {"key": "purpose_term", "header": "Срок пребывания (по...)", "sample": "30.06.2028", "section": "Формы 19 / 24 — дополнительно", "width": 18},
     {"key": "prev_work", "header": "Где и кем работал (прежнее место)", "sample": "учащийся", "section": "Формы 19 / 24 — дополнительно", "width": 24},
@@ -110,15 +110,6 @@ def _apply_deps(doc_name: str, rec: dict, m: dict) -> dict:
         val = (m or {}).get(source, "")
         if str(val).strip():
             rec[target] = str(val)
-    return rec
-
-
-def _merge_custom(rec: dict, m: dict) -> dict:
-    """Прокинуть значения своих столбцов (ключи cc_*) в запись документа,
-    чтобы поставленное в редакторе поле-столбец печаталось по координатам."""
-    for k, v in (m or {}).items():
-        if isinstance(k, str) and k.startswith("cc_") and str(v).strip():
-            rec[k] = str(v)
     return rec
 
 
@@ -215,8 +206,9 @@ def master_to_forma24(m: dict) -> dict:
         "marital": m.get("marital", ""),
         "spouse_together": m.get("spouse_together", ""),
         "children_count": m.get("children_count", ""),
+        "passport_issue_date": m.get("passport_issue_date", ""),
     }
-    return _merge_custom(_apply_deps("forma24", {k: v for k, v in rec.items() if str(v).strip()}, m), m)
+    return _apply_deps("forma24", {k: v for k, v in rec.items() if str(v).strip()}, m)
 
 
 def master_to_forma19(m: dict) -> dict:
@@ -247,8 +239,9 @@ def master_to_forma19(m: dict) -> dict:
         "employment": m.get("prev_work", ""),
         "passport_series": ser, "passport_number": num,
         "passport_issued": m.get("passport_issued_by", ""),
+        "passport_issue_date": m.get("passport_issue_date", ""),
     }
-    return _merge_custom(_apply_deps("forma19", {k: v for k, v in rec.items() if str(v).strip()}, m), m)
+    return _apply_deps("forma19", {k: v for k, v in rec.items() if str(v).strip()}, m)
 
 
 def master_to_soobshenie(m: dict) -> dict:
@@ -278,7 +271,7 @@ def master_to_soobshenie(m: dict) -> dict:
         "to_day": td, "to_month": tm, "to_year": ty[-2:] if ty else "",
         "chief": m.get("reg_chief", ""),
     }
-    return _merge_custom(_apply_deps("soobshenie", {k: v for k, v in rec.items() if str(v).strip()}, m), m)
+    return _apply_deps("soobshenie", {k: v for k, v in rec.items() if str(v).strip()}, m)
 
 
 # Общая площадь жилого помещения (общежития) — константа для всех (стр. 2).
@@ -327,12 +320,11 @@ def master_to_zayavlenie(m: dict) -> dict:
         "sign_date": m.get("sign_date", ""),
         "area": ZAYAV_AREA_DEFAULT,
     }
-    # Накопительные счётчики (Заявление, стр.2) — если посчитаны и переданы в master
     for _ck in ("occupancy_count", "minors_count", "adults_count", "free_count"):
         _cv = m.get(_ck)
         if _cv not in (None, ""):
             rec[_ck] = str(_cv)
-    return _merge_custom(_apply_deps("zayavlenie", rec, m), m)
+    return _apply_deps("zayavlenie", rec, m)
 
 
 def derive_all(m: dict) -> dict:

@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp, FileText, Activity, ClipboardList, Printer, Building2, Sheet } from "lucide-react";
+import { FileSignature, LayoutDashboard, FilePlus2, History, Settings, Stamp, FileText, Activity, ClipboardList, Printer, Building2, PenSquare, ClipboardCheck, KeyRound, Sheet } from "lucide-react";
 
 const NAV_GROUPS = [
   {
@@ -11,18 +11,26 @@ const NAV_GROUPS = [
     ],
   },
   {
+    title: "Чистота и оценки",
+    items: [
+      { to: "/grades", label: "Оценки за чистоту", icon: ClipboardCheck, testid: "nav-grades" },
+      { to: "/accounts", label: "Доступы старост", icon: KeyRound, testid: "nav-accounts" },
+    ],
+  },
+  {
     title: "Договоры найма",
     items: [
       { to: "/generate", label: "Генерация из Excel", icon: FilePlus2, testid: "nav-generate" },
-      { to: "/history", label: "История договоров", icon: History, testid: "nav-history" },
+      { to: "/history", label: "База проживающих", icon: History, testid: "nav-history" },
       { to: "/data", label: "Таблица данных", icon: Sheet, testid: "nav-data" },
     ],
   },
   {
     title: "Бланк «СООБЩЕНИЕ»",
     items: [
-      { to: "/blank", label: "Печать на бланке", icon: Stamp, testid: "nav-blank" },
+      { to: "/blank", label: "Сообщение", icon: Stamp, testid: "nav-blank" },
       { to: "/full-print", label: "Полная печать", icon: FileText, testid: "nav-full-print" },
+      { to: "/soobshenie-editor", label: "Редактор сообщения", icon: PenSquare, testid: "nav-soobshenie-editor" },
     ],
   },
   {

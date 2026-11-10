@@ -7,15 +7,19 @@ import { Label } from "@/components/ui/label";
 import {
   FileSignature, Printer, Download, Upload, Plus, Copy, Trash2, Eraser, Save,
   Wand2, ChevronDown, PenSquare, Type, Minus, Bold, Italic, Underline,
-  AlignLeft, AlignCenter, AlignRight, RotateCcw, CheckSquare, Square, Database, Columns2,
+  AlignLeft, AlignCenter, AlignRight, RotateCcw, CheckSquare, Square, Database, Columns2, Users,
 } from "lucide-react";
 import {
   zayavlenieFields, getZayavlenieDefaults, saveZayavlenieDefaults, zayavleniePrefill,
-  openZayavleniePdf, downloadZayavleniePdf, masterUpload, downloadMasterTemplate,
+  openZayavleniePdf, downloadZayavleniePdf,
   getZayavlenieTemplate, saveZayavlenieTemplate, resetZayavlenieTemplate,
-  getZayavlenieRecords, saveZayavlenieRecords, getCustomColumns,
+  getZayavlenieRecords, saveZayavlenieRecords,
+  listContracts, patchContractMaster,
+  getZayavBackOffset, saveZayavBackOffset, openZayavCalibration,
 } from "@/lib/apiClient";
+import DuplexOffset from "@/components/DuplexOffset";
 import ZayavPreview from "@/components/ZayavPreview";
+import ResidentPicker from "@/components/ResidentPicker";
 import { zayavOverlayText } from "@/lib/zayavOverlay";
 
 const recordLabel = (r, i) => (r.fio && String(r.fio).trim()) || `Заявление ${i + 1}`;
@@ -28,14 +32,37 @@ const stripEmpty = (obj) => {
 };
 const uid = () => "u" + Math.random().toString(36).slice(2, 9);
 
+// Слот бланка «Заявление» -> какие поля БАЗЫ (master) его наполняют.
+// Правка этих полей в списке сохраняется в единую базу проживающих и меняет данные везде.
+const ZAYAV_SLOT_MASTER = {
+  applicant: [["fio", "ФИО"], ["birth_date", "Дата рождения"]],
+  passport_series: [["passport", "Паспорт (серия и номер)"]],
+  passport_number: [["passport", "Паспорт (серия и номер)"]],
+  passport_issued_by: [["passport_issued_by", "Паспорт: кем выдан"]],
+  passport_issue_date: [["passport_issue_date", "Паспорт: дата выдачи"]],
+  address_locality: [["res_obl", "Адрес: область"], ["res_raion", "Адрес: район"], ["res_city", "Адрес: город"], ["res_village", "Адрес: н.п."]],
+  res_street: [["res_street", "Улица"]],
+  res_house: [["res_house", "Дом"]],
+  res_korpus: [["res_korpus", "Корпус"]],
+  res_apartment: [["res_apartment", "Комната/квартира"]],
+  stay_term: [["contract_end_date", "Срок договора до"]],
+  from_place: [["from_obl", "Откуда: область"], ["from_raion", "Откуда: район"], ["from_city", "Откуда: город"], ["from_village", "Откуда: н.п."]],
+  basis: [["contract_number", "№ договора"], ["sign_date", "Дата договора"]],
+  sign_day: [["sign_date", "Дата подписания"]],
+  sign_month: [["sign_date", "Дата подписания"]],
+  sign_year: [["sign_date", "Дата подписания"]],
+};
+
 export default function Zayavlenie() {
   const [groups, setGroups] = useState([]);
   const [defaults, setDefaults] = useState({});
   const [records, setRecords] = useState([{}]);
+  const [people, setPeople] = useState([]); // [{id, master}] — единая база; правки пишутся сюда
   const [activeIdx, setActiveIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showDefaults, setShowDefaults] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState(false); // eslint-disable-line no-unused-vars
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
 
   // ---- шаблон (редактируемый бланк) ----
@@ -43,7 +70,11 @@ export default function Zayavlenie() {
   const [slotsMeta, setSlotsMeta] = useState([]);
   const [page, setPage] = useState(1);
   const [editMode, setEditMode] = useState(false);
-  const [twoUp, setTwoUp] = useState(false);
+  const [twoUp, setTwoUp] = useState(false);          // альбомный лист (2 на лист или 1 уменьшенное)
+  const [singleSmall, setSingleSmall] = useState(false); // 1 заявление в размере как при «2 на лист»
+  const layoutMode = singleSmall ? "small" : twoUp ? "2up" : "a4";
+  const offLayout = twoUp ? "land" : "a4";
+  const setLayoutMode = (m) => { setTwoUp(m !== "a4"); setSingleSmall(m === "small"); };
   const [flipEdge, setFlipEdge] = useState("long");
   const [selectedId, setSelectedId] = useState(null);
   const [editingId, setEditingId] = useState(null);
@@ -76,23 +107,30 @@ export default function Zayavlenie() {
         setGroups(f.groups || []);
         setDefaults(d || {});
         setTemplate((tpl.template || []).map((e) => ({ ...e, id: e.id || uid() })));
-        let slots = tpl.slots || [];
-        try {
-          const cc = await getCustomColumns();
-          const extra = (cc.columns || []).map((c) => ({ slot: c.key, label: `★ ${c.label}` }));
-          slots = [...slots, ...extra];
-        } catch (e) { /* нет своих столбцов — не критично */ }
-        setSlotsMeta(slots);
+        setSlotsMeta(tpl.slots || []);
         const prefillList = location.state?.prefillList || null;
         if (Array.isArray(prefillList) && prefillList.length) {
           const recs = await zayavleniePrefill(prefillList);
           setRecords(recs.map((r) => ({ ...(d || {}), ...r })));
+          setPeople(prefillList.map((c) => ({ id: c.id, master: { ...((c && c._master) || c || {}) } })));
           toast.success(`Подставлено заявлений: ${recs.length}`);
-        } else if (Array.isArray(saved) && saved.length) {
-          setRecords(saved);
-          toast.success(`Загружено сохранённых заявлений: ${saved.length}`);
         } else {
-          setRecords([{ ...(d || {}) }]);
+          try {
+            const all = await listContracts("", "");
+            if (Array.isArray(all) && all.length) {
+              const students = all.map((c) => ({ ...(c.fields || {}), _master: c.master || {} }));
+              const recs = await zayavleniePrefill(students);
+              setRecords((recs || []).map((r) => ({ ...(d || {}), ...r })));
+              setPeople(all.map((c) => ({ id: c.id, master: { ...(c.master || {}) } })));
+              toast.success(`Загружена база: ${(recs || []).length}`);
+            } else if (Array.isArray(saved) && saved.length) {
+              setRecords(saved);
+            } else {
+              setRecords([{ ...(d || {}) }]);
+            }
+          } catch (e2) {
+            setRecords([{ ...(d || {}) }]);
+          }
         }
       } catch (e) {
         toast.error("Не удалось загрузить данные Заявления");
@@ -113,30 +151,18 @@ export default function Zayavlenie() {
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [records]);
 
-  // ---- Excel / defaults / records (без изменений логики) ----
-  const onUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
+  // ---- Подстановка из единой базы проживающих ----
+  const onPickFromBase = async (picked) => {
     try {
-      const data = await masterUpload(file);
-      const recs = data.zayavlenie || [];
-      if (!recs.length) toast.error("В файле не найдено данных");
-      else {
-        setRecords(recs.map((r) => ({ ...defaults, ...r })));
-        setActiveIdx(0);
-        toast.success(`Загружено: ${recs.length}`);
-      }
+      const students = picked.map((c) => ({ ...(c.fields || {}), _master: c.master || {} }));
+      const recs = await zayavleniePrefill(students);
+      setRecords((recs || []).map((r) => ({ ...defaults, ...r })));
+      setPeople(picked.map((c) => ({ id: c.id, master: { ...(c.master || {}) } })));
+      setActiveIdx(0);
+      toast.success(`Подставлено из базы: ${recs.length}`);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Ошибка загрузки Excel");
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
+      toast.error("Не удалось подставить из базы проживающих");
     }
-  };
-  const onDownloadTemplate = async () => {
-    try { await downloadMasterTemplate(); toast.success("Шаблон Excel скачан"); }
-    catch { toast.error("Не удалось скачать шаблон"); }
   };
   const setDefaultVal = (key, val) => setDefaults((d) => ({ ...d, [key]: val }));
   const applyDefaultsToAll = () => setRecords((rs) => rs.map((r) => ({ ...defaults, ...stripEmpty(r) })));
@@ -156,16 +182,60 @@ export default function Zayavlenie() {
   const setAllSelected = (val) => setRecords((rs) => rs.map((r) => ({ ...r, __print: val })));
   const selectedRecords = () => records.filter((r) => r.__print !== false).map(({ __print, ...r }) => r);
 
+  // ---- Правка полей БАЗЫ прямо в списке (двусторонняя синхронизация) ----
+  const rederiveTimers = useRef({});
+  const persistTimers = useRef({});
+  const rederiveOne = (idx, master, id) => {
+    if (rederiveTimers.current[idx]) clearTimeout(rederiveTimers.current[idx]);
+    rederiveTimers.current[idx] = setTimeout(async () => {
+      try {
+        const recs = await zayavleniePrefill([{ _master: master, id }]);
+        if (recs && recs[0]) {
+          setRecords((rs) => rs.map((r, i) => (i === idx ? { ...defaults, ...recs[0], __print: r.__print } : r)));
+        }
+      } catch (e) { /* ignore */ }
+    }, 350);
+  };
+  const persistMaster = (id, master) => {
+    if (!id) return;
+    if (persistTimers.current[id]) clearTimeout(persistTimers.current[id]);
+    persistTimers.current[id] = setTimeout(() => {
+      patchContractMaster(id, master).catch(() => {});
+    }, 800);
+  };
+  const setMasterVal = (idx, key, val) => {
+    setPeople((ps) => {
+      const np = ps.map((p, i) => (i === idx ? { ...p, master: { ...(p.master || {}), [key]: val } } : p));
+      const p = np[idx];
+      if (p) { rederiveOne(idx, p.master, p.id); persistMaster(p.id, p.master); }
+      return np;
+    });
+  };
+  // Поля БАЗЫ для правки = master-поля, стоящие за слотами, которые реально используются в шаблоне.
+  const editFields = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    (template || []).forEach((e) => {
+      if (!e || e.type !== "field" || !e.field) return;
+      let maps = ZAYAV_SLOT_MASTER[e.field];
+      if (!maps && String(e.field).indexOf("col:") === 0) maps = [[String(e.field).slice(4), e.field]];
+      (maps || []).forEach(([mk, label]) => {
+        if (!seen.has(mk)) { seen.add(mk); out.push({ key: mk, label }); }
+      });
+    });
+    return out;
+  }, [template]);
+
   const doOpen = async () => {
     const sel = selectedRecords();
     if (!sel.length) { toast.error("Отметьте хотя бы одно заявление для печати"); return; }
-    try { await openZayavleniePdf(sel, flipEdge, twoUp); toast(`PDF (${sel.length})${twoUp ? " · 2 на лист" : ""} открыт — печать в масштабе 100%`); }
+    try { await openZayavleniePdf(sel, flipEdge, twoUp && !singleSmall, singleSmall); toast(`PDF (${sel.length})${singleSmall ? " · 1 уменьшенное на лист" : twoUp ? " · 2 на лист" : ""} открыт — печать в масштабе 100%`); }
     catch { toast.error("Ошибка открытия PDF"); }
   };
   const doDownload = async () => {
     const sel = selectedRecords();
     if (!sel.length) { toast.error("Отметьте хотя бы одно заявление"); return; }
-    try { await downloadZayavleniePdf(sel, flipEdge, twoUp); } catch { toast.error("Ошибка скачивания"); }
+    try { await downloadZayavleniePdf(sel, flipEdge, twoUp && !singleSmall, singleSmall); } catch { toast.error("Ошибка скачивания"); }
   };
 
   // ---- Редактор шаблона ----
@@ -227,96 +297,74 @@ export default function Zayavlenie() {
         </p>
       </div>
 
+
+      <ResidentPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={onPickFromBase}
+        title="Выбрать проживающих для заявления"
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)] gap-6">
         {/* ---- Left controls ---- */}
         <div className="space-y-4">
-          {/* Excel */}
-          <div className="rounded-lg border border-pink-100 bg-white/80 p-4 space-y-2">
-            <div className="text-sm font-semibold flex items-center gap-2"><Upload className="h-4 w-4 text-[#EC4899]" /> Загрузка из Excel</div>
-            <input ref={fileRef} type="file" accept=".xlsx,.xlsm" onChange={onUpload} className="hidden" data-testid="zayav-file-input" />
-            <Button onClick={() => fileRef.current?.click()} disabled={uploading} variant="outline" className="w-full" data-testid="zayav-upload-btn">
-              <Upload className="h-4 w-4 mr-2" />{uploading ? "Загрузка…" : "Выбрать .xlsx файл"}
-            </Button>
-            <Button onClick={onDownloadTemplate} variant="ghost" className="w-full text-[#EC4899] hover:text-[#EC4899]" data-testid="zayav-download-template-btn">
-              <Download className="h-4 w-4 mr-2" />Скачать шаблон Excel
-            </Button>
-          </div>
-
-          {/* Defaults */}
-          <div className="rounded-lg border border-[#EC4899]/30 bg-[#EC4899]/5 p-4 space-y-2">
-            <button type="button" onClick={() => setShowDefaults((s) => !s)} className="flex w-full items-center justify-between text-sm font-semibold" data-testid="zayav-defaults-toggle">
-              <span className="flex items-center gap-2"><Wand2 className="h-4 w-4 text-[#EC4899]" /> Постоянные значения</span>
-              <ChevronDown className={`h-4 w-4 transition-transform ${showDefaults ? "" : "-rotate-90"}`} />
-            </button>
-            {showDefaults && (
-              <div className="space-y-3 pt-2 max-h-[360px] overflow-auto pr-1">
-                {groups.map((g) => (
-                  <div key={g.group}>
-                    <div className="text-[10px] uppercase tracking-wider text-[#EC4899] font-semibold mb-1.5">{g.group}</div>
-                    <div className="space-y-1.5">
-                      {g.fields.map((f) => (
-                        <div key={f.key}>
-                          <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
-                          <Input value={defaults[f.key] || ""} onChange={(e) => setDefaultVal(f.key, e.target.value)} className="h-8 text-sm" data-testid={`zayav-default-${f.key}`} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <Button onClick={doSaveDefaults} disabled={savingDefaults} className="w-full bg-[#EC4899] hover:bg-[#DB2777]" data-testid="zayav-save-defaults">
-              <Save className="h-4 w-4 mr-2" />{savingDefaults ? "…" : "Сохранить и применить"}
-            </Button>
-          </div>
-
           <div className="grid grid-cols-2 gap-2">
             <Button onClick={doOpen} className="bg-[#EC4899] hover:bg-[#DB2777]" data-testid="zayav-open"><Printer className="h-4 w-4 mr-2" /> Печать ({selectedCount})</Button>
             <Button onClick={doDownload} variant="outline" data-testid="zayav-download"><Download className="h-4 w-4 mr-2" /> Скачать ({selectedCount})</Button>
           </div>
 
-          {/* Records */}
+          <DuplexOffset
+            testidPrefix="zayav"
+            reloadKey={offLayout}
+            title={offLayout === "land" ? "Совмещение оборота — альбомный лист" : "Совмещение оборота — лист A4"}
+            note={offLayout === "land"
+              ? "Для печати «2 на лист» и «1 уменьшенное». Если оборот ниже лица — поднимите его. Настраивается отдельно от A4."
+              : "Для печати «1 на лист (A4)» и заявления в полном пакете. Если оборот ниже лица — поднимите его."}
+            getFn={() => getZayavBackOffset(offLayout)}
+            saveFn={(u, r) => saveZayavBackOffset(offLayout, u, r)}
+            calibFn={(apply) => openZayavCalibration(offLayout, apply)}
+          />
+
+          {/* Список проживающих (единая база) */}
           <div className="rounded-lg border border-pink-100 bg-white/80 p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-sm font-semibold">Заявления ({records.length}) · выбрано {selectedCount}</div>
+              <div className="text-sm font-semibold">Проживающие ({records.length}) · выбрано {selectedCount}</div>
               <div className="flex items-center gap-1">
                 <button type="button" onClick={() => setAllSelected(true)} className="text-[11px] px-1.5 py-1 rounded border border-pink-100 hover:bg-white flex items-center gap-1" title="Выбрать все" data-testid="zayav-select-all"><CheckSquare className="h-3.5 w-3.5" /> Все</button>
                 <button type="button" onClick={() => setAllSelected(false)} className="text-[11px] px-1.5 py-1 rounded border border-pink-100 hover:bg-white flex items-center gap-1" title="Снять выбор" data-testid="zayav-select-none"><Square className="h-3.5 w-3.5" /> Снять</button>
-                <Button size="sm" variant="outline" onClick={addRecord} data-testid="zayav-add-record"><Plus className="h-4 w-4 mr-1" /> Добавить</Button>
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground">Отметьте галочками, какие заявления печатать. Список сохраняется автоматически — грузить Excel заново не нужно.</p>
-            <div className="space-y-2 max-h-[460px] overflow-auto pr-1">
+            <p className="text-[11px] text-muted-foreground">Отметьте галочками, какие заявления печатать. Раскройте человека, чтобы вручную поправить данные — правки сразу сохраняются в единую базу проживающих.</p>
+            <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
               {records.map((r, idx) => {
                 const open = idx === activeIdx;
                 const checked = r.__print !== false;
+                const m = (people[idx] && people[idx].master) || {};
+                const room = m.room_number ? `комн. ${m.room_number}` : "";
                 return (
                   <div key={idx} className={`rounded-md border ${checked ? "border-[#EC4899]/40" : "border-pink-100"} bg-white/60`} data-testid={`zayav-record-${idx}`}>
-                    <div className="flex items-center gap-1 px-2 py-1.5">
+                    <div className="flex items-center gap-2 px-2 py-1.5">
                       <input type="checkbox" checked={checked} onChange={() => toggleSelect(idx)} className="h-4 w-4 accent-[#EC4899] cursor-pointer" title="Печатать это заявление" data-testid={`zayav-record-check-${idx}`} />
                       <button type="button" onClick={() => setActiveIdx(open ? -1 : idx)} className="flex items-center gap-2 flex-1 min-w-0 text-left text-sm" data-testid={`zayav-record-toggle-${idx}`}>
                         <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
                         <span className="truncate">{recordLabel(r, idx)}</span>
+                        {room && <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{room}</span>}
                       </button>
-                      <button type="button" title="Дублировать" onClick={() => duplicateRecord(idx)} className="p-1.5 text-muted-foreground hover:text-slate-900"><Copy className="h-3.5 w-3.5" /></button>
-                      <button type="button" title="Очистить" onClick={() => clearRecordAt(idx)} className="p-1.5 text-muted-foreground hover:text-slate-900"><Eraser className="h-3.5 w-3.5" /></button>
-                      <button type="button" title="Удалить" onClick={() => removeRecord(idx)} className="p-1.5 text-muted-foreground hover:text-[#EC4899]" data-testid={`zayav-record-del-${idx}`}><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
                     {open && (
-                      <div className="px-3 pb-3 pt-1 space-y-3 border-t border-pink-100">
-                        {groups.map((g) => (
-                          <div key={g.group}>
-                            <div className="text-[10px] uppercase tracking-wider text-[#EC4899] font-semibold mb-1.5">{g.group}</div>
-                            <div className="space-y-1.5">
-                              {g.fields.map((f) => (
-                                <div key={f.key}>
-                                  <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
-                                  <Input value={r[f.key] || ""} onChange={(e) => setRecordVal(idx, f.key, e.target.value)} className="h-8 text-sm" data-testid={`zayav-input-${idx}-${f.key}`} />
-                                </div>
-                              ))}
+                      <div className="px-3 pb-3 pt-1 space-y-1.5 border-t border-pink-100">
+                        {editFields.length === 0 ? (
+                          <p className="text-[11px] text-muted-foreground pt-2">
+                            В шаблоне нет полей данных. Включите «Редактор шаблона» и добавьте поля кнопкой «Поле» — здесь появятся соответствующие данные из базы для ручной правки.
+                          </p>
+                        ) : (
+                          editFields.map((f) => (
+                            <div key={f.key}>
+                              <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
+                              <Input value={m[f.key] || ""} onChange={(e) => setMasterVal(idx, f.key, e.target.value)} className="h-8 text-sm" data-testid={`zayav-input-${idx}-${f.key}`} />
                             </div>
-                          </div>
-                        ))}
+                          ))
+                        )}
                       </div>
                     )}
                   </div>
@@ -421,9 +469,14 @@ export default function Zayavlenie() {
                 <button type="button" onClick={() => setPage(1)} className={`px-3 py-1.5 text-xs transition ${page === 1 ? "bg-[#EC4899] text-white font-semibold" : "text-muted-foreground hover:text-slate-900"}`} data-testid="zayav-page-1-btn">Стр. 1</button>
                 <button type="button" onClick={() => setPage(2)} className={`px-3 py-1.5 text-xs transition ${page === 2 ? "bg-[#EC4899] text-white font-semibold" : "text-muted-foreground hover:text-slate-900"}`} data-testid="zayav-page-2-btn">Стр. 2</button>
               </div>
-              <Button size="sm" variant={twoUp ? "default" : "ghost"} onClick={() => setTwoUp((v) => !v)} className={twoUp ? "bg-[#2563eb] hover:bg-[#1d4ed8] text-white" : ""} title="Печатать по 2 разных человека на одном листе A4 (альбомный)" data-testid="zayav-toggle-2up">
-                <Columns2 className="h-4 w-4 mr-1" /> {twoUp ? "2 на лист ✓" : "1 на лист"}
-              </Button>
+              <div className="flex items-center gap-1">
+                <Columns2 className="h-4 w-4 text-[#2563eb]" />
+                <select value={layoutMode} onChange={(e) => setLayoutMode(e.target.value)} className={`h-8 rounded-md border text-xs px-2 ${twoUp ? "bg-[#2563eb] text-white border-[#2563eb]" : "bg-white/70 border-pink-100"}`} title="Как раскладывать заявления на листе" data-testid="zayav-layout-mode">
+                  <option value="a4">1 на лист (A4)</option>
+                  <option value="2up">2 на лист (альбом)</option>
+                  <option value="small">1 уменьшенное (как при 2 на лист)</option>
+                </select>
+              </div>
               {twoUp && (
                 <select value={flipEdge} onChange={(e) => setFlipEdge(e.target.value)} className="h-8 rounded-md bg-white/70 border border-pink-100 text-xs px-2" title="Как принтер переворачивает лист при двусторонней печати. Если оборот встал перевёрнутым — смените вариант" data-testid="zayav-flip-edge">
                   <option value="long">Оборот: длинный край</option>
@@ -493,13 +546,13 @@ export default function Zayavlenie() {
           <div className="rounded-lg border border-pink-100 bg-white/80 p-3 shadow-2xl overflow-auto" style={{ maxHeight: "84vh" }}>
             {twoUp && !editMode ? (
               <div className="mx-auto" style={{ maxWidth: 980 }} data-testid="zayav-2up-preview">
-                <div className="text-[11px] text-muted-foreground mb-1.5 text-center">Лист A4 (альбомный) — 2 разных человека. Разрезать по пунктиру.</div>
+                <div className="text-[11px] text-muted-foreground mb-1.5 text-center">{singleSmall ? (page === 2 ? "Оборот показан так, как его видно после переворота листа. В PDF он стоит в правой половине (перевёрнут для принтера) — это правильно." : "Лист A4 (альбомный) — одно заявление в размере как при «2 на лист». Разрезать по пунктиру.") : "Лист A4 (альбомный) — 2 разных человека. Разрезать по пунктиру."}</div>
                 <div className="flex ring-1 ring-black/10" style={{ aspectRatio: "297 / 210", background: "#fff" }}>
                   <div style={{ width: "50%", borderRight: "1px dashed #b9b9c2" }}>
                     <ZayavPreview page={page} elements={pageElements} values={leftVals} />
                   </div>
                   <div style={{ width: "50%" }}>
-                    <ZayavPreview page={page} elements={pageElements} values={rightVals} />
+                    {singleSmall ? null : <ZayavPreview page={page} elements={pageElements} values={rightVals} />}
                   </div>
                 </div>
               </div>

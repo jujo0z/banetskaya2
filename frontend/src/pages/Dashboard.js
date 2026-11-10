@@ -97,8 +97,8 @@ export default function Dashboard() {
             testid="action-full"
           />
           <ActionTile
-            title="История"
-            description="Поиск, повторная печать и пакетная выгрузка договоров."
+            title="База проживающих"
+            description="Поиск по проживающим, редактирование, повторная печать и выгрузка."
             icon={HistoryIcon}
             onClick={() => navigate("/history")}
             testid="action-history"
@@ -121,7 +121,7 @@ export default function Dashboard() {
             onClick={() => navigate("/history")}
             data-testid="dashboard-open-history-btn"
           >
-            Вся история <ArrowUpRight className="h-4 w-4 ml-1" />
+            Вся база <ArrowUpRight className="h-4 w-4 ml-1" />
           </Button>
         </div>
         <Table>

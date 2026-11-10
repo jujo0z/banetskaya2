@@ -2,7 +2,6 @@
 # PyInstaller spec for the Banetskaya.by desktop build.
 # Run from the repository root on Windows:  pyinstaller windows-package/installer/banetskaya.spec --noconfirm
 import os
-from PyInstaller.utils.hooks import collect_all
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
 BACKEND = os.path.join(ROOT, "backend")
@@ -10,7 +9,6 @@ ICON = os.path.join(SPECPATH, "assets", "icon.ico")
 
 datas = [
     (os.path.join(BACKEND, "templates"), "templates"),
-    (os.path.join(BACKEND, "assets"), "assets"),
     (os.path.join(ROOT, "frontend", "build"), "frontend_build"),
 ]
 # Bundled portable MongoDB (downloaded by the CI workflow into resources/mongodb)
@@ -19,7 +17,7 @@ if os.path.isdir(_mongo):
     datas.append((_mongo, "mongodb"))
 
 hiddenimports = [
-    "server", "document_service", "_buildinfo",
+    "server", "document_service",
     "motor", "motor.motor_asyncio", "pymongo", "bson", "dns",
     "uvicorn", "uvicorn.logging",
     "uvicorn.loops", "uvicorn.loops.auto",
@@ -28,17 +26,14 @@ hiddenimports = [
     "uvicorn.lifespan", "uvicorn.lifespan.on",
     "docxtpl", "docx", "openpyxl", "jinja2", "pypdf",
     "lxml", "lxml._elementpath", "email_validator",
-    "requests", "pymupdf",
 ]
-
-binaries = []
 
 block_cipher = None
 
 a = Analysis(
     [os.path.join(BACKEND, "desktop_main.py")],
     pathex=[BACKEND],
-    binaries=binaries,
+    binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -60,7 +55,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,
+    console=True,
     icon=ICON,
 )
 coll = COLLECT(

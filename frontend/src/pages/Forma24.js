@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import DuplexOffset from "@/components/DuplexOffset";
 import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import {
   Save,
   Wand2,
   PenSquare,
+  Users,
 } from "lucide-react";
 import {
   forma24Fields,
@@ -27,24 +29,41 @@ import {
   forma24PreviewPngUrl,
   openForma24Pdf,
   downloadForma24Pdf,
-  masterUpload,
-  downloadMasterTemplate,
   openPackagePdf,
   downloadPackagePdf,
+  listContracts, getFormaTemplate, patchContractMaster,
 } from "@/lib/apiClient";
 import DocEditor from "@/components/DocEditor";
+import ResidentPicker from "@/components/ResidentPicker";
 
 const recordLabel = (r, i) => {
   const fio = [r.surname, r.first_name, r.patronymic].filter(Boolean).join(" ").trim();
   return fio || `Запись ${i + 1}`;
 };
 
-// Форма 19 — «Адресный листок прибытия». Полная векторная печать на A4,
-// сетка 2×2 = 2 человека на лист, по 2 копии; лицо + оборот для дуплекса.
+// Слот бланка Формы 24 -> какие поля БАЗЫ (master) его наполняют.
+const FORMA24_SLOT_MASTER = {
+  surname: [["fio", "ФИО"]], first_name: [["fio", "ФИО"]], patronymic: [["fio", "ФИО"]],
+  birth_day: [["birth_date", "Дата рождения"]], birth_month: [["birth_date", "Дата рождения"]], birth_year: [["birth_date", "Дата рождения"]],
+  sex: [["sex", "Пол (1/2)"]], nationality: [["nationality", "Национальность"]], citizenship: [["citizenship", "Гражданство"]],
+  bp_obl: [["bp_obl", "Место рожд.: обл."]], bp_raion: [["bp_raion", "Место рожд.: район"]], bp_city: [["bp_city", "Место рожд.: город"]], bp_village: [["bp_village", "Место рожд.: село"]],
+  res_obl: [["res_obl", "Адрес: обл."]], res_raion: [["res_raion", "Адрес: район"]], res_city: [["res_city", "Адрес: город"]], res_village: [["res_village", "Адрес: село"]],
+  from_obl: [["from_obl", "Откуда: обл."]], from_raion: [["from_raion", "Откуда: район"]], from_city: [["from_city", "Откуда: город"]], from_village: [["from_village", "Откуда: село"]],
+  arrival_date: [["arrival_date", "Дата прибытия"]], lived_since: [["lived_since", "Проживал там с"]],
+  purpose_choice: [["purpose_choice", "Цель приезда (1/2)"]], term: [["purpose_term", "Срок пребывания"]],
+  prev_work: [["prev_work", "Где и кем работал"]], education: [["education", "Образование"]],
+  marital: [["marital", "Семейное положение"]], spouse_together: [["spouse_together", "Прибыл с супругой(ом)"]],
+  children_count: [["children_count", "Детей до 14 лет"]],
+  passport_issue_date: [["passport_issue_date", "Паспорт: дата выдачи"]],
+};
+
+// Форма 24 — «Талон миграционного учёта».
 export default function Forma24() {
   const [groups, setGroups] = useState([]);
   const [defaults, setDefaults] = useState({});
   const [records, setRecords] = useState([{}]);
+  const [people, setPeople] = useState([]); // [{id, master}] — единая база; правки пишутся сюда
+  const [templateFields, setTemplateFields] = useState([]); // слоты «Поле», реально стоящие в шаблоне
   const [activeIdx, setActiveIdx] = useState(0);
   const [duplexFlip, setDuplexFlip] = useState("long");
   const [loading, setLoading] = useState(true);
@@ -53,7 +72,8 @@ export default function Forma24() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewSide, setPreviewSide] = useState("front");
   const [editMode, setEditMode] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState(false); // eslint-disable-line no-unused-vars
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
   const [masterRows, setMasterRows] = useState([]);
   const [packageBusy, setPackageBusy] = useState(false);
@@ -73,16 +93,34 @@ export default function Forma24() {
   useEffect(() => {
     (async () => {
       try {
-        const [f, d] = await Promise.all([forma24Fields(), getForma24Defaults()]);
+        const [f, d, tpl] = await Promise.all([forma24Fields(), getForma24Defaults(), getFormaTemplate(24)]);
         setGroups(f.groups || []);
         setDefaults(d || {});
+        const tfields = [];
+        (tpl && tpl.template || []).forEach((e) => { if (e && e.type === "field" && e.field) tfields.push(e.field); });
+        setTemplateFields(tfields);
         const prefillList = location.state?.prefillList || null;
         if (Array.isArray(prefillList) && prefillList.length) {
           const recs = await forma24Prefill(prefillList);
           setRecords(recs.map((r) => ({ ...(d || {}), ...r })));
+          setPeople(prefillList.map((c) => ({ id: c.id, master: { ...((c && c._master) || c || {}) } })));
           toast.success(`Подставлено записей: ${recs.length}`);
         } else {
-          setRecords([{ ...(d || {}) }]);
+          try {
+            const all = await listContracts("", "");
+            if (Array.isArray(all) && all.length) {
+              const students = all.map((c) => ({ ...(c.fields || {}), _master: c.master || {} }));
+              const recs = await forma24Prefill(students);
+              setRecords((recs || []).map((r) => ({ ...(d || {}), ...r })));
+              setMasterRows(all.map((c) => c.master || {}));
+              setPeople(all.map((c) => ({ id: c.id, master: { ...(c.master || {}) } })));
+              toast.success(`Загружена база: ${(recs || []).length}`);
+            } else {
+              setRecords([{ ...(d || {}) }]);
+            }
+          } catch (e2) {
+            setRecords([{ ...(d || {}) }]);
+          }
         }
       } catch (e) {
         toast.error("Не удалось загрузить поля Формы 24");
@@ -92,36 +130,18 @@ export default function Forma24() {
     })();
   }, []);
 
-  // ---- Excel upload -> autofill (единый шаблон «Данные») ----
-  const onUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
+  // ---- Подстановка из единой базы проживающих ----
+  const onPickFromBase = async (picked) => {
     try {
-      const data = await masterUpload(file);
-      const recs = data.forma24 || [];
-      if (!recs.length) {
-        toast.error("В файле не найдено данных");
-      } else {
-        setRecords(recs.map((r) => ({ ...defaults, ...r })));
-        setMasterRows(data.master || []);
-        setActiveIdx(0);
-        toast.success(`Загружено: ${recs.length} — данные подставлены`);
-      }
+      const students = picked.map((c) => ({ ...(c.fields || {}), _master: c.master || {} }));
+      const recs = await forma24Prefill(students);
+      setRecords((recs || []).map((r) => ({ ...defaults, ...r })));
+      setMasterRows(picked.map((c) => c.master || {}));
+      setPeople(picked.map((c) => ({ id: c.id, master: { ...(c.master || {}) } })));
+      setActiveIdx(0);
+      toast.success(`Подставлено из базы: ${recs.length}`);
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Ошибка загрузки Excel");
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
-
-  const onDownloadTemplate = async () => {
-    try {
-      await downloadMasterTemplate();
-      toast.success("Шаблон Excel скачан");
-    } catch {
-      toast.error("Не удалось скачать шаблон");
+      toast.error("Не удалось подставить из базы проживающих");
     }
   };
 
@@ -169,6 +189,42 @@ export default function Forma24() {
   // ---- record helpers ----
   const setRecordVal = (idx, key, val) =>
     setRecords((rs) => rs.map((r, i) => (i === idx ? { ...r, [key]: val } : r)));
+
+  // ---- Правка полей БАЗЫ прямо в списке (двусторонняя синхронизация) ----
+  const rederiveTimers = useRef({});
+  const persistTimers = useRef({});
+  const rederiveOne = (idx, master, id) => {
+    if (rederiveTimers.current[idx]) clearTimeout(rederiveTimers.current[idx]);
+    rederiveTimers.current[idx] = setTimeout(async () => {
+      try {
+        const recs = await forma24Prefill([{ _master: master, id }]);
+        if (recs && recs[0]) setRecords((rs) => rs.map((r, i) => (i === idx ? { ...defaults, ...recs[0] } : r)));
+      } catch (e) { /* ignore */ }
+    }, 350);
+  };
+  const persistMaster = (id, master) => {
+    if (!id) return;
+    if (persistTimers.current[id]) clearTimeout(persistTimers.current[id]);
+    persistTimers.current[id] = setTimeout(() => { patchContractMaster(id, master).catch(() => {}); }, 800);
+  };
+  const setMasterVal = (idx, key, val) => {
+    setPeople((ps) => {
+      const np = ps.map((p, i) => (i === idx ? { ...p, master: { ...(p.master || {}), [key]: val } } : p));
+      const p = np[idx];
+      if (p) { rederiveOne(idx, p.master, p.id); persistMaster(p.id, p.master); }
+      return np;
+    });
+  };
+  const editFields = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    (templateFields || []).forEach((slot) => {
+      let maps = FORMA24_SLOT_MASTER[slot];
+      if (!maps && String(slot).indexOf("col:") === 0) maps = [[String(slot).slice(4), slot]];
+      (maps || []).forEach(([mk, label]) => { if (!seen.has(mk)) { seen.add(mk); out.push({ key: mk, label }); } });
+    });
+    return out;
+  }, [templateFields]);
   const addRecord = () =>
     setRecords((rs) => {
       const next = [...rs, { ...defaults }];
@@ -248,135 +304,21 @@ export default function Forma24() {
         <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
           Печать «Талона миграционного учёта к адресному листку прибытия» (Форма 24) на чистой бумаге A4 — бланк рисуется заново + данные.
           На каждом листе <b>2 человека, по 2 копии</b> (сетка 2×2). Первый лист — лицевые
-          стороны, второй — обороты, для двусторонней печати. Автозаполнение из Excel со студентами.
+          стороны, второй — обороты, для двусторонней печати. Данные берутся из единой базы проживающих.
         </p>
       </div>
+
+
+      <ResidentPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={onPickFromBase}
+        title="Выбрать проживающих для Формы 24"
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)] gap-6">
         {/* ---- Controls ---- */}
         <div className="space-y-4">
-          {/* Excel upload */}
-          <div className="rounded-lg border border-pink-100 bg-white/80 p-4 space-y-2">
-            <div className="text-sm font-semibold flex items-center gap-2">
-              <Upload className="h-4 w-4 text-[#EC4899]" /> Загрузка студентов из Excel
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xlsm"
-              onChange={onUpload}
-              className="hidden"
-              data-testid="f24-file-input"
-            />
-            <Button
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-              variant="outline"
-              className="w-full"
-              data-testid="f24-upload-btn"
-            >
-              <Upload className="h-4 w-4 mr-2" />
-              {uploading ? "Загрузка…" : "Выбрать .xlsx файл"}
-            </Button>
-            <Button
-              onClick={onDownloadTemplate}
-              variant="ghost"
-              className="w-full text-[#EC4899] hover:text-[#EC4899]"
-              data-testid="f24-download-template-btn"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Скачать шаблон Excel
-            </Button>
-            <p className="text-[11px] text-muted-foreground">
-              Единый шаблон «Данные»: одна строка = один человек = все документы (договор,
-              сообщение, Форма 19 и 24). Первая строка уже заполнена примером.
-            </p>
-          </div>
-
-          {/* Полный пакет документов */}
-          <div className="rounded-lg border border-[#EC4899]/30 bg-gradient-to-br from-[#EC4899]/10 to-transparent p-4 space-y-2" data-testid="f24-package-box">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <ClipboardList className="h-4 w-4 text-[#EC4899]" /> Полный пакет документов
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Один PDF по каждому человеку: договор, лист «Форма 19 + Форма 24» (по 2 копии,
-              обе формы на одном листе) и лист «Сообщение».
-              {masterRows.length > 0 ? ` Загружено человек: ${masterRows.length}.` : " Сначала загрузите Excel-шаблон."}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                onClick={() => onPackage("open")}
-                disabled={packageBusy || !masterRows.length}
-                className="flex-1 bg-[#EC4899] hover:bg-[#DB2777] text-white"
-                data-testid="f24-package-open-btn"
-              >
-                <Printer className="h-4 w-4 mr-2" />
-                {packageBusy ? "Формирование…" : "Открыть пакет"}
-              </Button>
-              <Button
-                onClick={() => onPackage("download")}
-                disabled={packageBusy || !masterRows.length}
-                variant="outline"
-                data-testid="f24-package-download-btn"
-              >
-                <Download className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-
-          {/* Постоянные значения (constants) */}
-          <div className="rounded-lg border border-[#EC4899]/30 bg-[#EC4899]/5 p-4 space-y-2" data-testid="f24-defaults-box">
-            <button
-              type="button"
-              onClick={() => setShowDefaults((s) => !s)}
-              className="flex w-full items-center justify-between text-sm font-semibold"
-              data-testid="f24-defaults-toggle"
-            >
-              <span className="flex items-center gap-2">
-                <Wand2 className="h-4 w-4 text-[#EC4899]" /> Постоянные значения
-              </span>
-              <ChevronDown className={`h-4 w-4 transition-transform ${showDefaults ? "" : "-rotate-90"}`} />
-            </button>
-            <p className="text-[11px] text-muted-foreground">
-              Задайте один раз (адрес общежития, орган регистрации, цель приезда и т.п.) — они
-              подставятся во все листки. Данные студента из Excel имеют приоритет.
-            </p>
-            {showDefaults && (
-              <div className="space-y-3 pt-2 max-h-[420px] overflow-auto pr-1">
-                {groups.map((g) => (
-                  <div key={g.group}>
-                    <div className="text-[10px] uppercase tracking-wider text-[#EC4899] font-semibold mb-1.5">
-                      {g.group}
-                    </div>
-                    <div className="space-y-1.5">
-                      {g.fields.map((f) => (
-                        <div key={f.key}>
-                          <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
-                          <Input
-                            value={defaults[f.key] || ""}
-                            onChange={(e) => setDefaultVal(f.key, e.target.value)}
-                            className="h-8 text-sm"
-                            data-testid={`f24-default-${f.key}`}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <Button
-              onClick={doSaveDefaults}
-              disabled={savingDefaults}
-              className="w-full bg-[#EC4899] hover:bg-[#DB2777]"
-              data-testid="f24-save-defaults"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              {savingDefaults ? "Сохранение…" : "Сохранить и применить ко всем"}
-            </Button>
-          </div>
-
           {/* Duplex flip */}
           <div className="rounded-lg border border-pink-100 bg-white/80 p-4 space-y-3">
             <div className="text-sm font-semibold flex items-center gap-2">
@@ -412,6 +354,8 @@ export default function Forma24() {
             </div>
           </div>
 
+          <DuplexOffset testidPrefix="f24" />
+
           <div className="grid grid-cols-2 gap-2">
             <Button onClick={doOpen} className="bg-[#EC4899] hover:bg-[#DB2777]" data-testid="f24-open">
               <Printer className="h-4 w-4 mr-2" /> Открыть/Печать
@@ -421,17 +365,17 @@ export default function Forma24() {
             </Button>
           </div>
 
-          {/* Records manager */}
+          {/* Список проживающих (единая база) */}
           <div className="rounded-lg border border-pink-100 bg-white/80 p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold">Люди ({records.length})</div>
-              <Button size="sm" variant="outline" onClick={addRecord} data-testid="f24-add-record">
-                <Plus className="h-4 w-4 mr-1" /> Добавить
-              </Button>
+              <div className="text-sm font-semibold">Проживающие ({records.length})</div>
             </div>
-            <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
+            <p className="text-[11px] text-muted-foreground">Раскройте человека, чтобы вручную поправить данные — правки сразу сохраняются в единую базу проживающих. Набор полей зависит от того, какие поля стоят в шаблоне.</p>
+            <div className="space-y-2 max-h-[560px] overflow-auto pr-1">
               {records.map((r, idx) => {
                 const open = idx === activeIdx;
+                const m = (people[idx] && people[idx].master) || {};
+                const room = m.room_number ? `комн. ${m.room_number}` : "";
                 return (
                   <div key={idx} className="rounded-md border border-pink-100 bg-white/60" data-testid={`f24-record-${idx}`}>
                     <div className="flex items-center gap-1 px-2 py-1.5">
@@ -443,37 +387,28 @@ export default function Forma24() {
                       >
                         <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
                         <span className="truncate">{recordLabel(r, idx)}</span>
-                      </button>
-                      <button type="button" title="Дублировать" onClick={() => duplicateRecord(idx)} className="p-1.5 text-muted-foreground hover:text-slate-900" data-testid={`f24-record-dup-${idx}`}>
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
-                      <button type="button" title="Очистить" onClick={() => clearRecordAt(idx)} className="p-1.5 text-muted-foreground hover:text-slate-900">
-                        <Eraser className="h-3.5 w-3.5" />
-                      </button>
-                      <button type="button" title="Удалить" onClick={() => removeRecord(idx)} className="p-1.5 text-muted-foreground hover:text-[#EC4899]" data-testid={`f24-record-del-${idx}`}>
-                        <Trash2 className="h-3.5 w-3.5" />
+                        {room && <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{room}</span>}
                       </button>
                     </div>
                     {open && (
-                      <div className="px-3 pb-3 pt-1 space-y-3 border-t border-pink-100">
-                        {groups.map((g) => (
-                          <div key={g.group}>
-                            <div className="text-[10px] uppercase tracking-wider text-[#EC4899] font-semibold mb-1.5">{g.group}</div>
-                            <div className="space-y-1.5">
-                              {g.fields.map((f) => (
-                                <div key={f.key}>
-                                  <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
-                                  <Input
-                                    value={r[f.key] || ""}
-                                    onChange={(e) => setRecordVal(idx, f.key, e.target.value)}
-                                    className="h-8 text-sm"
-                                    data-testid={`f24-input-${idx}-${f.key}`}
-                                  />
-                                </div>
-                              ))}
+                      <div className="px-3 pb-3 pt-1 space-y-1.5 border-t border-pink-100">
+                        {editFields.length === 0 ? (
+                          <p className="text-[11px] text-muted-foreground pt-2">
+                            В шаблоне нет полей данных. Включите «Редактор шаблона» и добавьте поля кнопкой «Поле» — здесь появятся соответствующие данные из базы для ручной правки.
+                          </p>
+                        ) : (
+                          editFields.map((f) => (
+                            <div key={f.key}>
+                              <Label className="text-[11px] text-muted-foreground">{f.label}</Label>
+                              <Input
+                                value={m[f.key] || ""}
+                                onChange={(e) => setMasterVal(idx, f.key, e.target.value)}
+                                className="h-8 text-sm"
+                                data-testid={`f24-input-${idx}-${f.key}`}
+                              />
                             </div>
-                          </div>
-                        ))}
+                          ))
+                        )}
                       </div>
                     )}
                   </div>
